@@ -1,0 +1,7 @@
+{
+  "user_route": "start_m + s * distance_m * direction  (s in [0,1], config-defined)",
+  "nominal_well_path": "voltage_spline(route) -> trap.local -> route_r / route_H (support diagnostics)",
+  "realized_path": "delivered voltages -> ROM exact reconstruction (r) -> dynamics validation",
+  "optimized_path": "q(route) with time-warp and corrective basis; realized path is evaluated after hardware delivery",
+  "which_is_optimized": "q(route) in parameter space; final evaluation uses realized path"
+}

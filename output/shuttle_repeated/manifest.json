@@ -1,0 +1,53 @@
+{
+  "package": "shuttle_sim 0.2.0",
+  "python": "3.11.2 (main, Apr  8 2026, 01:58:00) [GCC 12.2.0]",
+  "numpy": "2.4.6",
+  "scipy": "1.17.1",
+  "platform": "Linux-6.1.158+-x86_64-with-glibc2.36",
+  "elapsed_s": 174.24451994895935,
+  "run_unix_time": 1792539881.4154496,
+  "input_sha256": "ffe87eff997c42d18d0801e068518ea83674e88e8fb146e3493846f2bfb352c2",
+  "source_base_commit": "c3551aa",
+  "source_sha256": {
+    "__init__.py": "877a275066ef5626263aee1f0ce6e0194bb3c1c72dc1c06ec58d8ac344cfca1d",
+    "__main__.py": "d0b1ca3f1bc9944e67ff0b68c0832a1400a9e4b702572cfcc37878843f90aa4e",
+    "field.py": "9770a77947f008491ab1a6047edc85d1fb8cf69ca40d1f6719a45e152d6668f3",
+    "dynamics.py": "a446dd9dce4fe4f036acfee9fcc343bcea4e30e4b60c440ef0867a909ffcaf6b",
+    "hardware.py": "3d9d8081b32965bdf7fbc0012d2accd6001658c85cc17fe80ccf6aff572ed3ee",
+    "pipeline.py": "e3ebe2f0c9ee79c52ee712b1b6a0bceff647c7b94fad2cdf3a44953130a2c710",
+    "transport.py": "841c1285461bd0fa526a5b66efbc01811a969603689cbe69366033877bc7767f",
+    "control.py": "d8def7ea5643c76488473bf332b62722ef1e556582baf4a459a32d0b3e885794",
+    "safety.py": "fb790fe5482a2e9b80a421afae04f59e6465b13e06ca488e849cc93d57e17990",
+    "observables.py": "8d24c6779bbb1b4f11ee9bbdd58599b4b7f4ab8462c718c49ae211ff6359e167",
+    "calibration.py": "cb4b4ca3f7b07fb68232cb4b74813d1f231c6f093165b491355a784a0bdcb0e4",
+    "closed_loop.py": "9d549477d3984bf94c8f2fd7e77f8866e394ddd5db8fb6e53d122ba1c65f0b8c",
+    "voltage.py": "0a4f4c3f1efd37d230b741ee0aed90a52a8645bacdb3bc2444e3bfc50dde8a55"
+  },
+  "trap_source": "specified geometry in config; no measured electrode maps",
+  "physics": "RF pseudopotential + 3D local harmonic Gaussian",
+  "layers": [
+    "field",
+    "control",
+    "voltage",
+    "hardware",
+    "dynamics",
+    "robust",
+    "calibration",
+    "closed_loop",
+    "safety",
+    "observables"
+  ],
+  "status": {
+    "nominal_quality_passed": true,
+    "numerical_validation_passed": true,
+    "robust_all_passed": true,
+    "hold_scan_all_passed": true,
+    "safety_passed": true,
+    "calibration_demo_success": true,
+    "closed_loop_ready": true,
+    "experiment_ready": false,
+    "selected": "aware",
+    "scope": "simulation-only on specified Sion/GDS electrode geometry",
+    "simulation_acceptance_passed": true
+  }
+}

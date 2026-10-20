@@ -1,0 +1,24 @@
+{
+  "hardware": {
+    "sample_rate_hz": 20000000.0,
+    "dac_bits": 16,
+    "dac_min_V": -12.0,
+    "dac_max_V": 12.0,
+    "lowpass_hz": [
+      1000000.0,
+      500000.0
+    ],
+    "gain": 1.0,
+    "offset_V": 0.0,
+    "delay_s": 0.0,
+    "max_jump_V": 1.0,
+    "identifier": "declared-simulation-chain-v1"
+  },
+  "stray_assumed_V_m": [
+    0,
+    0,
+    0
+  ],
+  "status": "unmeasured_simulation_assumptions",
+  "note": "updated via Calibration layer when data available"
+}
