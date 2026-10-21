@@ -70,10 +70,55 @@ class GAEngine:
     def _write_state(self):
         # build dashboard state
         islands_state=[isl.snapshot() for isl in self.islands]
-        hall=[dict(theta=g.theta.tolist(), fitness=g.fitness, island=g.island, status=g.status,
+        hall=[]
+        for g in self.hall_of_fame:
+            entry=dict(theta=g.theta.tolist(), fitness=g.fitness, island=g.island, status=g.status,
                    n_total=g.metrics.get('n_total'), pos_err=g.metrics.get('position_error_m'),
                    fmin=g.metrics.get('minimum_frequency_hz'), distortion=g.metrics.get('distortion',{}).get('max_deviation_V') if isinstance(g.metrics.get('distortion'),dict) else None)
-               for g in self.hall_of_fame]
+            # attach trajectory if already computed (for hall best we compute below)
+            if 'trajectory' in g.metrics:
+                entry['trajectory'] = g.metrics['trajectory']
+            hall.append(entry)
+        # compute trajectory for best hall leader for dashboard (well + quantum + classical)
+        trajectory = None
+        if self.hall_of_fame:
+            try:
+                best = self.hall_of_fame[0]
+                # use cached trajectory if exists and gen hasn't changed much, else recompute
+                if 'trajectory' not in best.metrics or self.global_gen % 2 == 0:
+                    # recompute with cheap trajectory capture (decimated 200, exact ROM 200 nodes)
+                    theta8 = best.to_theta8()
+                    # cheap trajectory with return_trajectory, use runner's current config subdivisions
+                    res_traj = self.runner.evaluate(theta8, baseline='sta', exact_nodes=200, subdivisions=self.runner.cfg.get('subdivisions',4), return_trajectory=True, trajectory_decimate=250)
+                    # store in metrics for hall entry
+                    best.metrics['trajectory'] = res_traj.get('trajectory')
+                    # also try classical centroid trajectory for comparison (more expensive, only if enabled and every 5 gens)
+                    classical_enabled = self.cfg.get('trajectory_classical', False) or self.runner.cfg.get('trajectory_classical', False)
+                    if classical_enabled and (self.global_gen % 5 == 0 or self.global_gen == self.generations):
+                        try:
+                            from ..dynamics import validate_full_field_centroid
+                            # need full trace t,v for classical (decimated to keep it light)
+                            _, trace = self.runner.evaluate(theta8, baseline='sta', exact_nodes=120, subdivisions=4, keep=True)
+                            classical = validate_full_field_centroid(self.runner.trap, trace['t'], trace['v'], trace['initial'], self.runner.target if self.runner.task['protocol']=='one_way' else self.runner.start, return_trajectory=True, trajectory_decimate=150)
+                            best.metrics['classical_trajectory'] = classical.get('trajectory')
+                        except Exception as e_cls:
+                            best.metrics['classical_trajectory_error'] = str(e_cls)
+                    # update hall entry
+                    if hall:
+                        hall[0]['trajectory'] = best.metrics.get('trajectory')
+                        if 'classical_trajectory' in best.metrics:
+                            hall[0]['classical_trajectory'] = best.metrics['classical_trajectory']
+                # expose top-level trajectory for dashboard convenience
+                trajectory = best.metrics.get('trajectory')
+                classical_traj = best.metrics.get('classical_trajectory')
+                # also compute nominal vs user route for context
+                # we have runner.start, target, direction
+                if trajectory is not None:
+                    # trajectory already contains well_centers and mean_positions
+                    pass
+            except Exception as e:
+                # never break dashboard
+                trajectory = {'error': str(e)}
         # generation hist
         gen_hist=[]
         for isl in self.islands:
@@ -81,12 +126,40 @@ class GAEngine:
                 entry=dict(island=isl.id)
                 entry.update(h)
                 gen_hist.append(entry)
+        # build trajectory bundle for dashboard: includes well, quantum, classical, time, and context
+        traj_bundle = None
+        if hall and hall[0].get('trajectory') is not None:
+            traj = hall[0]['trajectory']
+            classical = hall[0].get('classical_trajectory')
+            # context: start/target, direction, task
+            try:
+                start = self.runner.start.tolist()
+                target = self.runner.target.tolist()
+                direction = self.runner.direction.tolist()
+            except Exception:
+                start = target = direction = None
+            traj_bundle = dict(
+                hall_index=0,
+                island=hall[0].get('island'),
+                fitness=hall[0].get('fitness'),
+                trajectory=traj,
+                classical_trajectory=classical,
+                start_m=start,
+                target_m=target,
+                direction=direction,
+                distance_m=float(self.runner.task.get('distance_m', 0)),
+                duration_s=float(self.runner.task.get('duration_s', 0)),
+            )
+        elif trajectory is not None and isinstance(trajectory, dict) and 'times_s' in trajectory:
+            traj_bundle = dict(trajectory=trajectory, hall_index=0)
+
         state=dict(
             global_generation=self.global_gen,
             total_generations=self.generations,
             elapsed_s=time.time()-self.start_time,
             islands=islands_state,
             hall_of_fame=hall,
+            trajectory=traj_bundle,
             migration_history=self.migration.history,
             cuda=self.cuda,
             config=self.cfg,

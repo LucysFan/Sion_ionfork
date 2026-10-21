@@ -106,6 +106,20 @@ canvas{width:100%;height:220px;display:block;background:var(--panel2);border-rad
     <div class="legend" id="paretoLegend"></div>
   </div>
   <div class="card" style="grid-column:1/-1">
+    <h3>Траектории — лучшие <small>центры ям (реализ.) · квантовый ион &lt;r&gt; · классический центроид · цель · user route · всё в мкм/мкс</small></h3>
+    <canvas id="cTraj" width="1200" height="280" style="height:280px;background:#121c2e;border-radius:10px;display:block"></canvas>
+    <div class="legend" id="trajLegend" style="flex-wrap:wrap"></div>
+    <div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap">
+      <label class="kv">показать <input type="checkbox" id="chkWell" checked> яма (реализ.)</label>
+      <label class="kv"><input type="checkbox" id="chkQuantum" checked> квантовый &lt;r&gt;</label>
+      <label class="kv"><input type="checkbox" id="chkClassical" checked> классический</label>
+      <label class="kv"><input type="checkbox" id="chkTarget" checked> цель</label>
+      <label class="kv">zoom Y <select id="selTrajZoom" class="btn" style="padding:2px 6px"><option value="auto">auto</option><option value="tight">±5 мкм вокруг цели</option><option value="error">ошибка (ион−яма) ×10</option></select></label>
+      <span class="kv mono" id="trajStats" style="margin-left:auto"></span>
+    </div>
+    <div id="trajNotice" class="notice" style="margin-top:8px;display:none"></div>
+  </div>
+  <div class="card" style="grid-column:1/-1">
     <h3>Islands snapshot <small>migration ring S→A→V→R→H→S every N gens + shuffle every 3N · click row to see history</small></h3>
     <table class="table" id="islandTable"></table>
     <div id="migrLog" class="mono" style="margin-top:10px;color:var(--muted)"></div>
@@ -403,6 +417,163 @@ function drawPareto(state){
   leg.innerHTML=`<span style="display:inline-flex;align-items:center;gap:6px"><i style="width:10px;height:10px;border-radius:50%;background:#5ac8ff"></i> pos error</span><span style="margin-left:12px;display:inline-flex;align-items:center;gap:6px"><i style="width:10px;height:10px;background:#c58aff;border-radius:2px"></i> distortion</span><span style="margin-left:12px;color:var(--muted)">log-x n_total; label = hall rank</span>`
 }
 
+function drawTrajectories(state){
+  const c=document.getElementById('cTraj'); if(!c) return;
+  const ctx=c.getContext('2d'), W=c.width, H=c.height;
+  const notice=document.getElementById('trajNotice');
+  const stats=document.getElementById('trajStats');
+  // helper for axes
+  function clear(msg){
+    ctx.clearRect(0,0,W,H); ctx.fillStyle="#121c2e"; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle="#8aa0c8"; ctx.font="12px sans-serif"; ctx.fillText(msg, W/2-120, H/2);
+  }
+  let bundle = state?.trajectory;
+  // fallback: hall trajectory
+  if(!bundle || !bundle.trajectory){
+    if(state?.hall_of_fame?.[0]?.trajectory){
+      bundle = {trajectory: state.hall_of_fame[0].trajectory, classical_trajectory: state.hall_of_fame[0].classical_trajectory, start_m: state.trajectory?.start_m, target_m: state.trajectory?.target_m, direction: state.trajectory?.direction}
+    }
+  }
+  if(!bundle || !bundle.trajectory){
+    clear("нет траекторий — ждём первого поколения (hall best сформируется после gen 0)");
+    if(notice){ notice.style.display="block"; notice.textContent="Траектории появятся после оценки hall best. В артефактах полный путь в delivered_path.csv + delivered_local_diagnostics.json. Здесь показывается срез для дашборда (250 точек).";}
+    if(stats) stats.textContent="";
+    return;
+  }
+  if(notice) notice.style.display="none";
+  let traj = bundle.trajectory;
+  let classical = bundle.classical_trajectory;
+  // times and positions
+  let tW = traj.well_times_s || traj.times_s;
+  let wCenters = traj.well_centers_m;
+  let qTimes = traj.times_s;
+  let qMeans = traj.mean_positions_m;
+  // direction projection: use x if direction ~ [1,0,0], else project onto direction
+  let dir = bundle.direction || [1,0,0];
+  let dirNorm = Math.sqrt(dir[0]*dir[0]+dir[1]*dir[1]+dir[2]*dir[2]) || 1;
+  dir = dir.map(v=>v/dirNorm);
+  function proj(pos){ return pos[0]*dir[0]+pos[1]*dir[1]+pos[2]*dir[2]; }
+  // build arrays in microns
+  let wellX = wCenters ? wCenters.map(p=>proj(p)*1e6) : null;
+  let wellT = tW ? tW.map(v=>v*1e6) : null;
+  let qX = qMeans ? qMeans.map(p=>proj(p)*1e6) : null;
+  let qT = qTimes ? qTimes.map(v=>v*1e6) : null;
+  let cX = null, cT=null;
+  if(classical && classical.mean_positions_m){
+    cX = classical.mean_positions_m.map(p=>proj(p)*1e6);
+    cT = classical.times_s.map(v=>v*1e6);
+  }
+  let targetX = null;
+  if(bundle.target_m){
+    targetX = proj(bundle.target_m)*1e6;
+  } else if(wellX){ targetX = wellX[wellX.length-1]; }
+  let startX = bundle.start_m ? proj(bundle.start_m)*1e6 : (wellX? wellX[0]:0);
+  // time bounds: use wellT or qT
+  let allT = (wellT||[]).concat(qT||[]).concat(cT||[]);
+  let tMin = Math.min(...allT), tMax = Math.max(...allT);
+  // y bounds
+  let allY = [];
+  if(wellX) allY = allY.concat(wellX);
+  if(qX) allY = allY.concat(qX);
+  if(cX) allY = allY.concat(cX);
+  if(targetX!==null) allY.push(targetX);
+  // also user route (linear) for reference
+  let userRoute = null;
+  if(tMin!==undefined && bundle.distance_m!==undefined){
+    // linear interpolation from start to target over duration
+    userRoute = {t:[tMin, tMax], x:[startX, targetX]};
+    allY.push(startX, targetX);
+  }
+  let yMin = Math.min(...allY), yMax = Math.max(...allY);
+  let yPad = (yMax-yMin)*0.08 || 2;
+  yMin -= yPad; yMax += yPad;
+  let zoom = document.getElementById('selTrajZoom')?.value || 'auto';
+  if(zoom==='tight' && targetX!==null){
+    yMin = targetX -5; yMax = targetX+5;
+  } else if(zoom==='error'){
+    // focus on error around well
+    // compute error = q - well (interpolated)
+    // for simplicity, set y around 0 error magnified
+    // we keep yMin/yMax as error*10
+    // fallback to tight
+    if(wellX && qX){
+      let errs = qX.map((v,i)=> (v - (wellX[Math.min(i, wellX.length-1)]||v))*10 );
+      yMin = Math.min(...errs)-1; yMax = Math.max(...errs)+1;
+      // will draw error instead of absolute, handle separately
+    }
+  }
+  // draw axes
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle="#121c2e"; ctx.fillRect(0,0,W,H);
+  // grid
+  ctx.strokeStyle="#1e2e4e"; ctx.lineWidth=1; ctx.setLineDash([3,4]);
+  for(let i=0;i<4;i++){ let y=20+i*(H-40)/3; ctx.beginPath(); ctx.moveTo(60,y); ctx.lineTo(W-10,y); ctx.stroke(); }
+  for(let i=0;i<4;i++){ let x=60+i*(W-70)/4; ctx.beginPath(); ctx.moveTo(x,20); ctx.lineTo(x,H-20); ctx.stroke(); }
+  ctx.setLineDash([]); ctx.strokeStyle="#243556"; ctx.strokeRect(0.5,0.5,W-1,H-1);
+  // helpers
+  function xTo(t){ return 60 + (t - tMin)/(tMax - tMin || 1)*(W-70); }
+  function yTo(y){ return H-20 - (y - yMin)/(yMax - yMin || 1)*(H-40); }
+  // labels
+  ctx.fillStyle="#8aa0c8"; ctx.font="10px sans-serif";
+  ctx.fillText("t, мкс", W/2-20, H-4);
+  ctx.save(); ctx.translate(14, H/2); ctx.rotate(-Math.PI/2); ctx.fillText("x вдоль шаттла, мкм", -50,0); ctx.restore();
+  // target line
+  if(document.getElementById('chkTarget')?.checked && targetX!==null){
+    ctx.strokeStyle="#7af0a0"; ctx.setLineDash([6,4]); ctx.lineWidth=1.2; ctx.beginPath();
+    ctx.moveTo(xTo(tMin), yTo(targetX)); ctx.lineTo(xTo(tMax), yTo(targetX)); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle="#7af0a0"; ctx.font="10px monospace"; ctx.fillText("target "+targetX.toFixed(1)+" мкм", W-150, yTo(targetX)-4);
+  }
+  // user route (dashed white)
+  if(userRoute){
+    ctx.strokeStyle="#ffffff"; ctx.lineWidth=1; ctx.setLineDash([2,4]); ctx.beginPath();
+    ctx.moveTo(xTo(userRoute.t[0]), yTo(userRoute.x[0])); ctx.lineTo(xTo(userRoute.t[1]), yTo(userRoute.x[1])); ctx.stroke(); ctx.setLineDash([]);
+  }
+  // well (синий)
+  if(document.getElementById('chkWell')?.checked && wellX && wellT){
+    ctx.strokeStyle="#5ac8ff"; ctx.lineWidth=2; ctx.beginPath();
+    wellX.forEach((y,i)=>{ let x=xTo(wellT[i]); if(i===0) ctx.moveTo(x,yTo(y)); else ctx.lineTo(x,yTo(y));}); ctx.stroke();
+  }
+  // quantum (зелёный)
+  if(document.getElementById('chkQuantum')?.checked && qX && qT){
+    ctx.strokeStyle="#7af0a0"; ctx.lineWidth=2; ctx.beginPath();
+    qX.forEach((y,i)=>{ let x=xTo(qT[i]); if(i===0) ctx.moveTo(x,yTo(y)); else ctx.lineTo(x,yTo(y));}); ctx.stroke();
+    // dots for quantum at sparse?
+  }
+  // classical (оранжевый пунктир)
+  if(document.getElementById('chkClassical')?.checked && cX && cT){
+    ctx.strokeStyle="#ffbe55"; ctx.lineWidth=1.8; ctx.setLineDash([7,3]); ctx.beginPath();
+    cX.forEach((y,i)=>{ let x=xTo(cT[i]); if(i===0) ctx.moveTo(x,yTo(y)); else ctx.lineTo(x,yTo(y));}); ctx.stroke(); ctx.setLineDash([]);
+  }
+  // error mode: if zoom error, draw error
+  if(zoom==='error' && wellX && qX){
+    // overlay error*10 as red
+    ctx.strokeStyle="#ff6b7a"; ctx.lineWidth=1.4; ctx.beginPath();
+    qX.forEach((y,i)=>{ let wi = wellX[Math.min(i, wellX.length-1)]; let err = (y - wi)*10; let x=xTo(qT[i]); if(i===0) ctx.moveTo(x,yTo(err)); else ctx.lineTo(x,yTo(err));}); ctx.stroke();
+    ctx.fillStyle="#ff6b7a"; ctx.font="9px sans-serif"; ctx.fillText("ошибка ×10 (квант−яма)", 70, 30);
+  }
+  // axis ticks
+  ctx.fillStyle="#8aa0c8"; ctx.font="9px monospace";
+  ctx.fillText(tMin.toFixed(1), 62, H-7); ctx.fillText(tMax.toFixed(1), W-40, H-7);
+  ctx.fillText(yMin.toFixed(1), 4, H-22); ctx.fillText(yMax.toFixed(1), 4, 26);
+  // legend
+  let leg = document.getElementById('trajLegend');
+  leg.innerHTML = `
+    <span style="display:inline-flex;align-items:center;gap:6px"><i style="width:14px;height:3px;background:#5ac8ff;display:inline-block;border-radius:99px"></i> яма (реализ. well)</span>
+    <span style="display:inline-flex;align-items:center;gap:6px;margin-left:12px"><i style="width:14px;height:3px;background:#7af0a0;display:inline-block;border-radius:99px"></i> квантовый &lt;r&gt;</span>
+    <span style="display:inline-flex;align-items:center;gap:6px;margin-left:12px"><i style="width:14px;height:3px;background:#ffbe55;display:inline-block;border-radius:2px;border:1px dashed #ffbe55"></i> классический</span>
+    <span style="display:inline-flex;align-items:center;gap:6px;margin-left:12px"><i style="width:14px;height:2px;background:#7af0a0;display:inline-block"></i> target</span>
+    <span style="color:var(--muted);margin-left:12px">разница ион−яма ≈0.001 мкм → видна только в zoom error</span>`;
+  // stats
+  if(stats){
+    let lastWell = wellX? wellX[wellX.length-1]:null;
+    let lastQ = qX? qX[qX.length-1]:null;
+    let err = (lastWell!==null && lastQ!==null) ? (lastQ-lastWell) : null;
+    let posErr = bundle.trajectory? (Math.abs(lastQ-targetX)||0) : null;
+    let n = state.hall_of_fame?.[0]?.n_total;
+    stats.textContent = `well ${lastWell?.toFixed(3)} мкм | квант ${lastQ?.toFixed(3)} мкм | ошибка яма-ион ${err!==null?err.toFixed(4):"—"} мкм | pos→target ${posErr!==null?posErr.toFixed(4):"—"} мкм | n=${n!=null?n.toExponential(2):"—"}`;
+  }
+}
+
 function drawIslands(state){
   const tbl=document.getElementById('islandTable'), log=document.getElementById('migrLog')
   if(!state){ tbl.innerHTML=""; return}
@@ -460,7 +631,7 @@ async function poll(){
     document.getElementById('liveDot').style.background="#6ef0a8"
     document.getElementById('raw').textContent=JSON.stringify(j, null, 2).slice(0,8000)
     updateKVs(j)
-    drawFitness(j); drawDivers(j); drawHist(j); drawHall(j); drawHeat(j); drawPareto(j); drawIslands(j)
+    drawFitness(j); drawDivers(j); drawHist(j); drawHall(j); drawHeat(j); drawPareto(j); drawTrajectories(j); drawIslands(j)
   }catch(e){
     document.getElementById('liveText').textContent="poll error: "+e.message.slice(0,60)
     document.getElementById('liveDot').style.background="#ff6b7a"
@@ -475,6 +646,10 @@ function init(){
     let c=document.getElementById('cFitness')
     let a=document.createElement('a'); a.download="fitness.png"; a.href=c.toDataURL(); a.click()
   }
+  // trajectory controls live redraw
+  ['chkWell','chkQuantum','chkClassical','chkTarget','selTrajZoom'].forEach(id=>{
+    let el=document.getElementById(id); if(el) el.addEventListener('change',()=>{ if(lastState) drawTrajectories(lastState); });
+  });
   poll(); setInterval(poll, 1500)
   // also try to keep sparkHist across reloads via localStorage
   try{

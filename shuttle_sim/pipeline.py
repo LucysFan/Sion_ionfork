@@ -235,7 +235,7 @@ class Runner:
         return r,H,final,diag
 
     def evaluate(self,theta,baseline='smooth',ideal=False,hardware=None,stray=None,
-                 exact_nodes=None,method='exact',subdivisions=None,keep=False,frequency_scale=1.):
+                 exact_nodes=None,method='exact',subdivisions=None,keep=False,frequency_scale=1., return_trajectory=False, trajectory_decimate=400):
         ct,cmd,route=self.commands(theta,baseline)
         hw=hardware or self.hw
         t,v,codes,dist=hw.deliver(cmd,subdivisions or self.cfg.get('subdivisions',4),ideal)
@@ -258,7 +258,7 @@ class Runner:
             init=Local(init.position_m,init.hessian_J_m2*frequency_scale**2,init.omega_rad_s*frequency_scale,init.modes)
             final=Local(final.position_m,final.hessian_J_m2*frequency_scale**2,final.omega_rad_s*frequency_scale,final.modes)
         target=self.target if self.task['protocol']=='one_way' else self.start
-        result=propagate(t,r,H,init,final,self.trap.mass,target,method,hold='zero_order' if ideal else 'linear')
+        result=propagate(t,r,H,init,final,self.trap.mass,target,method,hold='zero_order' if ideal else 'linear', return_trajectory=return_trajectory, trajectory_decimate=trajectory_decimate)
         result['distortion']=dist
         result['accepted']=bool(result['n_total']<=self.task['max_n_total'] and
              result['position_error_m']<=self.task['position_tolerance_m'] and
