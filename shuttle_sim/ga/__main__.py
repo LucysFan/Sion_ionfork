@@ -32,11 +32,11 @@ def main():
         ga_cfg["generations"]=20
     if "islands" not in ga_cfg:
         ga_cfg["islands"]=[
-            {"strategy":"S","pop":20,"baseline":"sta"},
+            {"strategy":"S","pop":20,"baseline":"smooth"},
             {"strategy":"A","pop":20,"baseline":"sta"},
             {"strategy":"V","pop":20,"baseline":"sta"},
             {"strategy":"R","pop":25,"baseline":"sta"},
-            {"strategy":"H","pop":20,"baseline":"sta"},
+            {"strategy":"H","pop":20,"baseline":"smooth"},
         ]
     if "migration_interval" not in ga_cfg: ga_cfg["migration_interval"]=5
     if "n_migrants" not in ga_cfg: ga_cfg["n_migrants"]=2

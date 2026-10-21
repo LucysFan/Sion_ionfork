@@ -13,8 +13,8 @@ BOUNDS_8 = [(-0.10,0.10),(-0.10,0.10)] + [(-0.4,0.4)]*6
 BOUNDS_10 = BOUNDS_8 + [(-0.15,0.15), (-0.15,0.15)]
 
 ISLAND_GENE_DIMS = {
-    "S": 8, "A": 8, "V": 10, "R": 8, "H": 8,
-    "smooth":8, "sta":8, "variable":10, "robust":8, "hardware":8
+    "S": 8, "A": 8, "V": 10, "R": 8, "H": 8, "F": 10,
+    "smooth":8, "sta":8, "variable":10, "robust":8, "hardware":8, "free":10
 }
 
 def clip_to_bounds(theta, bounds):

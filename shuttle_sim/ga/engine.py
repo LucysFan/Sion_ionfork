@@ -40,8 +40,9 @@ class GAEngine:
             isl.initialize()
             self.islands.append(isl)
         if not self.islands:
-            # default 5 islands as per architecture
-            defaults=[("S",20,"sta"),("A",20,"sta"),("V",20,"sta"),("R",25,"sta"),("H",20,"sta")]
+            # default 5 islands — разные базы, не только STA (STA «не радует» в эксперименте)
+            defaults=[("S",20,"smooth"),("A",20,"sta"),("V",20,"sta"),("R",25,"sta"),("H",20,"smooth")]
+            # S=smooth адиабатика, A=STA короткий, V=variable частота, R=robust, H=hardware/lowpass
             for i,(s,p,b) in enumerate(defaults):
                 isl=Island(i,s,p, rng=self.rng.integers(0,1<<31), baseline=b)
                 isl.initialize()
@@ -58,20 +59,52 @@ class GAEngine:
         self._dashboard_thread=None
 
     def _update_hall(self):
-        # collect all islands best — include not-ok but finite fitness (strict tol makes ok rare)
+        # collect all finite — include not-ok but finite fitness (strict tol makes ok rare)
         all_genomes=[]
         for isl in self.islands:
             for g in isl.population:
                 if g.fitness is not None and g.fitness < 1e6:
                     all_genomes.append(g)
-        # fallback: if all rejected, keep best rejected for debugging
         if not all_genomes:
             for isl in self.islands:
                 for g in isl.population:
                     if g.fitness is not None:
                         all_genomes.append(g)
         all_genomes.sort(key=lambda g: g.fitness)
-        self.hall_of_fame=all_genomes[:self.hall_size]
+        # --- diversity-aware hall: not just top-N by fitness, but distinct trajectories ---
+        # STA — лишь одна из инициализаций, GA ищет во всём пространстве 8-10 генов.
+        # Чтобы зал не схлопнулся в один STA-локальный минимум, фильтруем по θ-расстоянию
+        # (прокси траектории: theta→ΔV→смещение минимума).
+        min_dist = float(self.cfg.get('hall_diversity_min_distance', 0.12))
+        diverse_hall=[]
+        for g in all_genomes:
+            if not diverse_hall:
+                diverse_hall.append(g)
+                continue
+            dmin = min(g.distance(h) for h in diverse_hall)
+            if dmin >= min_dist:
+                diverse_hall.append(g)
+            # пропускаем близкого конкурента STA-кластера, ищем следующую ветвь
+            if len(diverse_hall) >= self.hall_size:
+                break
+        # fallback: если разнообразных не хватило (все в одном кластере), добиваем лучшими по fitness
+        if len(diverse_hall) < self.hall_size:
+            for g in all_genomes:
+                if g not in diverse_hall:
+                    diverse_hall.append(g)
+                    if len(diverse_hall) >= self.hall_size:
+                        break
+        self.hall_of_fame=diverse_hall[:self.hall_size]
+        # store diagnostic: mean pairwise distance inside hall for dashboard
+        self._hall_diversity = 0.0
+        if len(self.hall_of_fame) > 1:
+            ds=[]
+            for i in range(len(self.hall_of_fame)):
+                for j in range(i+1, len(self.hall_of_fame)):
+                    try:
+                        ds.append(self.hall_of_fame[i].distance(self.hall_of_fame[j]))
+                    except: pass
+            self._hall_diversity = float(np.mean(ds)) if ds else 0.0
 
     def _write_state(self):
         # build dashboard state
@@ -92,10 +125,11 @@ class GAEngine:
                 best = self.hall_of_fame[0]
                 # use cached trajectory if exists and gen hasn't changed much, else recompute
                 if 'trajectory' not in best.metrics or self.global_gen % 2 == 0:
-                    # recompute with cheap trajectory capture (decimated 200, exact ROM 200 nodes)
                     theta8 = best.to_theta8()
-                    # cheap trajectory with return_trajectory, use runner's current config subdivisions
-                    res_traj = self.runner.evaluate(theta8, baseline='sta', exact_nodes=200, subdivisions=self.runner.cfg.get('subdivisions',4), return_trajectory=True, trajectory_decimate=250)
+                    # используем baseline острова лучшего, а не хардкод sta — иначе всегда STA, даже если выиграл smooth/F
+                    best_baseline = 'smooth' if best.island in ('S','H') else 'sta'
+                    # если остров F/variable — всё равно sta как база, freq-genes отдельно
+                    res_traj = self.runner.evaluate(theta8, baseline=best_baseline, exact_nodes=200, subdivisions=self.runner.cfg.get('subdivisions',4), return_trajectory=True, trajectory_decimate=250)
                     # store in metrics for hall entry
                     best.metrics['trajectory'] = res_traj.get('trajectory')
                     # also try classical centroid trajectory for comparison (more expensive, only if enabled and every 5 gens)
@@ -103,8 +137,7 @@ class GAEngine:
                     if classical_enabled and (self.global_gen % 5 == 0 or self.global_gen == self.generations):
                         try:
                             from ..dynamics import validate_full_field_centroid
-                            # need full trace t,v for classical (decimated to keep it light)
-                            _, trace = self.runner.evaluate(theta8, baseline='sta', exact_nodes=120, subdivisions=4, keep=True)
+                            _, trace = self.runner.evaluate(theta8, baseline=best_baseline, exact_nodes=120, subdivisions=4, keep=True)
                             classical = validate_full_field_centroid(self.runner.trap, trace['t'], trace['v'], trace['initial'], self.runner.target if self.runner.task['protocol']=='one_way' else self.runner.start, return_trajectory=True, trajectory_decimate=150)
                             best.metrics['classical_trajectory'] = classical.get('trajectory')
                         except Exception as e_cls:
@@ -165,6 +198,7 @@ class GAEngine:
             elapsed_s=time.time()-self.start_time,
             islands=islands_state,
             hall_of_fame=hall,
+            hall_diversity=float(getattr(self,'_hall_diversity',0.0)),
             trajectory=traj_bundle,
             migration_history=self.migration.history,
             cuda=self.cuda,

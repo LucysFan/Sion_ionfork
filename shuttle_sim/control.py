@@ -6,6 +6,10 @@ Four physically meaningful families are supported; closed-loop must stay low-dim
 The Runner currently implements two baselines (smooth, STA) plus a corrective
 basis – this module documents them and adds the missing voltage-knot and
 frequency-profile forms so the architecture explicitly shows all four.
+
+STA — лишь частный случай: smooth+STA — два полинома, поверх них 6-мерная
+коррекция в R_svd (острова S/A/H) и 10-мерная с variable ω (острова V/F)
+генерит уже произвольное семейство не-STA траекторий, отбираемое по n_total.
 """
 from dataclasses import dataclass
 from typing import Literal

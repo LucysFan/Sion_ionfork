@@ -17,18 +17,19 @@ class Island:
         self.params = self._strategy_params(strategy)
 
     def _strategy_params(self, s):
-        # tune per island
         base = dict(mutation_sigma=0.06, cx_rate=0.7, tour_k=3, elite=2)
         if s in ('S','smooth'):
-            return dict(mutation_sigma=0.04, cx_rate=0.7, tour_k=3, elite=2, desc="smooth explorer, low sigma")
+            return dict(mutation_sigma=0.04, cx_rate=0.7, tour_k=3, elite=2, desc="smooth explorer, low sigma (не STA)")
         if s in ('A','sta'):
             return dict(mutation_sigma=0.06, cx_rate=0.9, tour_k=5, elite=2, desc="STA explorer, high cx")
         if s in ('V','variable'):
-            return dict(mutation_sigma=0.08, cx_rate=0.9, tour_k=3, elite=2, desc="variable freq, 10 genes")
+            return dict(mutation_sigma=0.08, cx_rate=0.9, tour_k=3, elite=2, desc="variable freq 10 генов, проваливает ω")
         if s in ('R','robust'):
             return dict(mutation_sigma=0.06, cx_rate=0.7, tour_k=5, elite=3, desc="robust, larger elite")
         if s in ('H','hardware'):
-            return dict(mutation_sigma=0.05, cx_rate=0.7, tour_k=3, elite=2, desc="hardware penalty")
+            return dict(mutation_sigma=0.05, cx_rate=0.7, tour_k=3, elite=2, desc="hardware penalty lowpass")
+        if s in ('F','free'):
+            return dict(mutation_sigma=0.07, cx_rate=0.8, tour_k=3, elite=2, desc="free-form 10 генов, без привязки к STA/smooth")
         return base
 
     def initialize(self, seed_genome=None):
