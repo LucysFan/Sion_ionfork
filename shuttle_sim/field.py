@@ -147,36 +147,71 @@ def load_trap(cfg):
                 d['bottom_rf'],d['central_dc'],L=L,need_plot=False)
     elif cfg['kind'] == 'gds':
         # No implicit polygon order: fabrication layers are not channel IDs.
-        from gdspy import GdsLibrary
+        # Primary backend: gdspy (if installed). Fallback: pure-python python-gdsii
+        # to avoid binary build requirement in restricted environments.
         from sion.electrode import System, PolygonPixelElectrode
         from sion.electrode.utils import area_centroid
-        lib = GdsLibrary(infile=cfg['path'])
-        cells = lib.top_level()
-        if cfg.get('cell'):
-            cells = [lib.cells[cfg['cell']]]
-        if len(cells) != 1:
-            raise ValueError('select exactly one GDS top-level cell')
-        polygons = cells[0].get_polygons(by_spec=True)
         mapping = cfg.get('electrode_map')
         if not mapping:
             raise ValueError('GDS requires explicit electrode_map: name, layer, datatype')
-        electrodes=[]; used=set()
+        used=set()
+        # Try gdspy first
+        polygons_by_spec = None
+        lib_unit = None
+        try:
+            from gdspy import GdsLibrary
+            lib = GdsLibrary(infile=cfg['path'])
+            cells = lib.top_level()
+            if cfg.get('cell'):
+                cells = [lib.cells[cfg['cell']]]
+            if len(cells) != 1:
+                raise ValueError('select exactly one GDS top-level cell')
+            polygons_by_spec = cells[0].get_polygons(by_spec=True)
+            lib_unit = float(lib.unit)
+        except ImportError:
+            # Fallback pure python
+            from gdsii.library import Library
+            lib = Library.load(open(cfg['path'], 'rb'))
+            # Select cell
+            cells = list(lib)
+            if cfg.get('cell'):
+                cells = [c for c in cells if c.name.decode() == cfg['cell'] or c.name == cfg['cell'].encode()]
+            if len(cells) != 1:
+                raise ValueError('select exactly one GDS top-level cell')
+            cell = cells[0]
+            # physical_unit is meters per database unit; convert to same convention as gdspy
+            # gdspy unit: microns per database? But we use lib.unit/L.
+            # For python-gdsii, scale = physical_unit / L
+            lib_unit = float(lib.physical_unit)
+            polygons_by_spec = {}
+            for elem in cell:
+                from gdsii.elements import Boundary
+                if isinstance(elem, Boundary):
+                    spec = (int(elem.layer), int(elem.data_type))
+                    # elem.xy are tuples of (x,y) in database units (integers)
+                    pts = np.asarray(elem.xy, float)
+                    # Close polygon if not already closed
+                    if not np.allclose(pts[0], pts[-1]):
+                        pts = np.vstack([pts, pts[0]])
+                    polygons_by_spec.setdefault(spec, []).append(pts)
+        electrodes=[]
         for entry in mapping:
             spec=(int(entry['layer']),int(entry.get('datatype',0)))
             if spec in used:
                 raise ValueError('GDS layer/datatype assigned twice')
             used.add(spec)
+            raw_polys = polygons_by_spec.get(spec, [])
+            if not raw_polys:
+                raise ValueError('mapped GDS electrode has no polygons')
             paths=[]
-            for poly in polygons.get(spec,[]):
-                # gdspy coordinates are in library user units, not necessarily um.
-                poly=finite(poly,'GDS polygon')*(lib.unit/L)
-                area,_=area_centroid(poly)
+            for poly in raw_polys:
+                # Scale to meters via lib_unit, then to normalized L units
+                poly_scaled = finite(poly,'GDS polygon')*(lib_unit/L)
+                area,_=area_centroid(poly_scaled)
                 if abs(area)<1e-18:
                     raise ValueError('degenerate GDS polygon')
                 # Positive physical unit-voltage potential: CCW viewed from above.
-                paths.append(poly[::-1] if area<0 else poly)
-            if not paths:
-                raise ValueError('mapped GDS electrode has no polygons')
+                paths.append(poly_scaled[::-1] if area<0 else poly_scaled)
             electrodes.append(PolygonPixelElectrode(name=entry['name'],paths=paths))
         if len({e.name for e in electrodes})!=len(electrodes):
             raise ValueError('unique electrode names required')

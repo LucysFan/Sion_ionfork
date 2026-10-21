@@ -1,0 +1,15 @@
+{
+  "passed": true,
+  "checks": {
+    "voltage_bounds": "ok",
+    "max_margin_V": 11.859555962910347,
+    "max_jump_V": 0.009661474347479881,
+    "slew_proxy": "ok",
+    "max_deviation_V": 0.09666920633558185,
+    "filter_consistency": "ok",
+    "min_frequency_hz": 687911.1668817139,
+    "confinement": "ok"
+  },
+  "failure_code": null,
+  "failure_message": null
+}

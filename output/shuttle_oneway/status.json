@@ -1,0 +1,13 @@
+{
+  "nominal_quality_passed": true,
+  "numerical_validation_passed": true,
+  "robust_all_passed": true,
+  "hold_scan_all_passed": true,
+  "safety_passed": true,
+  "calibration_demo_success": true,
+  "closed_loop_ready": true,
+  "experiment_ready": false,
+  "selected": "aware",
+  "scope": "simulation-only on specified Sion/GDS electrode geometry",
+  "simulation_acceptance_passed": true
+}

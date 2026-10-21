@@ -12,7 +12,20 @@ def main():
     a=p.parse_args();out=Path(a.out);out.mkdir(parents=True,exist_ok=True)
     cfg=json.loads(Path(a.config).read_text())
     if cfg['trap']['kind']=='gds':
-        cfg['trap']['path']=str((Path(a.config).resolve().parent/cfg['trap']['path']).resolve())
+        p = Path(cfg['trap']['path'])
+        if not p.is_absolute():
+            # try relative to config file, then relative to cwd
+            cand = (Path(a.config).resolve().parent / p)
+            if cand.exists():
+                p = cand.resolve()
+            else:
+                # also try repo-root relative
+                cand2 = (Path.cwd() / p)
+                if cand2.exists():
+                    p = cand2.resolve()
+                else:
+                    p = cand.resolve()  # will fail later with clear error
+        cfg['trap']['path']=str(p)
     try:
         status=Runner(cfg).run(out,a.full_field)
     except (Rejected,ValueError,FileNotFoundError) as e:
