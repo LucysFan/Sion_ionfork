@@ -48,15 +48,19 @@ def evaluate_genome(genome, runner, baseline='sta', exact_nodes=None, hardware=N
 
     Populates genome.fitness, genome.metrics, genome.status.
     """
-    theta8 = genome.to_theta8()
-    # handle variable island: need to set frequency_coeffs in runner task temporarily
+    # для GA 8/10/12 — 8 отдаём в Runner, остальное — частоты (1-2 провала)
+    theta_for_runner = genome.theta if genome.dim in (8,10,12) else genome.to_theta8()
+    # для 8 Runner ждёт 8, для 10/12 — тоже 8 вольтовых (частоты отдельно в ω(s) через prepare)
+    # но чтобы не ломать prepare каждый раз, для cheap fitness аппроксимируем частоты как warp
+    theta8 = genome.to_theta8() if genome.dim==8 else genome.theta[:8].copy()
     orig_coeffs = runner.task.get('frequency_coeffs', None)
     orig_mode = runner.task.get('frequency_mode', 'fixed')
     need_restore=False
-    if genome.dim==10:
-        # variable frequency island: use g8,g9
+    if genome.dim>=10:
+        # V/F/M islands: g8.. хранят частоту (2 или 4 коэфф. → 1-2 провала)
+        nfreq = genome.dim - 8
         runner.task['frequency_mode']='variable'
-        runner.task['frequency_coeffs']=genome.theta[8:10].tolist()
+        runner.task['frequency_coeffs']=genome.theta[8:8+nfreq].tolist()
         need_restore=True
         # need re-prepare if sroute changes? omega only affects voltage inversion, not Hspline?
         # For cheap case we can keep prepared splines, but to be correct we would need to re-prepare

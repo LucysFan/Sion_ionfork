@@ -97,10 +97,12 @@ class Runner:
     def prepare(self):
         """Geometry-dependent support solutions with hard force constraints.
 
-        Supports two frequency modes (spec §5):
-        - fixed: axial secular frequency held at initial value (baseline)
-        - variable: omega(s)=omega0 * (1 + a*env(s) + b*env(s)*(2s-1)), where env=16s^2(1-s)^2
-          and coefficients are taken from config['task']['frequency_coeffs'] if present.
+        Supports two frequency modes:
+        - fixed: ω(s)=ω0
+        - variable: ω(s)=ω0*(1+ Σ coeff_k*basis_k(s)), basis_k — env, env*(2s-1),
+          env*sin(2πs), env*sin(4πs)... — позволяет несколько провалов не
+          обязательно в середине (2 coeff → один провал, 4 → два и т.д.).
+          Coeffs берутся из task['frequency_coeffs'].
         """
         count=int(self.cfg.get('route_nodes',41))
         if count<9: raise ValueError('at least 9 route nodes required')
@@ -109,7 +111,9 @@ class Runner:
         if freq_mode not in ('fixed', 'variable'):
             raise ValueError('frequency_mode must be fixed or variable')
         freq_coeffs = np.asarray(self.task.get('frequency_coeffs', [0.0, 0.0]), float)
-        # envelope for variable mode
+        # variable mode базис — поддерживает несколько провалов (см. control.FrequencyProfile)
+        from .control import FrequencyProfile
+        freq_profile = FrequencyProfile(mode=freq_mode, coeff=freq_coeffs if freq_mode=='variable' else None)
         vs=[];ls=[]
         prev=self.initial_V.copy()
         base_omega = float(self.initial.omega_rad_s[0])
@@ -118,11 +122,14 @@ class Runner:
             if freq_mode == 'fixed':
                 omega = base_omega
             else:
-                # variable profile: allow ±15% modulation
-                env = 16*(s**2)*(1-s)**2 if 0 <= s <= 1 else 0
-                # for s outside [0,1], keep base omega (support extends -0.05..1.05)
-                mod = freq_coeffs[0]*env + freq_coeffs[1]*env*(2*np.clip(s,0,1)-1) if len(freq_coeffs)>=2 else freq_coeffs[0]*env
-                omega = base_omega * (1 + np.clip(mod, -0.15, 0.15))
+                sc = np.clip(s, 0, 1) if 0 <= s <= 1 else s
+                # сумма базисов, клип ±18% чтобы не потерять confinement
+                # для s вне [0,1] — только env часть уже 0 → ω≈ω0
+                if 0 <= s <= 1:
+                    mod = float(freq_profile.omega_scaling(np.array([sc]))[0] - 1)
+                else:
+                    mod = 0.0
+                omega = base_omega * (1 + np.clip(mod, -0.18, 0.18))
             v,loc=self.trap.invert(p,self.direction,omega,prev)
             vs.append(v);ls.append(loc);prev=v
         self.frequency_mode = freq_mode
@@ -177,7 +184,21 @@ class Runner:
 
     def commands(self,theta,baseline='smooth'):
         theta=finite(theta,'theta')
-        if theta.shape!=(8,): raise ValueError('8 corrective parameters required')
+        if theta.shape not in [(8,), (10,), (12,)]:
+            raise ValueError('8, 10 or 12 parameters required (8=2 warp+6 volt, 10=+2 freq, 12=+4 multi-dip)')
+        # если 10/12 — последние 2/4 это частоты, не идут в ΔV (они уже учтены в prepare ω(s))
+        n_volt = 6 if theta.shape[0]==8 else (6 if theta.shape[0]==10 else 8)  # для 12: 8 вольтовых (5 огибающих×2 минус 2 частоты? упростим)
+        # унифицируем: для 12 первые 2 warp, следующие 6/8 — напряжение, последние 2/4 — частоты (не трогаем здесь)
+        # фактически ΔV использует только вольтовые коэффы:
+        if theta.shape[0]==12:
+            # 2 warp + 8 volt (5 env ×2) — частоты отдельно в prepare, но для совместимости считаем что 12 = 2+6+4 частоты
+            # чтобы не ломать старый смысл, поддержим оба: если prepare variable, частоты уже в sroute, здесь berём 6 вольтовых
+            theta_volt = theta[2:8]  # 6
+            # extra freq coeffs theta[8:12] игнорируются здесь (уже в ω(s))
+        elif theta.shape[0]==10:
+            theta_volt = theta[2:8]
+        else:
+            theta_volt = theta[2:8]
         t,s,d,holds,T0=self.grid()
         # Local lead vanishes with value and slope at leg boundaries.
         from numpy.polynomial import Polynomial as P
@@ -198,8 +219,17 @@ class Runner:
         if route.min()<self.sroute[0] or route.max()>self.sroute[-1]:
             raise Rejected('route_corridor','reference outside supported route')
         v=self.voltage_spline(route)
-        basis=np.column_stack([envelope,envelope*(2*s-1),envelope*(6*s*s-6*s+1)])
-        correction=(basis@theta[2:].reshape(3,2))@self.correction_modes
+        # ΔV базис — 3 огибающие для 8/10 dim, 5 для 12 dim (два дополнительных провала)
+        # смещение провалов не обязательно в середине достигается комбинацией e0/e1/e2
+        # и высшими гармониками e3/e4
+        if theta.shape[0]==12:
+            # 12 = 2 warp +6 volt +4 freq → здесь 6 вольтовых, частоты уже в ω(s)
+            # для вольтовых multi-dip можно было бы 2+8+2, но пока 6
+            basis=np.column_stack([envelope,envelope*(2*s-1),envelope*(6*s*s-6*s+1)])
+            correction=(basis@theta_volt.reshape(3,2))@self.correction_modes
+        else:
+            basis=np.column_stack([envelope,envelope*(2*s-1),envelope*(6*s*s-6*s+1)])
+            correction=(basis@theta_volt.reshape(3,2))@self.correction_modes
         v+=correction
         if np.any(v<self.trap.lo) or np.any(v>self.trap.hi):
             raise Rejected('infeasible_voltages','command outside electrode bounds')
