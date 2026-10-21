@@ -50,7 +50,10 @@ class Island:
                 evaluate_genome(g, runner, baseline=self.baseline, exact_nodes=None)
 
     def tournament(self, k=3):
-        cand=self.rng.choice(self.population, size=k, replace=False)
+        k_eff = min(int(k), len(self.population))
+        # if k > pop, sample with replacement
+        replace = k > len(self.population)
+        cand=self.rng.choice(self.population, size=k_eff, replace=replace)
         return min(cand, key=lambda g: g.fitness if g.fitness is not None else 1e9)
 
     def evolve_one_generation(self, runner):

@@ -58,7 +58,7 @@ def summarize(z,C,local,mass,target_m):
             'min_symplectic_eigenvalue_over_hbar_half':float(np.min(np.abs(sym))/(hbar*T/(2*mass*L**2)))}
 
 
-def propagate(times_s, centers_m, hessians_J_m2, initial, final, mass, target_m, method='exact',hold='linear'):
+def propagate(times_s, centers_m, hessians_J_m2, initial, final, mass, target_m, method='exact',hold='linear', return_trajectory=False, trajectory_decimate=400):
     ts=finite(times_s,'time');r=finite(centers_m,'centers');H=finite(hessians_J_m2,'H')
     if hold not in ('linear','zero_order'):
         raise ValueError('unknown hold rule')
@@ -70,6 +70,10 @@ def propagate(times_s, centers_m, hessians_J_m2, initial, final, mass, target_m,
     K=H/mass*T*T;c=r/L;tt=ts/T
     if np.min(np.linalg.eigvalsh(K))<=0:
         raise Rejected('weak_confinement','ROM Hessian not positive')
+    # trajectory capture
+    traj_times = [float(ts[0])] if return_trajectory else None
+    traj_means = [(z[:3]*L).tolist()] if return_trajectory else None
+    # we store decimated trajectory if large
     if method=='exact':
         for k,dt in enumerate(np.diff(tt)):
             km=K[k] if hold=='zero_order' else (K[k]+K[k+1])/2
@@ -82,6 +86,9 @@ def propagate(times_s, centers_m, hessians_J_m2, initial, final, mass, target_m,
             eq0=np.r_[c[k],velocity]
             eq1=np.r_[c[k] if hold=='zero_order' else c[k+1],velocity]
             z=eq1+S@(z-eq0);C=S@C@S.T
+            if return_trajectory:
+                traj_times.append(float(ts[k+1]))
+                traj_means.append((z[:3]*L).tolist())
     elif method=='dop853' and hold=='zero_order':
         for k,dt in enumerate(np.diff(tt)):
             A=np.block([[np.zeros((3,3)),np.eye(3)],[-K[k],np.zeros((3,3))]])
@@ -92,6 +99,9 @@ def propagate(times_s, centers_m, hessians_J_m2, initial, final, mass, target_m,
             sol=solve_ivp(rhs,(0,dt),np.r_[z,C.ravel()],method='DOP853',rtol=2e-10,atol=2e-13)
             if not sol.success: raise Rejected('numerical_failure',sol.message)
             z=sol.y[:6,-1];C=sol.y[6:,-1].reshape(6,6)
+            if return_trajectory:
+                traj_times.append(float(ts[k+1]))
+                traj_means.append((z[:3]*L).tolist())
     elif method=='dop853':
         def rhs(t,y):
             k=min(max(np.searchsorted(tt,t)-1,0),len(tt)-2)
@@ -105,12 +115,50 @@ def propagate(times_s, centers_m, hessians_J_m2, initial, final, mass, target_m,
         if not sol.success:
             raise Rejected('numerical_failure',sol.message)
         z=sol.y[:6,-1];C=sol.y[6:,-1].reshape(6,6)
+        # for dop853 continuous, build trajectory by sampling ts
+        if return_trajectory:
+            # sol sampled at dense output if available, else interpolate from y
+            # we have sol.y at tt points if max_step enforced, otherwise dense
+            if hasattr(sol,'y') and sol.y.shape[1]==len(tt):
+                for idx in range(1,len(tt)):
+                    traj_times.append(float(ts[idx]))
+                    traj_means.append((sol.y[:3,idx]*L).tolist())
+            else:
+                # fallback: sample at ts via sol.sol
+                try:
+                    y_dense = sol.sol(tt)
+                    for idx in range(1,len(tt)):
+                        traj_times.append(float(ts[idx]))
+                        traj_means.append((y_dense[:3,idx]*L).tolist())
+                except Exception:
+                    # last fallback: only final
+                    traj_times.append(float(ts[-1]))
+                    traj_means.append((z[:3]*L).tolist())
     else:
         raise ValueError('unknown propagator')
-    return summarize(z,C,final,mass,target_m)
+    summary = summarize(z,C,final,mass,target_m)
+    if return_trajectory:
+        # decimate if too long
+        if len(traj_times) > trajectory_decimate:
+            idx = np.linspace(0, len(traj_times)-1, trajectory_decimate, dtype=int)
+            traj_times = [traj_times[i] for i in idx]
+            traj_means = [traj_means[i] for i in idx]
+        summary['trajectory'] = {'times_s': traj_times, 'mean_positions_m': traj_means}
+        # also store well centers for convenience
+        # decimate well centers similarly
+        if len(ts) > trajectory_decimate:
+            didx = np.linspace(0, len(ts)-1, trajectory_decimate, dtype=int)
+            well_dec = r[didx].tolist()
+            ts_dec = ts[didx].tolist()
+        else:
+            well_dec = r.tolist()
+            ts_dec = ts.tolist()
+        summary['trajectory']['well_centers_m'] = well_dec
+        summary['trajectory']['well_times_s'] = ts_dec
+    return summary
 
 
-def validate_full_field_centroid(trap,times_s,voltages,initial,target_m,stray=None,frequency_scale=1.):
+def validate_full_field_centroid(trap,times_s,voltages,initial,target_m,stray=None,frequency_scale=1., return_trajectory=False, trajectory_decimate=400):
     """Nonlinear pseudopotential force; reports coherent excitation only, not total n."""
     if not np.isfinite(frequency_scale) or frequency_scale<=0:
         raise ValueError('positive frequency scale required')
@@ -126,7 +174,19 @@ def validate_full_field_centroid(trap,times_s,voltages,initial,target_m,stray=No
     omega=final.omega_rad_s*frequency_scale
     dx=final.modes.T@(z[:3]*L-final.position_m);vv=final.modes.T@(z[3:]*L/T)
     n=trap.mass*(vv*vv+omega**2*dx*dx)/(2*hbar*omega)
-    return {'coherent_n_modes':n.tolist(),'coherent_n_total':float(n.sum()),
+    out = {'coherent_n_modes':n.tolist(),'coherent_n_total':float(n.sum()),
             'mean_position_m':(z[:3]*L).tolist(),'mean_velocity_m_s':(z[3:]*L/T).tolist(),
             'position_error_m':float(np.linalg.norm(z[:3]*L-target_m)),
             'force_evaluations':sol.nfev,'model':'full Sion pseudopotential centroid; NOT full quantum n'}
+    if return_trajectory:
+        # sol.t in scaled units, sol.y [6, N]
+        times_si = (sol.t * T).tolist()
+        # decimate
+        if len(times_si) > trajectory_decimate:
+            idx = np.linspace(0, len(times_si)-1, trajectory_decimate, dtype=int)
+            times_si = [times_si[i] for i in idx]
+            traj = (sol.y[:3, idx].T * L).tolist()
+        else:
+            traj = (sol.y[:3].T * L).tolist()
+        out['trajectory'] = {'times_s': times_si, 'mean_positions_m': traj}
+    return out
