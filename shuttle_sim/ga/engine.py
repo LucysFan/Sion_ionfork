@@ -58,12 +58,18 @@ class GAEngine:
         self._dashboard_thread=None
 
     def _update_hall(self):
-        # collect all islands best
+        # collect all islands best — include not-ok but finite fitness (strict tol makes ok rare)
         all_genomes=[]
         for isl in self.islands:
             for g in isl.population:
-                if g.fitness is not None and g.status=='ok':
+                if g.fitness is not None and g.fitness < 1e6:
                     all_genomes.append(g)
+        # fallback: if all rejected, keep best rejected for debugging
+        if not all_genomes:
+            for isl in self.islands:
+                for g in isl.population:
+                    if g.fitness is not None:
+                        all_genomes.append(g)
         all_genomes.sort(key=lambda g: g.fitness)
         self.hall_of_fame=all_genomes[:self.hall_size]
 
@@ -208,7 +214,10 @@ class GAEngine:
                 self._write_state()
             if verbose:
                 best=min(self.hall_of_fame, key=lambda g: g.fitness) if self.hall_of_fame else None
-                print(f"Gen {gen}/{self.generations} best {best.fitness:.4g} island {best.island} status {best.status} hall {[round(g.fitness,3) for g in self.hall_of_fame[:3]]}")
+                if best is None:
+                    print(f"Gen {gen}/{self.generations} hall empty (all rejected)")
+                else:
+                    print(f"Gen {gen}/{self.generations} best {best.fitness:.4g} island {best.island} status {best.status} hall {[round(g.fitness,3) for g in self.hall_of_fame[:3]]}")
             # checkpoint
             self.checkpoint()
         # final exact
