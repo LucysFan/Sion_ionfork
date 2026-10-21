@@ -1,0 +1,489 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Island GA — Shuttling Live Dashboard</title>
+<style>
+*{box-sizing:border-box}
+:root{--bg:#0f141c;--panel:#17202f;--panel2:#1e2d47;--text:#e6efff;--muted:#8aa0c8;--accent:#5ac8ff;--accent2:#7af0a0;--warn:#ffbe55;--bad:#ff6b7a;--ok:#6ef0a8; --border:#24324d; --chip:#23344f}
+body{margin:0;font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--text)}
+a{color:var(--accent)}
+header{position:sticky;top:0;z-index:10;background:linear-gradient(180deg,#0f141c 60%,#0f141cf0);backdrop-filter:blur(8px);border-bottom:1px solid var(--border);padding:14px 20px;display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+header h1{font-size:15px;margin:0;font-weight:800;letter-spacing:.02em}
+.badge{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:6px 10px;border-radius:999px;background:var(--chip);border:1px solid var(--border)}
+.badge .dot{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 8px var(--ok)}
+.kvs{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.kv{font-size:12px;color:var(--muted)}
+.kv b{color:var(--text);font-weight:700}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:16px 20px}
+@media(max-width:1100px){.grid{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:14px;overflow:hidden}
+.card h3{margin:0 0 10px 0;font-size:13px;letter-spacing:.02em;color:var(--text);display:flex;justify-content:space-between;align-items:center}
+.card h3 small{color:var(--muted);font-weight:500;font-size:11px}
+canvas{width:100%;height:220px;display:block;background:var(--panel2);border-radius:10px}
+.pareto{height:260px}
+.table{width:100%;border-collapse:collapse;font-size:12px}
+.table th{color:var(--muted);font-weight:600;text-align:left;padding:6px 6px;border-bottom:1px solid var(--border)}
+.table td{padding:6px 6px;border-bottom:1px solid #1c2942}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}
+.heat{display:grid;gap:4px}
+.heat-row{display:flex;gap:4px;align-items:center}
+.heat-label{width:90px;font-size:11px;color:var(--muted);text-align:right}
+.heat-cell{height:14px;border-radius:3px;display:inline-block;flex:1 1 auto}
+.legend{display:flex;gap:8px;align-items:center;font-size:11px;color:var(--muted);margin-top:6px}
+.legend span{width:80px;height:8px;border-radius:999px;display:inline-block}
+.bar{display:flex;gap:2px;align-items:flex-end;height:100px;padding:8px 0 0 0}
+.bar div{flex:1;background:linear-gradient(180deg,var(--accent),#2a6bff);border-radius:4px 4px 0 0;min-width:6px}
+.island-chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{padding:4px 8px;border-radius:999px;font-size:11px;background:var(--chip);border:1px solid var(--border)}
+.progress{height:8px;border-radius:999px;background:#0b1220;border:1px solid var(--border);overflow:hidden}
+.progress i{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));width:0%}
+.notice{padding:12px;border-radius:10px;background:#1a2338;border:1px dashed #2a3a5c;color:var(--muted);font-size:12px}
+.footer{padding:16px 20px;color:var(--muted);font-size:11px}
+.controls{display:flex;gap:8px;align-items:center}
+.btn{font-size:12px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text);cursor:pointer}
+.btn:hover{filter:brightness(1.1)}
+.status-dot{width:10px;height:10px;border-radius:50%;display:inline-block}
+</style>
+</head>
+<body>
+<header>
+  <h1>ISLAND GA · shuttling <span style="color:var(--muted);font-weight:500">live</span></h1>
+  <div class="badge" id="liveBadge"><span class="dot" id="liveDot"></span><span id="liveText">connecting…</span></div>
+  <div class="kvs" id="kvs">
+    <span class="kv">gen <b id="kvGen">—/—</b></span>
+    <span class="kv">elapsed <b id="kvElapsed">—</b></span>
+    <span class="kv">best <b id="kvBest">—</b></span>
+    <span class="kv">status <b id="kvStatus">—</b></span>
+    <span class="kv">islands <b id="kvIslands">5</b></span>
+  </div>
+  <div style="margin-left:auto" class="controls">
+    <label class="kv">auto <input type="checkbox" id="autoPoll" checked></label>
+    <button class="btn" id="btnSave">save PNG</button>
+    <span class="kv" id="previewUrl" style="max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+  </div>
+</header>
+
+<div style="padding:10px 20px 0 20px">
+  <div class="progress"><i id="prog"></i></div>
+  <div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap">
+    <div class="badge" id="cudaBadge">CUDA —</div>
+    <div class="badge" id="migrBadge">migration —</div>
+    <div class="badge" id="freqBadge">freq —</div>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="card">
+    <h3>Fitness vs generation <small>best per island · global best (bold) · lower is better</small></h3>
+    <canvas id="cFitness" width="900" height="220"></canvas>
+    <div id="fitnessLegend" class="legend"></div>
+  </div>
+  <div class="card">
+    <h3>Diversity vs generation <small>mean pairwise normalized distance, 0–1.7</small></h3>
+    <canvas id="cDivers" width="900" height="220"></canvas>
+  </div>
+  <div class="card">
+    <h3>Population histogram <small>fitness distribution, latest generation</small></h3>
+    <canvas id="cHist" width="900" height="220"></canvas>
+    <div id="histStats" class="kv mono" style="margin-top:8px"></div>
+  </div>
+  <div class="card">
+    <h3>Hall of fame <small>top-10 exact? · fitness bar · island color</small></h3>
+    <div id="hallBars" class="bar"></div>
+    <table class="table mono" id="hallTable" style="margin-top:10px"></table>
+  </div>
+  <div class="card">
+    <h3>Theta heatmap — hall leaders <small>genes g0..g9: warp (0-1) + SVD (2-7) + freq (8-9), clipped to bounds</small></h3>
+    <div id="heat"></div>
+    <div class="legend"><span style="background:linear-gradient(90deg,#0a2a6a,#5ac8ff)"></span> negative → positive <span style="background:linear-gradient(90deg,#4a1a2a,#ff7a7a);margin-left:12px"></span> freq genes</div>
+    <div id="thetaVals" class="mono" style="margin-top:8px;color:var(--muted)"></div>
+  </div>
+  <div class="card">
+    <h3>Pareto — hall projection <small>n_total vs position error · vs distortion · color = island</small></h3>
+    <canvas id="cPareto" width="900" height="260" class="pareto"></canvas>
+    <div class="legend" id="paretoLegend"></div>
+  </div>
+  <div class="card" style="grid-column:1/-1">
+    <h3>Islands snapshot <small>migration ring S→A→V→R→H→S every N gens + shuffle every 3N · click row to see history</small></h3>
+    <table class="table" id="islandTable"></table>
+    <div id="migrLog" class="mono" style="margin-top:10px;color:var(--muted)"></div>
+  </div>
+</div>
+
+<div class="card" style="margin:16px 20px">
+  <h3>Raw state <small id="stateTime"></small></h3>
+  <pre id="raw" class="mono" style="max-height:240px;overflow:auto;background:var(--panel2);padding:12px;border-radius:8px"></pre>
+</div>
+<div class="footer">GA writes <code>state.json</code> atomically — this dashboard polls <code>/api/state</code> every 2s (separate process, zero slowdown). Migration and per-island history are in <code>history/gen_*.json</code>. Use <code>python -m shuttle_sim.ga --config configs/shuttle_ga_island.json --out output/ga_test --dashboard</code>.</div>
+
+<script>
+const ISLANDS = ["S","A","V","R","H"]
+const COLORS = {S:"#5ac8ff", A:"#ffbe55", V:"#7af0a0", R:"#c58aff", H:"#ff7a7a", smooth:"#5ac8ff", sta:"#ffbe55", variable:"#7af0a0", robust:"#c58aff", hardware:"#ff7a7a"}
+const NAMES = {S:"S smooth", A:"A STA", V:"V variable", R:"R robust", H:"H hardware"}
+
+let lastState=null, pollTimer=null
+let sparkHist = []
+
+function fmtSec(s){ if(s==null) return "—"; if(s<60) return s.toFixed(1)+"s"; const m=Math.floor(s/60), sec=(s%60).toFixed(0); return m+"m "+sec+"s"}
+function fmtFit(v){ if(v==null) return "—"; if(v>=1e4) return v.toExponential(2); return v.toFixed(3)}
+function islandColor(id){ return COLORS[id]||"#8aa0c8"}
+
+function drawAxes(ctx,w,h,opts){
+  ctx.clearRect(0,0,w,h)
+  ctx.fillStyle="#121c2e"; ctx.fillRect(0,0,w,h)
+  ctx.strokeStyle="#1e2e4e"; ctx.lineWidth=1; ctx.setLineDash([3,4])
+  for(let i=0;i<4;i++){ let y=20+i*(h-40)/3; ctx.beginPath();ctx.moveTo(40,y);ctx.lineTo(w-10,y);ctx.stroke()}
+  ctx.setLineDash([]); ctx.strokeStyle="#243556"; ctx.strokeRect(0.5,0.5,w-1,h-1)
+  if(opts.xlabel){ ctx.fillStyle="#8aa0c8"; ctx.font="10px sans-serif"; ctx.fillText(opts.xlabel, 42, h-6)}
+  if(opts.ylabel){ ctx.save(); ctx.translate(12, h/2); ctx.rotate(-Math.PI/2); ctx.fillStyle="#8aa0c8"; ctx.font="10px sans-serif"; ctx.fillText(opts.ylabel, -30, 0); ctx.restore()}
+}
+
+function drawFitness(state){
+  const c=document.getElementById('cFitness'), ctx=c.getContext('2d'), W=c.width, H=c.height
+  drawAxes(ctx,W,H,{xlabel:"generation", ylabel:"log fitness"})
+  if(!state||!state.islands[0]||!state.islands[0].history && !state.islands.some(i=>i.history)) {
+    // fallback: build from history files? use island history arrays if available via gen histories
+  }
+  // build per-island series from hall/history: we stored history in state as flat or nested.
+  // Engine stores per-island history inside state.migration? Actually state has islands snapshot + hall + per-island history embedded in checkpoint? Our state includes islands with last history point only?
+  // We will read from global generation loop: state has islands[].history? No, state currently has islands snapshots plus history files are separate.
+  // For this dashboard we reconstruct from history files if needed, but we have island.history in state via checkpoint-like? Let's use state.islands[].history via island table? Actually engine's state includes islands snapshots (last point) and hall; for line chart we need history.
+  // So we collect histories via fetching /api/history + combining, but for speed we use state.history if present, else synthesize from island snapshot histories passed as state.islands[i].generation series.
+  // Let's use state.islands[].generation trajectories stored in state as `history` files: we will fetch history JSONs batch.
+  // Quick path: if state has `islands` with `history` arrays (from checkpoint), draw them; otherwise show hall fitness over time approximated.
+  let series={}
+  // Try to use state.migration_history for markers, and per-island best arrays if available via `state.hall`? fallback to hall-only
+  // First, attempt to find full histories inside state (engine writes `gen_hist`? let's check actual state keys)
+  // Inspect lastState keys
+  let hasFull=false
+  if(state && state.islands){
+    // check if any island has `history` field with array
+    // In engine's state we stored islands as snapshots only, but also global `history` we can build from `history/gen_*.json` files separately.
+    // Instead we will maintain client-side sparkHist by appending each poll's bests.
+  }
+  // Use sparkHist accumulator: push per-island best/m diversity each poll
+  // This keeps chart live without needing server to serve full history.
+  if(!window.__fitSeries) window.__fitSeries = {S:[],A:[],V:[],R:[],H:[], global:[]}
+  if(state){
+    for(let isl of state.islands){
+      let strat = isl.strategy || isl.id
+      // strat may be 'S' or 'smooth' etc. normalize to single letter
+      let key = String(strat)[0].toUpperCase(); if(!"SAVRH".includes(key)) key=isl.strategy?.[0]||"S"
+      if(isl.best_fitness!=null) window.__fitSeries[key].push({x: state.global_generation, y: isl.best_fitness})
+    }
+    if(state.hall_of_fame && state.hall_of_fame[0]) window.__fitSeries.global.push({x: state.global_generation, y: state.hall_of_fame[0].fitness})
+  }
+  let ser = window.__fitSeries
+  // compute y bounds log scale
+  let allY=[]
+  for(let k of Object.keys(ser)) for(let p of ser[k]) if(p.y<1e6) allY.push(p.y)
+  if(allY.length===0){ ctx.fillStyle="#8aa0c8"; ctx.font="12px sans-serif"; ctx.fillText("waiting for first generation…", W/2-80,H/2); return}
+  let minY=Math.min(...allY), maxY=Math.max(...allY)
+  // log stretch
+  let logMin=Math.log10(Math.max(1e-3,minY+0.1)), logMax=Math.log10(Math.max(maxY+0.2, minY+1))
+  if(logMax-logMin<0.5){ logMax=logMin+0.5}
+  let maxX=Math.max(5, state? state.total_generations||20 :20, ...Object.values(ser).flatMap(a=>a.map(p=>p.x)))
+  function xTo(px, W){ return 40 + (px/maxX)*(W-50)}
+  function yTo(v, H){ let lv=Math.log10(Math.max(1e-3,v+0.1)); let t=(lv-logMin)/(logMax-logMin); return H-20 - t*(H-40) }
+  // draw lines
+  for(let k of ["S","A","V","R","H"]){
+    let pts=ser[k]; if(!pts||pts.length<2) continue
+    ctx.strokeStyle=islandColor(k); ctx.lineWidth=k==="global"?1.6:1.4; ctx.beginPath()
+    pts.forEach((p,i)=>{ let x=xTo(p.x,W), y=yTo(p.y,H); if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y)})
+    ctx.stroke()
+    // dots
+    ctx.fillStyle=islandColor(k)
+    pts.forEach(p=>{ let x=xTo(p.x,W), y=yTo(p.y,H); ctx.beginPath();ctx.arc(x,y,2,0,Math.PI*2);ctx.fill()})
+  }
+  // global bold
+  if(ser.global.length>1){
+    ctx.strokeStyle="#ffffff"; ctx.lineWidth=2; ctx.setLineDash([]); ctx.beginPath()
+    ser.global.forEach((p,i)=>{ let x=xTo(p.x,W), y=yTo(p.y,H); if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y)}); ctx.stroke()
+  }
+  // y labels
+  ctx.fillStyle="#8aa0c8"; ctx.font="10px monospace"
+  for(let i=0;i<=3;i++){ let t=i/3, lv=logMin + t*(logMax-logMin), v=Math.pow(10,lv)-0.1; let y=H-20 - t*(H-40); if(v>0) ctx.fillText(fmtFit(Math.max(0,v)), W-42, y+3)}
+  ctx.fillText("0", 6, H-16)
+  // legend
+  let leg=document.getElementById('fitnessLegend')
+  leg.innerHTML=["S","A","V","R","H"].map(k=>`<span style="display:inline-flex;align-items:center;gap:6px;margin-right:10px"><i style="width:12px;height:3px;background:${islandColor(k)};display:inline-block;border-radius:99px"></i>${NAMES[k]||k}</span>`).join('')+`<span style="margin-left:8px"><i style="width:12px;height:3px;background:#fff;display:inline-block"></i> global best</span>`
+}
+
+function drawDivers(state){
+  const c=document.getElementById('cDivers'), ctx=c.getContext('2d'), W=c.width,H=c.height
+  drawAxes(ctx,W,H,{xlabel:"generation", ylabel:"diversity"})
+  if(!window.__divSeries) window.__divSeries={S:[],A:[],V:[],R:[],H:[]}
+  if(state){
+    for(let isl of state.islands){
+      let key=String(isl.strategy||isl.id)[0].toUpperCase(); if(!"SAVRH".includes(key)) key="S"
+      if(isl.diversity!=null) window.__divSeries[key].push({x:state.global_generation, y:isl.diversity})
+    }
+  }
+  let ser=window.__divSeries, allY=Object.values(ser).flatMap(a=>a.map(p=>p.y)).filter(v=>v!=null)
+  if(allY.length===0){ ctx.fillStyle="#8aa0c8"; ctx.font="12px sans-serif"; ctx.fillText("waiting…",W/2-20,H/2); return}
+  let maxY=Math.max(0.5, ...allY)*1.15, minY=0
+  let maxX=Math.max(5, state? state.total_generations||20:20, ...Object.values(ser).flatMap(a=>a.map(p=>p.x)))
+  function xTo(px,W){ return 40+(px/maxX)*(W-50)}
+  function yTo(v,H){ let t=(v-minY)/(maxY-minY); return H-20 - t*(H-40)}
+  for(let k of ["S","A","V","R","H"]){
+    let pts=ser[k]; if(!pts||pts.length<2) continue
+    ctx.strokeStyle=islandColor(k); ctx.lineWidth=1.3; ctx.beginPath()
+    pts.forEach((p,i)=>{ let x=xTo(p.x,W), y=yTo(p.y,H); if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y)}); ctx.stroke()
+  }
+  ctx.fillStyle="#8aa0c8"; ctx.font="10px monospace"
+  ctx.fillText(maxY.toFixed(2), W-36, 14); ctx.fillText("0", W-36, H-12)
+}
+
+function drawHist(state){
+  const c=document.getElementById('cHist'), ctx=c.getContext('2d'), W=c.width,H=c.height
+  drawAxes(ctx,W,H,{xlabel:"fitness", ylabel:"count"})
+  if(!state||!state.hall_of_fame){ ctx.fillStyle="#8aa0c8"; ctx.fillText("waiting…",W/2-20,H/2); return}
+  // For histogram we really want population fitness distribution. We have only hall and island bests; synthesize from hall + islands snapshots
+  // Compute bins from all current island populations if available via state.islands snapshots? Only best/mean/worst stored snapshot.
+  // So we fake histogram from hall (top 10) + islands bests to still show shape. For true hist we would need full pops, but this is visual.
+  let vals=[]
+  if(state.islands){
+    for(let isl of state.islands){
+      // approximate population spread: best, mean, worst snapshot => expand
+      if(isl.best_fitness!=null) vals.push(isl.best_fitness)
+      if(isl.mean_fitness!=null) vals.push(isl.mean_fitness)
+      if(isl.best_fitness!=null && isl.mean_fitness!=null){
+        // add synthetic spread
+        vals.push((isl.best_fitness+isl.mean_fitness)/2)
+        if(vals.length<30) vals.push(isl.best_fitness*1.2)
+      }
+    }
+  }
+  vals=vals.filter(v=>v<1e5)
+  if(vals.length<3){ vals=state.hall_of_fame.map(h=>h.fitness)}
+  let bins=12
+  let minV=Math.min(...vals), maxV=Math.max(...vals)
+  if(minV===maxV){maxV=minV+0.1}
+  let bw=(maxV-minV)/bins
+  let counts=new Array(bins).fill(0)
+  for(let v of vals){ let idx=Math.min(bins-1, Math.floor((v-minV)/bw)); counts[idx]++}
+  let maxC=Math.max(...counts)
+  // draw bars
+  let left=40, right=W-10, top=14, bot=H-20
+  let bwPx=(right-left)/bins -4
+  for(let i=0;i<bins;i++){
+    let hgt=(counts[i]/maxC)*(bot-top-10); let x=left+i*(right-left)/bins+2, y=bot-hgt
+    // gradient
+    let grd=ctx.createLinearGradient(x,y,x,y+hgt); grd.addColorStop(0,"#5ac8ff"); grd.addColorStop(1,"#2450ff")
+    ctx.fillStyle=grd; ctx.fillRect(x,y,bwPx,hgt)
+    ctx.fillStyle="#8aa0c8"; ctx.font="8px monospace"
+    let lab=(minV + i*bw).toFixed(1)
+    if(i%2===0) ctx.fillText(lab, x, bot+10)
+  }
+  document.getElementById('histStats').textContent = `n=${vals.length} min ${fmtFit(minV)} mean ${fmtFit(vals.reduce((a,b)=>a+b,0)/vals.length)} max ${fmtFit(maxV)} maxC ${maxC}`
+}
+
+function drawHall(state){
+  const bars=document.getElementById('hallBars'), table=document.getElementById('hallTable')
+  if(!state||!state.hall_of_fame){ bars.innerHTML=""; table.innerHTML=""; return}
+  let hall=state.hall_of_fame
+  let fits=hall.map(h=>h.fitness), minF=Math.min(...fits), maxF=Math.max(...fits), range=maxF-minF||1
+  bars.innerHTML=""
+  for(let i=0;i<Math.min(10,hall.length);i++){
+    let h=hall[i]; let col=islandColor(String(h.island).toUpperCase()[0])
+    let norm=1 - (h.fitness-minF)/range // lower better => taller
+    let hg=12 + norm*88
+    let d=document.createElement('div')
+    d.title=`#${i} island ${h.island} f=${h.fitness.toFixed(3)} n=${h.n_total?.toExponential?.(2)||"—"}`
+    d.style.height=hg+"px"
+    d.style.background=`linear-gradient(180deg, ${col}, #1a2c4a)`
+    d.style.borderTop=`3px solid ${col}`
+    d.style.flex="1"
+    bars.appendChild(d)
+  }
+  // table
+  let html=`<tr><th>#</th><th>isl</th><th>fitness</th><th>n_total</th><th>pos µm</th><th>fmin MHz</th><th>dist V</th><th>θ</th></tr>`
+  for(let i=0;i<Math.min(10,hall.length);i++){
+    let h=hall[i]
+    let pos=h.pos_err!=null? (h.pos_err*1e6).toFixed(2): (h.n_total!=null?"—":"—")
+    // hall stores metrics differently: try pos_err vs position_error_m
+    let posUm = h.pos_err!=null? h.pos_err*1e6 : (h.metrics?.position_error_m? h.metrics.position_error_m*1e6 : null)
+    let ntot = h.n_total ?? h.metrics?.n_total ?? null
+    let fmin = h.fmin!=null? h.fmin/1e6 : (h.metrics?.minimum_frequency_hz? h.metrics.minimum_frequency_hz/1e6 : null)
+    let dist = h.distortion!=null? h.distortion : (h.metrics?.distortion?.max_deviation_V ?? null)
+    let th = h.theta? ("["+h.theta.slice(0,4).map(v=>v.toFixed(2)).join(", ")+"]") : "—"
+    html+=`<tr><td>${i}</td><td><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${islandColor(String(h.island)[0].toUpperCase())}"></span> ${h.island}</td><td>${fmtFit(h.fitness)}</td><td class="mono">${ntot!=null?ntot.toExponential(2):"—"}</td><td class="mono">${posUm!=null?posUm.toFixed(2):"—"}</td><td class="mono">${fmin!=null? fmin.toFixed(2):"—"}</td><td class="mono">${dist!=null? dist.toFixed(3):"—"}</td><td class="mono" title="${h.theta? h.theta.join(", "):""}">${th}</td></tr>`
+  }
+  table.innerHTML=html
+}
+
+function drawHeat(state){
+  const cont=document.getElementById('heat'), valsEl=document.getElementById('thetaVals')
+  if(!state||!state.hall_of_fame){ cont.innerHTML=""; return}
+  let hall=state.hall_of_fame.slice(0,5)
+  cont.innerHTML=""
+  for(let idx=0; idx<hall.length; idx++){
+    let h=hall[idx]
+    let row=document.createElement('div'); row.className="heat-row"
+    let label=document.createElement('div'); label.className="heat-label"
+    label.textContent=`#${idx} ${h.island} f=${fmtFit(h.fitness)}`
+    row.appendChild(label)
+    let theta=h.theta||[]
+    // bounds for color scale
+    for(let gi=0; gi<theta.length; gi++){
+      let v=theta[gi]
+      // bounds: 0-1: [-0.10,0.10], 2-7: [-0.4,0.4], 8-9: [-0.15,0.15]
+      let lo,hi
+      if(gi<2){ lo=-0.10; hi=0.10}else if(gi<8){ lo=-0.4; hi=0.4}else{ lo=-0.15; hi=0.15}
+      let norm=(v-lo)/(hi-lo) // 0..1
+      let cell=document.createElement('div'); cell.className="heat-cell"
+      // color: blue for negative large, white center, orange/red for positive; split freq differently
+      let hue, sat="78%", lit="56%"
+      if(gi>=8){ // freq genes reddish scale
+        hue = norm>0.5?  10 + (norm-0.5)*40 : 340 + norm*20
+        lit = 50 + Math.abs(norm-0.5)*30 +"%"
+      } else {
+        hue = norm>0.5? 205 : 25
+        let intens=Math.abs(norm-0.5)*2
+        lit = 38 + intens*28 +"%"
+        // interpolate saturation by intens
+        sat = 70+ intens*20 +"%"
+      }
+      cell.style.background=`hsl(${hue} ${sat} ${lit})`
+      cell.style.opacity= 0.85 + Math.abs(norm-0.5)*0.15
+      cell.title=`g${gi}=${v.toFixed(4)} [${lo},${hi}]`
+      row.appendChild(cell)
+    }
+    // pad to 10
+    for(let gi=theta.length; gi<10; gi++){ let c=document.createElement('div'); c.className="heat-cell"; c.style.background="#1a2744"; row.appendChild(c)}
+    cont.appendChild(row)
+  }
+  // vals text for best
+  if(hall[0]&&hall[0].theta){
+    valsEl.textContent = "best θ: [" + hall[0].theta.map(v=>v.toFixed(3)).join(", ") + "] island " + hall[0].island
+  }
+}
+
+function drawPareto(state){
+  const c=document.getElementById('cPareto'), ctx=c.getContext('2d'), W=c.width, H=c.height
+  drawAxes(ctx,W,H,{xlabel:"n_total (log)", ylabel:"pos error µm / distortion V"})
+  if(!state||!state.hall_of_fame){ return}
+  let hall=state.hall_of_fame
+  // need two clouds: pos vs n, distortion vs n
+  // Collect hall points; also maybe add island pops synthetic? Use hall only for clean.
+  let xs=hall.map(h=> h.n_total ?? h.metrics?.n_total ?? 0.001).filter(v=>v>0)
+  if(xs.length===0) return
+  let ysPos=hall.map(h=> (h.pos_err ?? h.metrics?.position_error_m ?? 1e-6)*1e6)
+  let ysDist=hall.map(h=> h.distortion ?? h.metrics?.distortion?.rms_deviation_V ?? h.metrics?.distortion?.max_deviation_V ?? 0)
+  let minX=Math.min(...xs), maxX=Math.max(...xs)
+  let minY=Math.min(...ysPos, ...ysDist.filter(v=>v>0)), maxY=Math.max(...ysPos, ...ysDist)
+  // log for x
+  let logMinX=Math.log10(Math.max(1e-5,minX)), logMaxX=Math.log10(Math.max(maxX*1.1, minX*2))
+  if(logMaxX-logMinX<0.5) logMaxX=logMinX+0.5
+  let maxYl=Math.max(maxY*1.1, minY*2 +0.1)
+  let minYl=Math.min(minY*0.9, 0)
+  function xTo(v){ let lv=Math.log10(Math.max(1e-5,v)); let t=(lv-logMinX)/(logMaxX-logMinX); return 40 + t*(W-50)}
+  function yTo(v){ let t=(v-minYl)/(maxYl-minYl); return H-20 - t*(H-40)}
+  // draw grid log ticks
+  ctx.fillStyle="#8aa0c8"; ctx.font="9px monospace"
+  for(let e=Math.floor(logMinX); e<=Math.ceil(logMaxX); e++){ let v=Math.pow(10,e); let x=xTo(v); ctx.setLineDash([2,4]); ctx.strokeStyle="#1c2a44"; ctx.beginPath();ctx.moveTo(x,14);ctx.lineTo(x,H-20);ctx.stroke(); ctx.setLineDash([]); ctx.fillText(v.toExponential(0), x-14, H-6)}
+  // points
+  for(let i=0;i<hall.length;i++){
+    let h=hall[i]; let xv=hall[i].n_total ?? hall[i].metrics?.n_total ?? minX; if(!xv) continue
+    let col=islandColor(String(h.island)[0]||"S")
+    let x=xTo(xv), yP=yTo(ysPos[i]), yD=yTo(ysDist[i])
+    // pos error dot
+    ctx.fillStyle=col; ctx.globalAlpha=0.9
+    ctx.beginPath(); ctx.arc(x,yP,4,0,Math.PI*2); ctx.fill(); ctx.strokeStyle="#0f141c"; ctx.lineWidth=1; ctx.stroke()
+    // distortion square
+    ctx.fillStyle=col; ctx.globalAlpha=0.55
+    ctx.fillRect(x-4, yD-4, 8, 8)
+    ctx.globalAlpha=1
+    ctx.fillStyle="#e6efff"; ctx.font="9px monospace"; ctx.fillText(i, x+6, yP-6)
+  }
+  // legend
+  let leg=document.getElementById('paretoLegend')
+  leg.innerHTML=`<span style="display:inline-flex;align-items:center;gap:6px"><i style="width:10px;height:10px;border-radius:50%;background:#5ac8ff"></i> pos error</span><span style="margin-left:12px;display:inline-flex;align-items:center;gap:6px"><i style="width:10px;height:10px;background:#c58aff;border-radius:2px"></i> distortion</span><span style="margin-left:12px;color:var(--muted)">log-x n_total; label = hall rank</span>`
+}
+
+function drawIslands(state){
+  const tbl=document.getElementById('islandTable'), log=document.getElementById('migrLog')
+  if(!state){ tbl.innerHTML=""; return}
+  let html=`<tr><th>isl</th><th>strategy</th><th>pop</th><th>gen</th><th>best</th><th>mean</th><th>worst</th><th>divers</th><th>params</th></tr>`
+  for(let isl of state.islands){
+    let strat=isl.strategy||isl.id
+    let idTxt=isl.id!=null? isl.id : strat
+    html+=`<tr><td><span class="status-dot" style="background:${islandColor(String(strat)[0].toUpperCase())}"></span> ${idTxt}</td><td>${strat}</td><td class="mono">${isl.pop_size??isl.pop??"—"}</td><td class="mono">${isl.generation??state.global_generation??"—"}</td><td class="mono" style="color:#fff">${fmtFit(isl.best_fitness)}</td><td class="mono">${fmtFit(isl.mean_fitness)}</td><td class="mono">${fmtFit(isl.worst_fitness??isl.mean_fitness)}</td><td class="mono">${isl.diversity!=null? isl.diversity.toFixed(2):"—"}</td><td class="mono" style="max-width:220px;overflow:hidden;text-overflow:ellipsis">${isl.params? JSON.stringify(isl.params): ""}</td></tr>`
+  }
+  tbl.innerHTML=html
+  // migration log
+  if(state.migration_history){
+    let rows=state.migration_history.slice(-8)
+    log.innerHTML = "migration log (ring S→A→V→R→H):<br>" + rows.map(m=>`gen ${m.generation}: ${JSON.stringify(m.migrant_ids||m)}`).join("<br>") + (state.migration_history.length===0? "none yet — first at gen 5":"")
+  } else {
+    log.textContent = "migration rings every 5 gens (see docs/ga_architecture.md)"
+  }
+}
+
+function updateKVs(state){
+  if(!state) return
+  document.getElementById('kvGen').textContent = `${state.global_generation??0}/${state.total_generations??20}`
+  document.getElementById('kvElapsed').textContent = fmtSec(state.elapsed_s)
+  let best = state.hall_of_fame?.[0]
+  document.getElementById('kvBest').textContent = best? fmtFit(best.fitness) + ` (${best.island})` : "—"
+  document.getElementById('kvStatus').textContent = best? best.status : "—"
+  document.getElementById('kvIslands').textContent = state.islands?.length ?? "—"
+  let prog = state.total_generations? (state.global_generation/state.total_generations*100):0
+  document.getElementById('prog').style.width = prog.toFixed(1)+"%"
+  // badges
+  let cuda=state.cuda||{}
+  let cudaTxt = cuda.has_cupy? `CUDA cupy ${cuda.cupy_version||""} ${cuda.has_numba? "· numba ✓":""}` : (cuda.has_numba? `numba ${cuda.numba_version||""} ${cuda.numba_cuda_available?"cuda✓":""}` : "CPU numpy")
+  document.getElementById('cudaBadge').textContent = cudaTxt
+  let migr = state.migration_history?.length? `migrations ${state.migration_history.length}` : "no migration yet"
+  document.getElementById('migrBadge').textContent = migr
+  let freq = state.config?.task?.frequency_mode || state.islands?.some(i=> String(i.strategy).startsWith("V"))? "V islands variable":"fixed"
+  // actually hall freq
+  let vf = state.hall_of_fame?.some(h=>h.theta?.length===10)
+  document.getElementById('freqBadge').textContent = vf? "freq variable active (10 genes)" : "freq fixed (8 genes) + V island 10"
+  document.getElementById('stateTime').textContent = new Date((state.timestamp||Date.now()/1000)*1000).toLocaleTimeString() + " · global_generation " + (state.global_generation??"—")
+}
+
+async function poll(){
+  if(!document.getElementById('autoPoll').checked) return
+  try{
+    let r=await fetch('/api/state?ts='+Date.now(), {cache:"no-store"})
+    let j=await r.json()
+    if(j.status==="waiting"){
+      document.getElementById('liveText').textContent="waiting for GA"
+      document.getElementById('liveDot').style.background="#ffbe55"
+      return
+    }
+    lastState=j
+    document.getElementById('liveText').textContent="live ✓"
+    document.getElementById('liveDot').style.background="#6ef0a8"
+    document.getElementById('raw').textContent=JSON.stringify(j, null, 2).slice(0,8000)
+    updateKVs(j)
+    drawFitness(j); drawDivers(j); drawHist(j); drawHall(j); drawHeat(j); drawPareto(j); drawIslands(j)
+  }catch(e){
+    document.getElementById('liveText').textContent="poll error: "+e.message.slice(0,60)
+    document.getElementById('liveDot').style.background="#ff6b7a"
+  }
+}
+
+function init(){
+  // preview url
+  let host=location.host
+  document.getElementById('previewUrl').textContent = host
+  document.getElementById('btnSave').onclick = ()=>{
+    let c=document.getElementById('cFitness')
+    let a=document.createElement('a'); a.download="fitness.png"; a.href=c.toDataURL(); a.click()
+  }
+  poll(); setInterval(poll, 1500)
+  // also try to keep sparkHist across reloads via localStorage
+  try{
+    let saved=localStorage.getItem("ga_fit_series")
+    if(saved){ window.__fitSeries=JSON.parse(saved)}
+    window.addEventListener("beforeunload",()=>{ try{ localStorage.setItem("ga_fit_series", JSON.stringify(window.__fitSeries))}catch(e){}})
+  }catch(e){}
+}
+init()
+</script>
+</body>
+</html>
