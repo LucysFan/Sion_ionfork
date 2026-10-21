@@ -1,0 +1,51 @@
+{
+  "version": "1.0",
+  "simulation_only": true,
+  "execution_authorized": false,
+  "channel_order": [
+    "dc[0]",
+    "dc[1]",
+    "dc[2]",
+    "dc[3]",
+    "dc[4]",
+    "dc[5]",
+    "dc[6]",
+    "dc[7]",
+    "dc[8]",
+    "dc[9]",
+    "dc[10]",
+    "dc[11]",
+    "dc[12]",
+    "dc[13]",
+    "dc[14]"
+  ],
+  "units": "DAC codes (integer)",
+  "sample_period_s": 5e-08,
+  "code_min_V": -12.0,
+  "code_max_V": 12.0,
+  "dac_bits": 16,
+  "hold": "zero_order",
+  "last_sample": "terminal command, held indefinitely",
+  "clock": "common ideal simulation clock",
+  "trigger_latency_s": 0,
+  "calibration_state": "unmeasured_simulation_assumptions",
+  "hardware_model": {
+    "sample_rate_hz": 20000000.0,
+    "dac_bits": 16,
+    "dac_min_V": -12.0,
+    "dac_max_V": 12.0,
+    "lowpass_hz": [
+      1000000.0,
+      500000.0
+    ],
+    "gain": 1.0,
+    "offset_V": 0.0,
+    "delay_s": 0.0,
+    "max_jump_V": 1.0,
+    "identifier": "declared-simulation-chain-v1"
+  },
+  "sha256": "3114c251abdf0d2cece6031a85d3a8bfaaccf9367bad29fc1143bcdaf5e1a74c",
+  "safety_passed": true,
+  "closed_loop_low_dim": "8 params (2 time-warp + 6 voltage SVD)",
+  "path_conventions": "user_route / nominal_well_path / realized_path documented separately"
+}
