@@ -11,6 +11,12 @@
     "gain": 1.0,
     "offset_V": 0.0,
     "delay_s": 0.0,
+    "trigger_latency_s": 0.0,
+    "jitter_s": 0.0,
+    "skew_per_channel_s": 0.0,
+    "digital_filter_b": [
+      1.0
+    ],
     "max_jump_V": 1.0,
     "identifier": "declared-simulation-chain-v1"
   },

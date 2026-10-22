@@ -24,7 +24,9 @@
   "position_tolerance_m": 5e-06,
   "corridor_halfwidth_m": 2e-05,
   "durations_s": [
-    1.5e-05
+    1e-05,
+    1.5e-05,
+    2e-05
   ],
   "hold_scan_s": [
     1e-06,

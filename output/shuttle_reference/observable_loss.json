@@ -1,4 +1,4 @@
 {
-  "loss": 0.009789721068836469,
+  "loss": 0.03449376089266673,
   "provenance": "raw simulation n_total \u2192 sideband asymmetry =1/(2n+1) (thermal proxy), recooling \u221dn, displacement \u221dsqrt(n_coh)"
 }

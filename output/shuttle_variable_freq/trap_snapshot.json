@@ -130,7 +130,7 @@
   ],
   "frequency_mode": "variable",
   "frequency_coeffs": [
-    0.03,
+    -0.03541019662496847,
     -0.015
   ],
   "geometry": {

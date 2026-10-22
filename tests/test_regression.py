@@ -268,3 +268,31 @@ def test_raw_chain_provenance():
     assert "raw_measurement" in chain
     assert "provenance" in chain
     assert "raw" in chain["provenance"].lower()
+
+def test_audit_fixes_experiment_and_calibration():
+    from shuttle_sim.experiment import ExperimentInterface, BlockedExperiment
+    from shuttle_sim.calibration import Calibration
+    from shuttle_sim.hardware import Hardware
+    import numpy as np
+    # R-2/R-8: blocked apparatus + invalid observable codes
+    try:
+        BlockedExperiment().measure(np.zeros(8)); assert False
+    except Rejected as e: assert e.code=="experiment_communication_failure"
+    bad=ExperimentInterface(lambda th: {"loss":0.1,"observables":{"n_total":float("nan")}})
+    try:
+        bad.measure(np.zeros(8)); assert False
+    except Rejected as e: assert e.code=="invalid_observable_extraction"
+    # R-3/R-7: synthetic dataset is real (reacts to true hardware), not NotImplementedError
+    cfg=minimal_config(); runner=Runner(cfg); cal=Calibration(runner.trap,runner.hw,runner.task)
+    cmds=[np.tile(np.linspace(-.5,.5,40)[:,None],(1,len(runner.trap.indices)))]
+    ds=cal.make_synthetic_dataset(cmds, Hardware(**{**runner.hw.__dict__,"gain":1.03}))
+    assert ds and "measured_V" in ds[0]
+    res=cal.identify_from_residuals(ds); assert res.success
+    # R-6: digital filter + precompensation exist and react
+    hw=Hardware(digital_filter_b=[.5,.5]); pre=hw.precompensate(cmds[0]); assert pre.shape==cmds[0].shape
+
+def test_audit_gds_trap_loads():
+    # R-9: GDS TrapAdapter path covered
+    import json, pathlib
+    cfg=json.loads(pathlib.Path("configs/shuttle_gds.json").read_text())
+    trap=load_trap(cfg["trap"]); assert len(trap.names)>=3 and (trap.lo<trap.hi).all()

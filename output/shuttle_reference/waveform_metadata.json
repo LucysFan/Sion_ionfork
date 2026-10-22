@@ -2,6 +2,8 @@
   "version": "1.0",
   "simulation_only": true,
   "execution_authorized": false,
+  "simulation_passed": true,
+  "would_authorize_if_measured": false,
   "channel_order": [
     "dc[0]",
     "dc[1]",
@@ -27,8 +29,9 @@
   "hold": "zero_order",
   "last_sample": "terminal command, held indefinitely",
   "clock": "common ideal simulation clock",
-  "trigger_latency_s": 0,
-  "calibration_state": "unmeasured_simulation_assumptions",
+  "trigger_latency_s": 0.0,
+  "jitter_s": 0.0,
+  "calibration_state": "cal-v1",
   "hardware_model": {
     "sample_rate_hz": 20000000.0,
     "dac_bits": 16,
@@ -41,11 +44,31 @@
     "gain": 1.0,
     "offset_V": 0.0,
     "delay_s": 0.0,
+    "trigger_latency_s": 0.0,
+    "jitter_s": 0.0,
+    "skew_per_channel_s": 0.0,
+    "digital_filter_b": [
+      1.0
+    ],
     "max_jump_V": 1.0,
     "identifier": "declared-simulation-chain-v1"
   },
-  "sha256": "241ea8073fb1c97e224c5d603578c00453bdf80806e5521c6c2af118d5c052a7",
+  "calibration_success": true,
+  "sha256": "a6cb49d14c4cb6d77b0cd34bfcf1a4ec02c52ff7008abe3b262bef9f3579ca56",
+  "delivered_sha256": "dae456e2046c59d239ef7c5e101df03db71fa66ce9e3b50d75a1025845cdd203",
+  "command_sha256": "611b7ca1e286c9104bbd7f7bc5b04bd1412dd44134eacfcb0e4d13231a76eef1",
+  "fallback_theta": [
+    -0.024395943924528717,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
   "safety_passed": true,
   "closed_loop_low_dim": "8 params (2 time-warp + 6 voltage SVD)",
-  "path_conventions": "user_route / nominal_well_path / realized_path documented separately"
+  "path_conventions": "user_route / nominal_well_path / realized_path documented separately",
+  "provenance": "waveform export gated by full safety (voltage, slew, filter, confinement); SHA256 checksums enable last-safe verification"
 }

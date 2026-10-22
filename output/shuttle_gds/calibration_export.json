@@ -1,0 +1,21 @@
+{
+  "version": "cal-v1",
+  "theta": [
+    -2.351361074598435e-09,
+    -1.6126526941225017e-06,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "delivered_sha256": "615da293d9141b5a9a6e788afd9f68ddd12c59392f8d77a98b988a6a2d49fff4",
+  "safety_passed": false,
+  "export_file": "calibrated_delivered_waveform.csv",
+  "also_exported": [
+    "calibrated_ideal_waveform.csv",
+    "calibrated_dac_waveform.csv"
+  ],
+  "provenance": "actual calibrated waveform files written, SHA matches delivered array"
+}

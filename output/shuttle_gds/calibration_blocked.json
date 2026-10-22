@@ -1,4 +1,6 @@
 {
   "status": "blocked_by_missing_external_data",
-  "failure_code": "missing_external_data"
+  "failure_code": "missing_external_data",
+  "success": false,
+  "version": "cal-v0-blocked"
 }

@@ -1,6 +1,6 @@
 {
   "theta": [
-    0.0,
+    0.05738289046765549,
     0.0,
     0.0,
     0.0,
@@ -9,5 +9,20 @@
     0.0,
     0.0
   ],
-  "reason": "last_known_safe_is_zero_correction"
+  "last_safe_theta": [
+    0.05738289046765549,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "reason": "current_selected_theta_passed_full_safety",
+  "delivered_sha256": "5363d2068d86af276b7a41b6727a60489cd0707df7c80135a87ea77c595e2804",
+  "command_sha256": "2565bbe4ccf4207b35dc2be878630ba92cf6e94551fd1cfe1e44983faef76738",
+  "safety_passed": true,
+  "simulation_passed": true,
+  "export_authorized": false
 }

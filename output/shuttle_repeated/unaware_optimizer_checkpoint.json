@@ -12,7 +12,7 @@
   "loss": 3.3147773065917295e-09,
   "optimizer_success": false,
   "termination": "Maximum number of function evaluations has been exceeded.",
-  "evaluations": 16,
+  "evaluations": 15,
   "history": [
     {
       "evaluation": 0,
@@ -238,24 +238,9 @@
         0.0
       ],
       "status": "ok"
-    },
-    {
-      "evaluation": 15,
-      "loss": 0.11326277009537752,
-      "theta": [
-        1.9418781548041775e-08,
-        -5.5616869536832814e-05,
-        0.09442719099991584,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0
-      ],
-      "status": "ok"
     }
   ],
-  "failure_mode": "optimizer_budget_exhaustion_or_stagnation",
+  "failure_mode": "optimizer_budget_exhaustion",
   "parameterization": "2 time-law coefficients + 6 voltage corrections (2 geometry SVD modes)",
   "search_bounds": [
     [

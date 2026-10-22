@@ -5,6 +5,17 @@ from scipy.constants import elementary_charge, atomic_mass
 from scipy.optimize import least_squares, minimize
 
 
+FAILURE_CODES = (
+    'no_minimum','weak_confinement','infeasible_voltages','hardware_saturation',
+    'slew_limit','route_corridor','rom_trust_region','excessive_excitation',
+    'transport_accuracy','well_target_accuracy','optimizer_stagnation',
+    'optimizer_budget_exhaustion','calibration_inconsistency',
+    'experiment_communication_failure','invalid_observable_extraction',
+    'missing_external_data','blocked_by_missing_external_data',
+    'numerical_failure','integrity_failure','delivered_intent_violated',
+    'invalid_input','high_dim','optimizer_budget_exhaustion_or_stagnation',
+)
+
 class Rejected(RuntimeError):
     def __init__(self, code, message):
         self.code = code
@@ -154,6 +165,12 @@ def load_trap(cfg):
         # No implicit polygon order: fabrication layers are not channel IDs.
         # Primary backend: gdspy (if installed). Fallback: pure-python python-gdsii
         # to avoid binary build requirement in restricted environments.
+        # Resolve GDS path relative to cwd, repo root, or configs/ (CLI parity)
+        from pathlib import Path as _P
+        _gp=_P(cfg['path'])
+        if not _gp.exists():
+            for _cand in (_P.cwd()/_gp, _P(__file__).parent.parent/_gp, _P(__file__).parent.parent/'configs'/ _gp.name):
+                if _cand.exists(): cfg={**cfg,'path':str(_cand)}; break
         from sion.electrode import System, PolygonPixelElectrode
         from sion.electrode.utils import area_centroid
         mapping = cfg.get('electrode_map')

@@ -13,5 +13,5 @@ Layers (spec §3.8):
 - transport (task entity)
 """
 __version__ = '0.3.0'
-from . import field, hardware, dynamics, control, voltage, safety, observables, calibration, closed_loop, transport
-__all__ = ['field','hardware','dynamics','control','voltage','safety','observables','calibration','closed_loop','transport']
+from . import field, hardware, dynamics, control, voltage, safety, observables, calibration, closed_loop, transport, experiment
+__all__ = ['field','hardware','dynamics','control','voltage','safety','observables','calibration','closed_loop','transport','experiment']

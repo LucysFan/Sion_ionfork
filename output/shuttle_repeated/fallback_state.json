@@ -9,5 +9,20 @@
     0.0,
     0.0
   ],
-  "reason": "last_known_safe_is_zero_correction"
+  "last_safe_theta": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "reason": "current_selected_theta_passed_full_safety",
+  "delivered_sha256": "83279c80affa9eb2e1607fb01f827c34f94f38fe7452907efd773c189a17fc04",
+  "command_sha256": "678bc0fd9a456ed65b3e25353c6614aeb4f36f566b0ac2c17c3d705a54e7df32",
+  "safety_passed": true,
+  "simulation_passed": true,
+  "export_authorized": false
 }

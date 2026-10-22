@@ -1,0 +1,113 @@
+{
+  "version": "cal-v1",
+  "timestamp_s": 1792685931.5493789,
+  "hardware_before": {
+    "sample_rate_hz": 20000000.0,
+    "dac_bits": 16,
+    "dac_min_V": -12.0,
+    "dac_max_V": 12.0,
+    "lowpass_hz": [
+      1000000.0,
+      500000.0
+    ],
+    "gain": 1.0,
+    "offset_V": 0.0,
+    "delay_s": 0.0,
+    "trigger_latency_s": 0.0,
+    "jitter_s": 0.0,
+    "skew_per_channel_s": 0.0,
+    "digital_filter_b": [
+      1.0
+    ],
+    "max_jump_V": 1.0,
+    "identifier": "declared-simulation-chain-v1"
+  },
+  "hardware_after": {
+    "sample_rate_hz": 20000000.0,
+    "dac_bits": 16,
+    "dac_min_V": -12.0,
+    "dac_max_V": 12.0,
+    "lowpass_hz": [
+      1000000.0,
+      500000.0
+    ],
+    "gain": [
+      0.9706273441324478,
+      1.0105954014151532,
+      1.0089705771511819,
+      1.010155587572382,
+      0.9691144445643695,
+      1.0108518352643932,
+      1.0095407109066477,
+      1.0105245951173691,
+      1.0105954014151535,
+      1.008970577151177,
+      1.010155587572383,
+      0.9691144445643712,
+      1.010851835264389,
+      1.009540710906653,
+      1.0105245951173711
+    ],
+    "offset_V": [
+      0.10974197887183773,
+      0.015623843232987053,
+      0.12696755443289762,
+      0.11887900913617355,
+      -0.48488502366374425,
+      0.09987932182713621,
+      0.11728772263913774,
+      0.014282499956784689,
+      0.015623843232987107,
+      0.12696755443294874,
+      0.118879009136163,
+      -0.48488502366372704,
+      0.09987932182717646,
+      0.11728772263908815,
+      0.014282499956784734
+    ],
+    "delay_s": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "trigger_latency_s": 0.0,
+    "jitter_s": 0.0,
+    "skew_per_channel_s": 0.0,
+    "digital_filter_b": [
+      1.0
+    ],
+    "max_jump_V": 1.0,
+    "identifier": "declared-simulation-chain-v1"
+  },
+  "stray_before_V_m": [
+    0,
+    0,
+    0
+  ],
+  "stray_after_V_m": [
+    0,
+    0,
+    0
+  ],
+  "identification": {
+    "method": "linear_regression_gain_offset",
+    "success": true,
+    "residuals": 233.72188456401926,
+    "failure_code": null,
+    "provenance": "voltage-trace affine fit over 3 entries, 15/15 channels identifiable, total_residual=234 (mean 0.00191 per sample), filter poles retained (requires step-response data for full filter ID; delay not identified)",
+    "dataset_size": 3
+  },
+  "provenance": "synthetic dataset: shows identification reacts to input gain/offset; filter poles retained (requires step-response for full filter ID)"
+}

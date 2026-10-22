@@ -153,7 +153,7 @@
     "cycles": 1,
     "frequency_mode": "variable",
     "frequency_coeffs": [
-      0.03,
+      -0.03541019662496847,
       -0.015
     ],
     "corridor_halfwidth_m": 2e-05,
@@ -174,7 +174,8 @@
     "log_filter_sigma": 0.07,
     "stray_sigma_V_m": 0.15,
     "log_frequency_sigma": 0.02,
-    "seed": 46
+    "seed": 46,
+    "initial_nbar_sigma": 0.02
   },
   "route_nodes": 31,
   "subdivisions": 4,
@@ -186,5 +187,6 @@
   "rom_max_shift_m": 2e-05,
   "comparison_nodes": 161,
   "validation_nodes": 321,
-  "refined_nodes": 641
+  "refined_nodes": 641,
+  "frequency_optimization_evaluations": 6
 }

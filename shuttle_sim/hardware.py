@@ -18,6 +18,8 @@ class Hardware:
     # B16: trigger latency and jitter model (per-channel delay covers skew, this covers global latency)
     trigger_latency_s: float = 0.0
     jitter_s: float = 0.0
+    skew_per_channel_s: object = 0.
+    digital_filter_b: list = field(default_factory=lambda: [1.0])
     max_jump_V: float = 1.
     identifier: str = 'declared-simulation-chain-v1'
 
@@ -29,6 +31,10 @@ class Hardware:
             raise ValueError('DAC bits must be integer in [2,32]')
         if np.any(finite(self.lowpass_hz,'poles') <= 0):
             raise ValueError('low-pass poles must be positive')
+        if np.any(np.asarray(self.skew_per_channel_s)<0): raise ValueError('skew must be nonnegative')
+        np.broadcast_to(finite(self.skew_per_channel_s,'skew'),(channels,))
+        b=finite(self.digital_filter_b,'digital_filter_b')
+        if b.ndim!=1 or len(b)<1 or not np.any(b!=0): raise ValueError('digital_filter_b must be nonempty, not all zero')
         for k in ['gain','offset_V','delay_s']:
             np.broadcast_to(finite(getattr(self,k),k),(channels,))
         if np.any(np.asarray(self.delay_s)<0) or np.any(np.asarray(self.gain)<=0) or self.trigger_latency_s<0 or self.jitter_s<0:
@@ -55,6 +61,11 @@ class Hardware:
         dt = 1/self.sample_rate_hz/subdivisions
         t = np.arange((N-1)*subdivisions+1)*dt
         gain=np.broadcast_to(self.gain,(C,)); offset=np.broadcast_to(self.offset_V,(C,))
+        if not ideal and len(self.digital_filter_b)>1:
+            from scipy.signal import lfilter, lfilter_zi
+            b=np.asarray(self.digital_filter_b,float)
+            zi=lfilter_zi(b,[1.0])
+            quantized,_=lfilter(b,[1.0],quantized,axis=0,zi=np.outer(zi,quantized[0]))
         held=quantized[np.minimum(np.arange(len(t))//subdivisions,N-1)]
         if ideal:
             y=held
@@ -81,15 +92,15 @@ class Hardware:
             jit = float(self.jitter_s)
             if jit > 0:
                 # deterministic pseudo-random per call based on command hash for reproducibility
-                seed = int(np.sum(c) * 1e6) % (2**31)
+                seed = int.from_bytes(hashlib.sha256(c.tobytes()).digest()[:4],'little') % (2**31)
                 rng = np.random.default_rng(seed)
                 # P4: per-sample global time jitter (common to all channels, varies per time point)
                 time_jitter = rng.uniform(-jit, jit, size=len(t))
                 # For diagnostics, also generate a per-channel static skew draw (previous behavior) but do not use as jitter
-                skew_draw = rng.uniform(-jit/10, jit/10, size=C)  # small skew, labeled separately
+                skew_draw = np.broadcast_to(np.asarray(self.skew_per_channel_s,float),(C,)).copy()
             else:
                 time_jitter = np.zeros(len(t))
-                skew_draw = np.zeros(C)
+                skew_draw = np.broadcast_to(np.asarray(self.skew_per_channel_s,float),(C,)).copy()
             # Static total delay includes only delay + trigger + small skew (diagnostic), time jitter is per-sample
             total_delay = delay + trig + skew_draw
             # Apply per-sample time jitter as time warping: y_delivered(t) = y_filtered(t - delay - trig - skew - time_jitter(t))
@@ -114,10 +125,25 @@ class Hardware:
                 'max_time_jitter_s': float(np.max(np.abs(time_jitter))) if 'time_jitter' in locals() else 0.0,
                 'jitter_model': 'per-sample global time jitter + per-channel static skew (skew_draw); previous jit_per_channel was renamed to skew',
                 'total_delay_s': total_delay.tolist() if 'total_delay' in locals() else np.broadcast_to(self.delay_s,(C,)).tolist(),
-                'hold':'zero_order','filter':'exact continuous RC cascade on dense ZOH grid',
+                'hold':'zero_order','filter':'exact continuous RC cascade on dense ZOH grid','digital_filter_b':list(self.digital_filter_b),'skew_config_s':np.broadcast_to(np.asarray(self.skew_per_channel_s,float),(C,)).tolist(),
                 'hardware_identifier':self.identifier,'calibration_state':'unmeasured_simulation_assumptions'}
         return t,y,codes,report
 
+
+    def precompensate(self, commands, sample_rate_hz=None):
+        """Approximate inverse of the analog RC cascade (first-order lead).
+
+        For each pole f_p: V_pre = V + tau*dV/dt, tau=1/(2*pi*f_p), applied
+        sequentially on the command grid. Approximate (exact only for a
+        single pole and slow signals); the result must still pass
+        Hardware.deliver + SafetyLayer, which reject clipping/slew.
+        """
+        c=finite(commands,'commands_V'); fs=float(sample_rate_hz or self.sample_rate_hz)
+        if fs<=0: raise ValueError('positive sample rate')
+        out=c.copy()
+        for fp in (self.lowpass_hz or []):
+            tau=1/(2*np.pi*float(fp)); d=np.gradient(out,1/fs,axis=0); out=out+tau*d
+        return out
 
 def verify_export(path):
     from pathlib import Path

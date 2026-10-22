@@ -65,7 +65,7 @@ def summarize(z,C,local,mass,target_m):
             'min_symplectic_eigenvalue_over_hbar_half':float(np.min(np.abs(sym))/(hbar*T/(2*mass*L**2)))}
 
 
-def propagate(times_s, centers_m, hessians_J_m2, initial, final, mass, target_m, method='exact',hold='linear', return_trajectory=False, trajectory_decimate=400):
+def propagate(times_s, centers_m, hessians_J_m2, initial, final, mass, target_m, method='exact',hold='linear', return_trajectory=False, trajectory_decimate=400, initial_nbar=0.):
     ts=finite(times_s,'time');r=finite(centers_m,'centers');H=finite(hessians_J_m2,'H')
     if hold not in ('linear','zero_order'):
         raise ValueError('unknown hold rule')
@@ -73,7 +73,7 @@ def propagate(times_s, centers_m, hessians_J_m2, initial, final, mass, target_m,
         raise ValueError('inconsistent dynamics grid')
     if not np.allclose(H,H.transpose(0,2,1),rtol=1e-12,atol=0):
         raise ValueError('Hessians must be symmetric')
-    z,C=initial_state(initial,mass)
+    z,C=initial_state(initial,mass,initial_nbar)
     K=H/mass*T*T;c=r/L;tt=ts/T
     if np.min(np.linalg.eigvalsh(K))<=0:
         raise Rejected('weak_confinement','ROM Hessian not positive')

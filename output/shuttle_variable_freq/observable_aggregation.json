@@ -1,7 +1,7 @@
 {
-  "mean_loss": 0.09978225140696402,
-  "worst_loss": 0.23499546031835594,
-  "weighted_worst": 0.18767083719936878,
-  "cvar_20": 0.17608059811784765,
+  "mean_loss": 0.19893101170609376,
+  "worst_loss": 0.39458375733559314,
+  "weighted_worst": 0.3261052963652684,
+  "cvar_20": 0.3380694054713824,
   "policy": "weighted_worst = 0.35*mean+0.65*max; same for simulation and experiment observables"
 }

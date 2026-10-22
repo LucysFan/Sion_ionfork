@@ -169,7 +169,8 @@
     "log_filter_sigma": 0.07,
     "stray_sigma_V_m": 0.15,
     "log_frequency_sigma": 0.02,
-    "seed": 42
+    "seed": 42,
+    "initial_nbar_sigma": 0.02
   },
   "route_nodes": 31,
   "subdivisions": 4,
@@ -178,5 +179,6 @@
   "robust_samples": 6,
   "closed_loop_budget": 10,
   "validation_n_tolerance": 0.01,
-  "rom_max_shift_m": 2e-05
+  "rom_max_shift_m": 2e-05,
+  "full_field_validation": true
 }

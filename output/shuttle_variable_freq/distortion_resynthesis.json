@@ -1,0 +1,6 @@
+{
+  "trigger": "none",
+  "decision": "distortion within threshold, no resynthesis required",
+  "max_deviation_V": 0.19772750825681662,
+  "threshold_V": 0.25
+}

@@ -236,8 +236,9 @@ class ClosedLoopRefiner:
                     raise ValueError("measure_fn must return dict with 'loss'")
                 loss_val = float(out["loss"])
                 if not np.isfinite(loss_val):
-                    raise ValueError("measure_fn returned non-finite loss")
-                obs = out.get("observables", {})
+                    raise Rejected("invalid_observable_extraction","measure_fn returned non-finite loss")
+                from .experiment import validate_measured_observables
+                obs = validate_measured_observables(out.get("observables", {}))
                 safety_ok = True
                 code = None
                 measurement_count += 1

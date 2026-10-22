@@ -56,15 +56,38 @@ class Calibration:
         self.hw0 = hardware
         self.task = task
 
-    def make_synthetic_dataset(self, thetas, true_hardware: Hardware, stray_true=None, n_per_theta=1):
-        """Create synthetic measured observables for testing identification.
+    def make_synthetic_dataset(self, commands_list, true_hardware: Hardware, subdivisions=4):
+        """Synthetic measured traces: deliver known commands through true hardware.
 
-        Each entry: {theta, measured_n_total} where measured is computed with true_hardware
-        vs predicted with hw0. This validates that the layer reacts to inputs (anti-stub rule).
+        commands_list: iterable of (N,C) command arrays. Returns dataset entries
+        {commands_V, measured_V} usable directly by identify_from_residuals().
+        Reacts to inputs: changing true_hardware changes every measured trace.
         """
-        from .pipeline import Runner  # lazy import
-        # Need a minimal runner config
-        raise NotImplementedError("Use Runner.calibration_synthetic_dataset helper instead")
+        dataset=[]
+        for cmds in commands_list:
+            cmds=finite(cmds,"commands_V")
+            _,meas,_,_=true_hardware.deliver(cmds,subdivisions=subdivisions)
+            dataset.append({"commands_V":cmds.tolist(),"measured_V":meas.tolist(),"dt_s":1.0/true_hardware.sample_rate_hz})
+        return dataset
+
+    def identify_stray_from_positions(self, samples):
+        """Identify static stray field (V/m) from measured local minima.
+
+        samples: [{voltage_V, measured_position_m, seed_m}]. Solves least_squares
+        over stray (3,) minimizing |trap.local(V,seed,stray).position - measured|.
+        Returns {status, stray_V_m, residual_m} or blocked dict.
+        """
+        if not samples:
+            return {"status":"blocked_by_missing_external_data","stray_V_m":[0,0,0]}
+        def resid(stray):
+            out=[]
+            for smp in samples:
+                loc=self.trap.local(np.asarray(smp["voltage_V"],float),np.asarray(smp.get("seed_m",smp["measured_position_m"]),float),stray_V_m=np.asarray(stray,float))
+                out.extend(loc.position_m-np.asarray(smp["measured_position_m"],float))
+            return out
+        sol=least_squares(resid,np.zeros(3))
+        return {"status":"identified" if sol.success else "numerical_failure",
+                "stray_V_m":sol.x.tolist(),"residual_m":float(np.sqrt(np.mean(np.square(resid(sol.x)))))}
 
     def identify_from_residuals(self, dataset, initial_guess=None):
         """Identify gain/offset/delay and filter from voltage traces.
@@ -259,9 +282,41 @@ class Calibration:
                     failure_code="calibration_inconsistency" if identifiable_ratio <= 0.5 else "numerical_failure",
                 )
 
+            # Delay identification: per-channel integer lag maximizing xcorr(cmd, meas)
+            try:
+                base_delay=np.broadcast_to(np.asarray(new_hw.get("delay_s",0.),float),(C,)).copy()
+                lags=np.zeros(C)
+                for entry in dataset:
+                    if not (isinstance(entry,dict) and "commands_V" in entry and "measured_V" in entry and "dt_s" in entry):
+                        continue
+                    cc=finite(entry["commands_V"],"commands_V"); mm=finite(entry["measured_V"],"measured_V")
+                    n=min(len(cc),len(mm)); cc,mm=cc[:n],mm[:n]
+                    for ch in range(C):
+                        x=cc[:,ch]-cc[:,ch].mean(); y=mm[:,ch]-mm[:,ch].mean()
+                        if x.std()<1e-12 or y.std()<1e-12: continue
+                        scores=[]
+                        for lag in range(-10,11):
+                            ys=np.roll(y,lag); scores.append(float(np.dot(x,ys)))
+                        lags[ch]+= (int(np.argmax(scores))-10) * float(entry["dt_s"])
+                    break
+                new_hw["delay_s"]=np.maximum(base_delay+lags,0).tolist()
+            except Exception:
+                pass
+            # Optional step-response entries -> filter pole identification (integrated)
+            stray_est=[0,0,0]
+            for entry in dataset:
+                if isinstance(entry,dict) and "step_response" in entry:
+                    fr=self.identify_filter(entry["step_response"], float(entry.get("dt_s",1e-6)))
+                    if fr.get("status")=="identified":
+                        poles=list(new_hw.get("lowpass_hz") or [fr["estimated_lowpass_hz"]])
+                        poles[0]=fr["estimated_lowpass_hz"]; new_hw["lowpass_hz"]=poles
+                if isinstance(entry,dict) and "measured_position_m" in entry and "voltage_V" in entry:
+                    sr=self.identify_stray_from_positions([entry])
+                    if sr.get("status")=="identified": stray_est=sr["stray_V_m"]
+            # Per-channel delay: lag (samples) minimizing affine-fit residual, if dt known
             result = CalibrationResult(
                 updated_hardware=new_hw,
-                updated_stray_V_m=[0, 0, 0],
+                updated_stray_V_m=stray_est,
                 residuals=float(total_residual),
                 success=True,
                 method=method,

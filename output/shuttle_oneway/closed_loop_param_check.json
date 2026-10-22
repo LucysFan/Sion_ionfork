@@ -1,4 +1,5 @@
 {
   "rejected_as_expected": true,
-  "message": "closed-loop must stay low-dim (8 params)"
+  "message": "closed-loop must stay low-dim (8 params)",
+  "code": "dimension_reject"
 }

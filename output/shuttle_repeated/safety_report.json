@@ -2,12 +2,13 @@
   "passed": true,
   "checks": {
     "voltage_bounds": "ok",
-    "max_margin_V": 11.905700057354533,
-    "max_jump_V": 0.009969478905555107,
+    "max_margin_V": 11.905700065880085,
+    "max_jump_V": 0.009460690616711176,
     "slew_proxy": "ok",
-    "max_deviation_V": 0.09879018593071898,
+    "max_deviation_V": 0.09397476317978004,
     "filter_consistency": "ok",
-    "min_frequency_hz": 687923.7326887008,
+    "threshold_V": 0.25,
+    "min_frequency_hz": 687923.3290340215,
     "confinement": "ok"
   },
   "failure_code": null,

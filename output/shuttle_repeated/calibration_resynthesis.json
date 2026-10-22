@@ -1,11 +1,12 @@
 {
+  "version": "cal-v1",
   "pre_calibration_metrics": {
-    "n_total": 0.0049614775456517934,
-    "position_error_m": 1.7574748754464834e-09
+    "n_total": 0.015039074943323794,
+    "position_error_m": 1.8182172355439512e-09
   },
   "post_calibration_metrics": {
-    "n_total": 0.004714544007987542,
-    "position_error_m": 1.7687014106806273e-07
+    "n_total": 0.008733462019067328,
+    "position_error_m": 1.7273795910105323e-07
   },
   "improved": true,
   "updated_hardware": {
@@ -18,42 +19,100 @@
       500000.0
     ],
     "gain": [
-      0.9950733122389617,
-      1.0023498712862398,
-      1.0023536505569492,
-      1.0024674194998244,
-      0.9923988528176922,
-      1.0025231563974455,
-      1.0023899435803716,
-      1.0029251543365398,
-      1.0023498712862389,
-      1.0023536505569555,
-      1.0024674194998164,
-      0.9923988528177803,
-      1.002523156397445,
-      1.00238994358038,
-      1.0029251543365414
+      0.9969488048508485,
+      1.0024164438455436,
+      1.0023897548374316,
+      1.0031159631969155,
+      0.9949467255841213,
+      1.0031584884239242,
+      1.0024358059863214,
+      1.0029652108166702,
+      1.0024164438455434,
+      1.0023897548374379,
+      1.0031159631969073,
+      0.9949467255842088,
+      1.0031584884239233,
+      1.0024358059863314,
+      1.0029652108166716
     ],
     "offset_V": [
-      0.06223509489390028,
-      0.015877330631732623,
-      0.19359524894215763,
-      0.1978701097208806,
-      -0.26149629139430547,
-      0.18219559428127888,
-      0.18865581425925093,
-      0.014201016729401088,
-      0.015877330631732647,
-      0.19359524894209554,
-      0.19787010972096258,
-      -0.26149629139342345,
-      0.18219559428128962,
-      0.18865581425916395,
-      0.014201016729401036
+      0.05866441084432702,
+      0.015883779377410746,
+      0.19325213218622292,
+      0.19130552102715845,
+      -0.23605750498207043,
+      0.17601544982807246,
+      0.18819304811286316,
+      0.014199410662947574,
+      0.015883779377410766,
+      0.19325213218615958,
+      0.1913055210272412,
+      -0.23605750498119357,
+      0.1760154498280874,
+      0.1881930481127654,
+      0.014199410662947552
     ],
-    "delay_s": 0.0,
+    "delay_s": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "trigger_latency_s": 0.0,
+    "jitter_s": 0.0,
+    "skew_per_channel_s": 0.0,
+    "digital_filter_b": [
+      1.0
+    ],
     "max_jump_V": 1.0,
     "identifier": "declared-simulation-chain-v1"
   },
-  "sequence": "identification -> update_model -> resynthesize (closed-loop fine tuning would follow)"
+  "original_hardware": {
+    "sample_rate_hz": 20000000.0,
+    "dac_bits": 16,
+    "dac_min_V": -12.0,
+    "dac_max_V": 12.0,
+    "lowpass_hz": [
+      1000000.0,
+      500000.0
+    ],
+    "gain": 1.0,
+    "offset_V": 0.0,
+    "delay_s": 0.0,
+    "trigger_latency_s": 0.0,
+    "jitter_s": 0.0,
+    "skew_per_channel_s": 0.0,
+    "digital_filter_b": [
+      1.0
+    ],
+    "max_jump_V": 1.0,
+    "identifier": "declared-simulation-chain-v1"
+  },
+  "post_safety_passed": false,
+  "post_safety_report": {
+    "checks": {
+      "voltage_bounds": "ok",
+      "max_margin_V": 11.91961985735837,
+      "max_jump_V": 0.009460690616711176,
+      "slew_proxy": "ok",
+      "failure": {
+        "code": "delivered_intent_violated",
+        "message": "delivered_intent_violated: max_deviation 0.318 V exceeds threshold 0.250 V \u2013 intent destroyed, requires re-optimization under delivered model or rejection"
+      }
+    },
+    "failure_code": "delivered_intent_violated"
+  },
+  "sequence": "identification -> update_model -> calibrated Hardware/Safety -> resynthesize -> safety re-validate (calibrated export separate from main export)",
+  "export_delta": "calibrated delivered SHA256 differs from main export (see fallback_state vs post_cal SHA)"
 }

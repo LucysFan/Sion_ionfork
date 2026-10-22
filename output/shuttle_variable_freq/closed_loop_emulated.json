@@ -1,6 +1,19 @@
 {
   "best_theta": [
-    0.007149918965645711,
+    0.008208094925439606,
+    -0.08459713474939012,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "best_loss": 0.004573301161638879,
+  "all_failed": false,
+  "blocked": false,
+  "fallback_theta": [
+    0.0,
     0.0,
     0.0,
     0.0,
@@ -9,16 +22,29 @@
     0.0,
     0.0
   ],
-  "best_loss": 0.007422314152016388,
+  "last_safe_theta": [
+    0.008208094925439606,
+    -0.08459713474939012,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "last_safe_loss": 0.004573301161638879,
+  "last_safe_sha256": "19ad5c67130b78982c31ad3a5fe4e04e7d316281520aacf4157d6f737835f083",
   "optimizer_success": false,
   "termination": "Maximum number of function evaluations has been exceeded.",
-  "evaluations": 9,
+  "evaluations": 8,
+  "measurements": 8,
+  "budget": 8,
   "history": [
     {
       "iteration": 0,
       "theta": [
-        0.027864045000420598,
-        0.0,
+        0.008208094925439606,
+        -0.08459713474939012,
         0.0,
         0.0,
         0.0,
@@ -26,44 +52,44 @@
         0.0,
         0.0
       ],
-      "loss": 0.04072661477621276,
+      "loss": 0.004573301161638879,
       "observables": {
-        "n_total": 0.020740401270910702,
+        "n_total": 0.0022515427405817023,
         "n_modes": [
-          0.005531480747812623,
-          4.373723605510804e-12,
-          0.015208920518724356
+          0.000713392090488818,
+          1.217748124560103e-11,
+          0.001538150637915403
         ],
-        "coherent_n_total": 0.02074040125034643,
+        "coherent_n_total": 0.002251542715555827,
         "sideband": {
-          "red_proxy": 0.020740401270910702,
-          "blue_proxy": 1.0207404012709107,
-          "asymmetry": 0.9601713229456134,
-          "second_order_red_proxy": 0.00021508212243919714,
-          "second_order_blue_proxy": 0.521170565515789,
+          "red_proxy": 0.0022515427405817023,
+          "blue_proxy": 1.0022515427405816,
+          "asymmetry": 0.9955171013934697,
+          "second_order_red_proxy": 2.5347223563330816e-06,
+          "second_order_blue_proxy": 0.5022566121852943,
           "per_mode": [
             {
               "mode": 0,
-              "n": 0.005531480747812623,
-              "sideband_asymmetry_proxy": 0.989058088450535
+              "n": 0.000713392090488818,
+              "sideband_asymmetry_proxy": 0.9985752486317364
             },
             {
               "mode": 1,
-              "n": 4.373723605510804e-12,
-              "sideband_asymmetry_proxy": 0.9999999999912526
+              "n": 1.217748124560103e-11,
+              "sideband_asymmetry_proxy": 0.999999999975645
             },
             {
               "mode": 2,
-              "n": 0.015208920518724356,
-              "sideband_asymmetry_proxy": 0.9704800908660284
+              "n": 0.001538150637915403,
+              "sideband_asymmetry_proxy": 0.9969331333300189
             }
           ]
         },
-        "recooling_proxy_quanta": 0.020740401270910702,
-        "displacement_proxy_alpha": 0.1440152813084307,
-        "coherent_fraction": 0.999999998960277,
-        "position_error_m": 3.240913714634878e-08,
-        "well_target_error_m": 3.203645371593435e-08,
+        "recooling_proxy_quanta": 0.0022515427405817023,
+        "displacement_proxy_alpha": 0.047450423765819275,
+        "coherent_fraction": 0.9999999884408699,
+        "position_error_m": 3.1756048482505256e-08,
+        "well_target_error_m": 3.1618026205016636e-08,
         "mapping": "raw simulation n_total \u2192 sideband asymmetry =1/(2n+1) (thermal proxy), recooling \u221dn, displacement \u221dsqrt(n_coh)",
         "provenance": "simulation proxies; experiment would fit actual sideband Rabi flops"
       },
@@ -73,8 +99,8 @@
     {
       "iteration": 1,
       "theta": [
-        0.027864045000420598,
-        0.0,
+        0.008208094925439606,
+        -0.08459713474939012,
         0.0,
         0.0,
         0.0,
@@ -82,44 +108,44 @@
         0.0,
         0.0
       ],
-      "loss": 0.04072661477621276,
+      "loss": 0.004573301161638879,
       "observables": {
-        "n_total": 0.020740401270910702,
+        "n_total": 0.0022515427405817023,
         "n_modes": [
-          0.005531480747812623,
-          4.373723605510804e-12,
-          0.015208920518724356
+          0.000713392090488818,
+          1.217748124560103e-11,
+          0.001538150637915403
         ],
-        "coherent_n_total": 0.02074040125034643,
+        "coherent_n_total": 0.002251542715555827,
         "sideband": {
-          "red_proxy": 0.020740401270910702,
-          "blue_proxy": 1.0207404012709107,
-          "asymmetry": 0.9601713229456134,
-          "second_order_red_proxy": 0.00021508212243919714,
-          "second_order_blue_proxy": 0.521170565515789,
+          "red_proxy": 0.0022515427405817023,
+          "blue_proxy": 1.0022515427405816,
+          "asymmetry": 0.9955171013934697,
+          "second_order_red_proxy": 2.5347223563330816e-06,
+          "second_order_blue_proxy": 0.5022566121852943,
           "per_mode": [
             {
               "mode": 0,
-              "n": 0.005531480747812623,
-              "sideband_asymmetry_proxy": 0.989058088450535
+              "n": 0.000713392090488818,
+              "sideband_asymmetry_proxy": 0.9985752486317364
             },
             {
               "mode": 1,
-              "n": 4.373723605510804e-12,
-              "sideband_asymmetry_proxy": 0.9999999999912526
+              "n": 1.217748124560103e-11,
+              "sideband_asymmetry_proxy": 0.999999999975645
             },
             {
               "mode": 2,
-              "n": 0.015208920518724356,
-              "sideband_asymmetry_proxy": 0.9704800908660284
+              "n": 0.001538150637915403,
+              "sideband_asymmetry_proxy": 0.9969331333300189
             }
           ]
         },
-        "recooling_proxy_quanta": 0.020740401270910702,
-        "displacement_proxy_alpha": 0.1440152813084307,
-        "coherent_fraction": 0.999999998960277,
-        "position_error_m": 3.240913714634878e-08,
-        "well_target_error_m": 3.203645371593435e-08,
+        "recooling_proxy_quanta": 0.0022515427405817023,
+        "displacement_proxy_alpha": 0.047450423765819275,
+        "coherent_fraction": 0.9999999884408699,
+        "position_error_m": 3.1756048482505256e-08,
+        "well_target_error_m": 3.1618026205016636e-08,
         "mapping": "raw simulation n_total \u2192 sideband asymmetry =1/(2n+1) (thermal proxy), recooling \u221dn, displacement \u221dsqrt(n_coh)",
         "provenance": "simulation proxies; experiment would fit actual sideband Rabi flops"
       },
@@ -129,8 +155,8 @@
     {
       "iteration": 2,
       "theta": [
-        -0.023606797749978967,
-        0.0,
+        -0.023606797749978987,
+        -0.08459713474939012,
         0.0,
         0.0,
         0.0,
@@ -138,44 +164,44 @@
         0.0,
         0.0
       ],
-      "loss": 0.05288755267581313,
+      "loss": 0.04951034318926033,
       "observables": {
-        "n_total": 0.027112663412383164,
+        "n_total": 0.02533590718473011,
         "n_modes": [
-          0.024277530065325625,
-          7.344902464012648e-12,
-          0.0028351333397126366
+          0.01721536047701755,
+          8.451350730354079e-12,
+          0.00812054669926121
         ],
-        "coherent_n_total": 0.027112663396664356,
+        "coherent_n_total": 0.025335907168935783,
         "sideband": {
-          "red_proxy": 0.027112663412383164,
-          "blue_proxy": 1.027112663412383,
-          "asymmetry": 0.9485638170076631,
-          "second_order_red_proxy": 0.0003675482586565903,
-          "second_order_blue_proxy": 0.5278477599296962,
+          "red_proxy": 0.02533590718473011,
+          "blue_proxy": 1.02533590718473,
+          "asymmetry": 0.9517719865733509,
+          "second_order_red_proxy": 0.00032095409643662944,
+          "second_order_blue_proxy": 0.5259778153776034,
           "per_mode": [
             {
               "mode": 0,
-              "n": 0.024277530065325625,
-              "sideband_asymmetry_proxy": 0.9536933614868053
+              "n": 0.01721536047701755,
+              "sideband_asymmetry_proxy": 0.9667152954213499
             },
             {
               "mode": 1,
-              "n": 7.344902464012648e-12,
-              "sideband_asymmetry_proxy": 0.9999999999853102
+              "n": 8.451350730354079e-12,
+              "sideband_asymmetry_proxy": 0.9999999999830973
             },
             {
               "mode": 2,
-              "n": 0.0028351333397126366,
-              "sideband_asymmetry_proxy": 0.9943617039627236
+              "n": 0.00812054669926121,
+              "sideband_asymmetry_proxy": 0.9840184642167846
             }
           ]
         },
-        "recooling_proxy_quanta": 0.027112663412383164,
-        "displacement_proxy_alpha": 0.1646592341676116,
-        "coherent_fraction": 0.999999999383358,
-        "position_error_m": 3.1738243496279976e-08,
-        "well_target_error_m": 3.20358584280113e-08,
+        "recooling_proxy_quanta": 0.02533590718473011,
+        "displacement_proxy_alpha": 0.15917257040374697,
+        "coherent_fraction": 0.9999999993371335,
+        "position_error_m": 3.184888783148713e-08,
+        "well_target_error_m": 3.1618019695819774e-08,
         "mapping": "raw simulation n_total \u2192 sideband asymmetry =1/(2n+1) (thermal proxy), recooling \u221dn, displacement \u221dsqrt(n_coh)",
         "provenance": "simulation proxies; experiment would fit actual sideband Rabi flops"
       },
@@ -185,8 +211,8 @@
     {
       "iteration": 3,
       "theta": [
-        0.023606797749978967,
-        0.0,
+        0.023606797749978953,
+        -0.08459713474939012,
         0.0,
         0.0,
         0.0,
@@ -194,44 +220,44 @@
         0.0,
         0.0
       ],
-      "loss": 0.06329359123050388,
+      "loss": 0.05353281733490164,
       "observables": {
-        "n_total": 0.032624772961460824,
+        "n_total": 0.02745391654509255,
         "n_modes": [
-          0.023431154113960795,
-          2.1156854046466833e-11,
-          0.009193618826343175
+          0.0159383701713105,
+          1.242594915851214e-11,
+          0.0115155463613561
         ],
-        "coherent_n_total": 0.03262477293312302,
+        "coherent_n_total": 0.02745391652631684,
         "sideband": {
-          "red_proxy": 0.032624772961460824,
-          "blue_proxy": 1.0326247729614608,
-          "asymmetry": 0.9387471732106406,
-          "second_order_red_proxy": 0.0005321879053934326,
-          "second_order_blue_proxy": 0.5336891487722477,
+          "red_proxy": 0.02745391654509255,
+          "blue_proxy": 1.0274539165450927,
+          "asymmetry": 0.9479501133949403,
+          "second_order_red_proxy": 0.0003768587668324532,
+          "second_order_blue_proxy": 0.5282076340787576,
           "per_mode": [
             {
               "mode": 0,
-              "n": 0.023431154113960795,
-              "sideband_asymmetry_proxy": 0.9552354613786336
+              "n": 0.0159383701713105,
+              "sideband_asymmetry_proxy": 0.9691079960460813
             },
             {
               "mode": 1,
-              "n": 2.1156854046466833e-11,
-              "sideband_asymmetry_proxy": 0.9999999999576863
+              "n": 1.242594915851214e-11,
+              "sideband_asymmetry_proxy": 0.9999999999751481
             },
             {
               "mode": 2,
-              "n": 0.009193618826343175,
-              "sideband_asymmetry_proxy": 0.9819447485466651
+              "n": 0.0115155463613561,
+              "sideband_asymmetry_proxy": 0.9774873971216096
             }
           ]
         },
-        "recooling_proxy_quanta": 0.032624772961460824,
-        "displacement_proxy_alpha": 0.18062329011819883,
-        "coherent_fraction": 0.9999999991007508,
-        "position_error_m": 3.2959853831401253e-08,
-        "well_target_error_m": 3.203584095286009e-08,
+        "recooling_proxy_quanta": 0.02745391654509255,
+        "displacement_proxy_alpha": 0.1656922343573073,
+        "coherent_fraction": 0.9999999992796762,
+        "position_error_m": 3.1396519554685655e-08,
+        "well_target_error_m": 3.1618089049306454e-08,
         "mapping": "raw simulation n_total \u2192 sideband asymmetry =1/(2n+1) (thermal proxy), recooling \u221dn, displacement \u221dsqrt(n_coh)",
         "provenance": "simulation proxies; experiment would fit actual sideband Rabi flops"
       },
@@ -241,8 +267,8 @@
     {
       "iteration": 4,
       "theta": [
-        -0.05278640450004206,
-        0.0,
+        -0.05278640450004207,
+        -0.08459713474939012,
         0.0,
         0.0,
         0.0,
@@ -250,44 +276,44 @@
         0.0,
         0.0
       ],
-      "loss": 0.11969103955120441,
+      "loss": 0.1279014856020226,
       "observables": {
-        "n_total": 0.06352651038256063,
+        "n_total": 0.06817367965316057,
         "n_modes": [
-          0.060715522681065726,
-          2.325528658531084e-11,
-          0.002810987678239618
+          0.06621199333597227,
+          3.7721714640781556e-11,
+          0.001961686279466579
         ],
-        "coherent_n_total": 0.06352651034788166,
+        "coherent_n_total": 0.06817367960844435,
         "sideband": {
-          "red_proxy": 0.06352651038256063,
-          "blue_proxy": 1.0635265103825606,
-          "asymmetry": 0.8872697038869065,
-          "second_order_red_proxy": 0.0020178087606927916,
-          "second_order_blue_proxy": 0.5675621279039462,
+          "red_proxy": 0.06817367965316057,
+          "blue_proxy": 1.0681736796531607,
+          "asymmetry": 0.8800126051329638,
+          "second_order_red_proxy": 0.00232382529872588,
+          "second_order_blue_proxy": 0.5728213302506124,
           "per_mode": [
             {
               "mode": 0,
-              "n": 0.060715522681065726,
-              "sideband_asymmetry_proxy": 0.891717778044107
+              "n": 0.06621199333597227,
+              "sideband_asymmetry_proxy": 0.8830614785358597
             },
             {
               "mode": 1,
-              "n": 2.325528658531084e-11,
-              "sideband_asymmetry_proxy": 0.9999999999534894
+              "n": 3.7721714640781556e-11,
+              "sideband_asymmetry_proxy": 0.9999999999245566
             },
             {
               "mode": 2,
-              "n": 0.002810987678239618,
-              "sideband_asymmetry_proxy": 0.9944094545522573
+              "n": 0.001961686279466579,
+              "sideband_asymmetry_proxy": 0.9960919601374228
             }
           ]
         },
-        "recooling_proxy_quanta": 0.06352651038256063,
-        "displacement_proxy_alpha": 0.25204465943138266,
-        "coherent_fraction": 0.9999999994383608,
-        "position_error_m": 3.30565735170735e-08,
-        "well_target_error_m": 3.2035911154254485e-08,
+        "recooling_proxy_quanta": 0.06817367965316057,
+        "displacement_proxy_alpha": 0.26110089928693153,
+        "coherent_fraction": 0.9999999993294154,
+        "position_error_m": 3.2577477421543136e-08,
+        "well_target_error_m": 3.1618042437294635e-08,
         "mapping": "raw simulation n_total \u2192 sideband asymmetry =1/(2n+1) (thermal proxy), recooling \u221dn, displacement \u221dsqrt(n_coh)",
         "provenance": "simulation proxies; experiment would fit actual sideband Rabi flops"
       },
@@ -297,8 +323,8 @@
     {
       "iteration": 5,
       "theta": [
-        -0.003354325268185885,
-        0.0,
+        -0.0011740981512890145,
+        -0.08459713474939012,
         0.0,
         0.0,
         0.0,
@@ -306,44 +332,44 @@
         0.0,
         0.0
       ],
-      "loss": 0.04462606765155792,
+      "loss": 0.09459746380498003,
       "observables": {
-        "n_total": 0.02277767887751625,
+        "n_total": 0.04956395012909531,
         "n_modes": [
-          0.002778955898144808,
-          5.5743187843404485e-12,
-          0.019998722973797123
+          0.042875143352672174,
+          3.88056253797231e-12,
+          0.006688806772542577
         ],
-        "coherent_n_total": 0.022777678866747066,
+        "coherent_n_total": 0.04956395012002842,
         "sideband": {
-          "red_proxy": 0.02277767887751625,
-          "blue_proxy": 1.0227776788775162,
-          "asymmetry": 0.9564295114380138,
-          "second_order_red_proxy": 0.00025941132752362495,
-          "second_order_blue_proxy": 0.5232965015325635,
+          "red_proxy": 0.04956395012909531,
+          "blue_proxy": 1.0495639501290954,
+          "asymmetry": 0.9098122245501956,
+          "second_order_red_proxy": 0.0012282925761997238,
+          "second_order_blue_proxy": 0.5520205352814949,
           "per_mode": [
             {
               "mode": 0,
-              "n": 0.002778955898144808,
-              "sideband_asymmetry_proxy": 0.9944728078501603
+              "n": 0.042875143352672174,
+              "sideband_asymmetry_proxy": 0.9210220915846595
             },
             {
               "mode": 1,
-              "n": 5.5743187843404485e-12,
-              "sideband_asymmetry_proxy": 0.9999999999888514
+              "n": 3.88056253797231e-12,
+              "sideband_asymmetry_proxy": 0.9999999999922389
             },
             {
               "mode": 2,
-              "n": 0.019998722973797123,
-              "sideband_asymmetry_proxy": 0.9615408229092808
+              "n": 0.006688806772542577,
+              "sideband_asymmetry_proxy": 0.986798984538166
             }
           ]
         },
-        "recooling_proxy_quanta": 0.02277767887751625,
-        "displacement_proxy_alpha": 0.15092275794838586,
-        "coherent_fraction": 0.9999999994833019,
-        "position_error_m": 3.034395367607564e-08,
-        "well_target_error_m": 3.2035867618159844e-08,
+        "recooling_proxy_quanta": 0.04956395012909531,
+        "displacement_proxy_alpha": 0.2226296254320804,
+        "coherent_fraction": 0.9999999997968908,
+        "position_error_m": 3.179230805748763e-08,
+        "well_target_error_m": 3.161802366455588e-08,
         "mapping": "raw simulation n_total \u2192 sideband asymmetry =1/(2n+1) (thermal proxy), recooling \u221dn, displacement \u221dsqrt(n_coh)",
         "provenance": "simulation proxies; experiment would fit actual sideband Rabi flops"
       },
@@ -353,8 +379,8 @@
     {
       "iteration": 6,
       "theta": [
-        -0.004728678517771298,
-        0.0,
+        -0.034752415750147224,
+        -0.08459713474939012,
         0.0,
         0.0,
         0.0,
@@ -362,44 +388,44 @@
         0.0,
         0.0
       ],
-      "loss": 0.1229960082955587,
+      "loss": 0.02250798988461893,
       "observables": {
-        "n_total": 0.0653946522022989,
+        "n_total": 0.011341432363475845,
         "n_modes": [
-          0.054851076512264285,
-          4.622635607631764e-12,
-          0.010543575685411977
+          0.0034486516491446517,
+          8.178346888598753e-12,
+          0.007892780706152847
         ],
-        "coherent_n_total": 0.06539465217821505,
+        "coherent_n_total": 0.01134143234888138,
         "sideband": {
-          "red_proxy": 0.0653946522022989,
-          "blue_proxy": 1.0653946522022988,
-          "asymmetry": 0.884338042554844,
-          "second_order_red_proxy": 0.002138230268329818,
-          "second_order_blue_proxy": 0.5696711127389584,
+          "red_proxy": 0.011341432363475845,
+          "blue_proxy": 1.011341432363476,
+          "asymmetry": 0.9778202358616951,
+          "second_order_red_proxy": 6.431404402764864e-05,
+          "second_order_blue_proxy": 0.5114700604515312,
           "per_mode": [
             {
               "mode": 0,
-              "n": 0.054851076512264285,
-              "sideband_asymmetry_proxy": 0.9011427050713277
+              "n": 0.0034486516491446517,
+              "sideband_asymmetry_proxy": 0.9931499436181864
             },
             {
               "mode": 1,
-              "n": 4.622635607631764e-12,
-              "sideband_asymmetry_proxy": 0.9999999999907547
+              "n": 8.178346888598753e-12,
+              "sideband_asymmetry_proxy": 0.9999999999836433
             },
             {
               "mode": 2,
-              "n": 0.010543575685411977,
-              "sideband_asymmetry_proxy": 0.9793483334478216
+              "n": 0.007892780706152847,
+              "sideband_asymmetry_proxy": 0.9844597501559699
             }
           ]
         },
-        "recooling_proxy_quanta": 0.0653946522022989,
-        "displacement_proxy_alpha": 0.2557237810181428,
-        "coherent_fraction": 0.9999999996164235,
-        "position_error_m": 3.125289029157257e-08,
-        "well_target_error_m": 3.2035845225466807e-08,
+        "recooling_proxy_quanta": 0.011341432363475845,
+        "displacement_proxy_alpha": 0.10649616119316875,
+        "coherent_fraction": 0.9999999986250004,
+        "position_error_m": 3.105216961550756e-08,
+        "well_target_error_m": 3.161810594107887e-08,
         "mapping": "raw simulation n_total \u2192 sideband asymmetry =1/(2n+1) (thermal proxy), recooling \u221dn, displacement \u221dsqrt(n_coh)",
         "provenance": "simulation proxies; experiment would fit actual sideband Rabi flops"
       },
@@ -409,64 +435,8 @@
     {
       "iteration": 7,
       "theta": [
-        -0.00302099147180929,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0
-      ],
-      "loss": 0.02831321312095229,
-      "observables": {
-        "n_total": 0.014315435412041277,
-        "n_modes": [
-          0.008297823396988147,
-          1.3778866936320355e-11,
-          0.006017612001274264
-        ],
-        "coherent_n_total": 0.014315435384810015,
-        "sideband": {
-          "red_proxy": 0.014315435412041277,
-          "blue_proxy": 1.0143154354120414,
-          "asymmetry": 0.9721660396969055,
-          "second_order_red_proxy": 0.00010246584551816272,
-          "second_order_blue_proxy": 0.5145203671030778,
-          "per_mode": [
-            {
-              "mode": 0,
-              "n": 0.008297823396988147,
-              "sideband_asymmetry_proxy": 0.9836752726157014
-            },
-            {
-              "mode": 1,
-              "n": 1.3778866936320355e-11,
-              "sideband_asymmetry_proxy": 0.9999999999724423
-            },
-            {
-              "mode": 2,
-              "n": 0.006017612001274264,
-              "sideband_asymmetry_proxy": 0.9881079000838036
-            }
-          ]
-        },
-        "recooling_proxy_quanta": 0.014315435412041277,
-        "displacement_proxy_alpha": 0.11964712861080293,
-        "coherent_fraction": 0.9999999980279145,
-        "position_error_m": 3.297599984903236e-08,
-        "well_target_error_m": 3.203586702531796e-08,
-        "mapping": "raw simulation n_total \u2192 sideband asymmetry =1/(2n+1) (thermal proxy), recooling \u221dn, displacement \u221dsqrt(n_coh)",
-        "provenance": "simulation proxies; experiment would fit actual sideband Rabi flops"
-      },
-      "safety_passed": true,
-      "failure_code": null
-    },
-    {
-      "iteration": 8,
-      "theta": [
-        0.007149918965645711,
-        0.0,
+        -0.04164078649987383,
+        -0.08459713474939012,
         0.0,
         0.0,
         0.0,
@@ -474,44 +444,44 @@
         0.0,
         0.0
       ],
-      "loss": 0.007422314152016388,
+      "loss": 0.09835622202690383,
       "observables": {
-        "n_total": 0.003683820430668061,
+        "n_total": 0.05163389554667952,
         "n_modes": [
-          0.0014659335209091795,
-          2.5296653660689117e-11,
-          0.002217886884462228
+          0.0417910702481431,
+          2.7766566823572703e-11,
+          0.00984282527076985
         ],
-        "coherent_n_total": 0.0036838203997945984,
+        "coherent_n_total": 0.05163389550070056,
         "sideband": {
-          "red_proxy": 0.003683820430668061,
-          "blue_proxy": 1.003683820430668,
-          "asymmetry": 0.9926862442632869,
-          "second_order_red_proxy": 6.785266482703709e-06,
-          "second_order_blue_proxy": 0.5036973909636333,
+          "red_proxy": 0.05163389554667952,
+          "blue_proxy": 1.0516338955466795,
+          "asymmetry": 0.9063982544148006,
+          "second_order_red_proxy": 0.0013330295846627055,
+          "second_order_blue_proxy": 0.554299954716005,
           "per_mode": [
             {
               "mode": 0,
-              "n": 0.0014659335209091795,
-              "sideband_asymmetry_proxy": 0.9970767036743323
+              "n": 0.0417910702481431,
+              "sideband_asymmetry_proxy": 0.922864970386089
             },
             {
               "mode": 1,
-              "n": 2.5296653660689117e-11,
-              "sideband_asymmetry_proxy": 0.9999999999494067
+              "n": 2.7766566823572703e-11,
+              "sideband_asymmetry_proxy": 0.9999999999444669
             },
             {
               "mode": 2,
-              "n": 0.002217886884462228,
-              "sideband_asymmetry_proxy": 0.9955838154267642
+              "n": 0.00984282527076985,
+              "sideband_asymmetry_proxy": 0.9806943928934521
             }
           ]
         },
-        "recooling_proxy_quanta": 0.003683820430668061,
-        "displacement_proxy_alpha": 0.06069448409694738,
-        "coherent_fraction": 0.9999999913477154,
-        "position_error_m": 3.1871415253891903e-08,
-        "well_target_error_m": 3.2035902574036675e-08,
+        "recooling_proxy_quanta": 0.05163389554667952,
+        "displacement_proxy_alpha": 0.22723092989445906,
+        "coherent_fraction": 0.9999999990901528,
+        "position_error_m": 3.1519996893011e-08,
+        "well_target_error_m": 3.1618070135356045e-08,
         "mapping": "raw simulation n_total \u2192 sideband asymmetry =1/(2n+1) (thermal proxy), recooling \u221dn, displacement \u221dsqrt(n_coh)",
         "provenance": "simulation proxies; experiment would fit actual sideband Rabi flops"
       },
@@ -554,5 +524,5 @@
     ]
   ],
   "parameterization": "closed-loop low-dim: 2 time-law + 6 voltage corrections (2 SVD modes)",
-  "provenance": "safety-gated, budget-limited derivative-free search; measurement provenance per iteration"
+  "provenance": "safety-gated (synthesize->hardware->safety->authorize->measure), budget-limited, fail-closed on NaN, no best from rejected"
 }

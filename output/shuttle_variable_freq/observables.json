@@ -1,40 +1,40 @@
 {
-  "n_total": 0.017909804552994957,
+  "n_total": 0.0006094292534462031,
   "n_modes": [
-    0.0017731685501298777,
-    3.5048186575181717e-11,
-    0.016136635967816892
+    0.00030367163641897843,
+    1.8370860388472465e-12,
+    0.00030575761519013867
   ],
-  "coherent_n_total": 0.01790980451342966,
+  "coherent_n_total": 0.0006094292143581641,
   "sideband": {
-    "red_proxy": 0.017909804552994957,
-    "blue_proxy": 1.0179098045529948,
-    "asymmetry": 0.965419066416525,
-    "second_order_red_proxy": 0.00016038054956323943,
-    "second_order_blue_proxy": 0.5182305656521213,
+    "red_proxy": 0.0006094292534462031,
+    "blue_proxy": 1.0006094292534462,
+    "asymmetry": 0.9987826252996184,
+    "second_order_red_proxy": 1.8570200747799824e-07,
+    "second_order_blue_proxy": 0.5006098006574611,
     "per_mode": [
       {
         "mode": 0,
-        "n": 0.0017731685501298777,
-        "sideband_asymmetry_proxy": 0.9964661949636457
+        "n": 0.00030367163641897843,
+        "sideband_asymmetry_proxy": 0.9993930253691209
       },
       {
         "mode": 1,
-        "n": 3.5048186575181717e-11,
-        "sideband_asymmetry_proxy": 0.9999999999299036
+        "n": 1.8370860388472465e-12,
+        "sideband_asymmetry_proxy": 0.9999999999963258
       },
       {
         "mode": 2,
-        "n": 0.016136635967816892,
-        "sideband_asymmetry_proxy": 0.9687357284034706
+        "n": 0.00030575761519013867,
+        "sideband_asymmetry_proxy": 0.9993888584919598
       }
     ]
   },
-  "recooling_proxy_quanta": 0.017909804552994957,
-  "displacement_proxy_alpha": 0.13382751777354931,
-  "coherent_fraction": 0.999999997735023,
-  "position_error_m": 2.6160509665295078e-09,
-  "well_target_error_m": 1.417298502943643e-09,
+  "recooling_proxy_quanta": 0.0006094292534462031,
+  "displacement_proxy_alpha": 0.024686620148537227,
+  "coherent_fraction": 0.9999999342203566,
+  "position_error_m": 1.050774639822008e-09,
+  "well_target_error_m": 1.0060603265776206e-09,
   "mapping": "raw simulation n_total \u2192 sideband asymmetry =1/(2n+1) (thermal proxy), recooling \u221dn, displacement \u221dsqrt(n_coh)",
   "provenance": "simulation proxies; experiment would fit actual sideband Rabi flops"
 }

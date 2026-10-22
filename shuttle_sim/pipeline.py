@@ -129,7 +129,7 @@ class Runner:
                     mod = float(freq_profile.omega_scaling(np.array([sc]))[0] - 1)
                 else:
                     mod = 0.0
-                omega = base_omega * (1 + np.clip(mod, -0.18, 0.18))
+                omega = base_omega * (1 + np.clip(mod, -0.15, 0.15))
             v,loc=self.trap.invert(p,self.direction,omega,prev)
             vs.append(v);ls.append(loc);prev=v
         self.frequency_mode = freq_mode
@@ -276,7 +276,7 @@ class Runner:
         return r,H,final,diag
 
     def evaluate(self,theta,baseline='smooth',ideal=False,hardware=None,stray=None,
-                 exact_nodes=None,method='exact',subdivisions=None,keep=False,frequency_scale=1., return_trajectory=False, trajectory_decimate=400):
+                 exact_nodes=None,method='exact',subdivisions=None,keep=False,frequency_scale=1., return_trajectory=False, trajectory_decimate=400, initial_nbar=0.):
         ct,cmd,route=self.commands(theta,baseline)
         hw=hardware or self.hw
         t,v,codes,dist=hw.deliver(cmd,subdivisions or self.cfg.get('subdivisions',4),ideal)
@@ -299,12 +299,12 @@ class Runner:
             init=Local(init.position_m,init.hessian_J_m2*frequency_scale**2,init.omega_rad_s*frequency_scale,init.modes)
             final=Local(final.position_m,final.hessian_J_m2*frequency_scale**2,final.omega_rad_s*frequency_scale,final.modes)
         target=self.target if self.task['protocol']=='one_way' else self.start
-        result=propagate(t,r,H,init,final,self.trap.mass,target,method,hold='zero_order' if ideal else 'linear', return_trajectory=return_trajectory, trajectory_decimate=trajectory_decimate)
+        result=propagate(t,r,H,init,final,self.trap.mass,target,method,hold='zero_order' if ideal else 'linear', return_trajectory=return_trajectory, trajectory_decimate=trajectory_decimate, initial_nbar=initial_nbar)
         result['distortion']=dist
         result['accepted']=bool(result['n_total']<=self.task['max_n_total'] and
              result['position_error_m']<=self.task['position_tolerance_m'] and
              result['well_target_error_m']<=self.task['position_tolerance_m'])
-        result['quality_failures']=[]
+        result['quality_failures']=[]; result['failure_codes']=result['quality_failures']
         if result['n_total']>self.task['max_n_total']:result['quality_failures'].append('excessive_excitation')
         if result['position_error_m']>self.task['position_tolerance_m']:result['quality_failures'].append('transport_accuracy')
         if result['well_target_error_m']>self.task['position_tolerance_m']:result['quality_failures'].append('well_target_accuracy')
@@ -324,7 +324,8 @@ class Runner:
             h['delay_s']=(np.broadcast_to(self.hw.delay_s,(C,))+rng.uniform(0,spec['additional_delay_max_s'],C)).tolist()
             h['lowpass_hz']=(np.asarray(h['lowpass_hz'])*np.exp(rng.normal(0,spec['log_filter_sigma']))).tolist()
             rows.append({'scenario':i,'hardware':h,'stray_V_m':rng.normal(0,spec['stray_sigma_V_m'],3).tolist(),
-                         'frequency_scale':float(np.exp(rng.normal(0,spec.get('log_frequency_sigma',0.))))})
+                         'frequency_scale':float(np.exp(rng.normal(0,spec.get('log_frequency_sigma',0.)))),
+                         'initial_nbar':float(abs(rng.normal(0,spec.get('initial_nbar_sigma',0.))))})
         return rows
 
     def optimize(self,ideal=False,robust=False, max_evaluations=None, initial_theta=None):
@@ -389,7 +390,7 @@ class Runner:
             opt = OptimizeResult(x=best[1], fun=best[0], success=True, message="budget exhausted after initial evaluation", nfev=1)
         out={'theta':best[1].tolist(),'loss':best[0],'optimizer_success':bool(opt.success),
              'termination':str(opt.message),'evaluations':len(history),'history':history,
-             'failure_mode':None if opt.success else 'optimizer_budget_exhaustion_or_stagnation',
+             'failure_mode':None if opt.success else ('optimizer_budget_exhaustion' if len(history)>=budget else 'optimizer_stagnation'),
              'parameterization':'2 time-law coefficients + 6 voltage corrections (2 geometry SVD modes)',
              'search_bounds':bounds,'ideal_objective':ideal,'robust_training_scenarios':training}
         if self.checkpoint is not None:write_json(self.checkpoint,{**out,'complete':True})
@@ -402,7 +403,7 @@ class Runner:
             row=dict(sc)
             try:
                 row.update(self.evaluate(theta,'sta',hardware=Hardware(**sc['hardware']),stray=sc['stray_V_m'],
-                    frequency_scale=sc['frequency_scale'],exact_nodes=641,subdivisions=8))
+                    frequency_scale=sc['frequency_scale'],initial_nbar=sc.get('initial_nbar',0.),exact_nodes=641,subdivisions=8))
                 row['status']='ok'
             except Rejected as ex:row.update(status=ex.code,accepted=False)
             rows.append(row)
@@ -415,9 +416,41 @@ class Runner:
                 'cvar_20pct_n':float(np.sort(values)[-max(1,int(np.ceil(.2*count))):].mean()) if valid else None,
                 'rows':rows,'seed':spec['seed']}
 
+    def optimize_frequency_profile(self, max_evaluations=6):
+        """Optimize variable-frequency coefficients (spec sec.5: profile is part
+        of optimization, not only a config constant). Each evaluation re-runs
+        prepare() with new coeffs and scores zero-correction STA on cheap ROM.
+        Restores the best profile. No-op in fixed mode."""
+        if self.task.get('frequency_mode','fixed') != 'variable':
+            return {'mode':'fixed','evaluations':0}
+        from scipy.optimize import minimize as _min
+        orig = np.asarray(self.task.get('frequency_coeffs',[0.,0.]),float)
+        hist=[]
+        def loss(c):
+            self.task['frequency_coeffs']=np.clip(c,-0.15,0.15).tolist()
+            try:
+                self.prepare(); r=self.evaluate(np.zeros(8),'sta')
+                v=float(np.log1p(r['n_total']/self.task['max_n_total'])+1e-4*np.sum(np.square(c)))
+            except Exception as ex:
+                v=1e6
+            hist.append({'coeffs':np.clip(c,-0.15,0.15).tolist(),'loss':v}); return v
+        loss(orig)
+        remaining=max(0,int(max_evaluations)-1)
+        if remaining:
+            _min(loss, orig, method='Powell', bounds=[(-0.15,0.15)]*len(orig),
+                 options={'maxfev':remaining,'xtol':1e-3,'ftol':1e-4})
+        best=min(hist,key=lambda z:z['loss'])
+        self.task['frequency_coeffs']=best['coeffs']; self.prepare()
+        self.frequency_optimization={'mode':'variable','history':hist,'best':best,
+            'evaluations':len(hist),'bounds':[[-0.15,0.15]]*len(orig)}
+        return self.frequency_optimization
+
     def run(self,out,full_field=False):
         out=Path(out);out.mkdir(parents=True,exist_ok=True);self.checkpoint=out/'optimizer_checkpoint.json'
-        started=time.time();self.prepare();write_json(out/'config.json',self.cfg)
+        started=time.time();self.prepare()
+        freq_opt=self.optimize_frequency_profile(self.cfg.get('frequency_optimization_evaluations',6))
+        write_json(out/'frequency_optimization.json',freq_opt)
+        write_json(out/'config.json',self.cfg)
         write_json(out/'route_diagnostics.json',self.support_diagnostics)
         # Trap snapshot for reproducibility (spec §16)
         try:
@@ -513,7 +546,7 @@ class Runner:
         tol=self.cfg.get('validation_n_tolerance',.005)
         validation['convergence_passed']=bool(max(validation['refinement_delta_n'],validation['integrator_delta_n'])<=tol)
         validation['n_tolerance']=tol
-        if full_field:
+        if full_field or self.cfg.get('full_field_validation', False):
             validation['nonlinear_centroid']=validate_full_field_centroid(self.trap,trace['t'],trace['v'],trace['initial'],
                                       self.target if self.task['protocol']=='one_way' else self.start)
         write_json(out/'validation.json',validation)
@@ -563,7 +596,7 @@ class Runner:
                 for sc in self.scenarios(self.cfg.get('robust_samples',8), self.cfg['uncertainty']['seed']):
                     row=dict(sc)
                     try:
-                        row.update(self.evaluate(theta,_rob_baseline,hardware=__import__('shuttle_sim.hardware',fromlist=['Hardware']).Hardware(**sc['hardware']),stray=sc['stray_V_m'],frequency_scale=sc['frequency_scale'],exact_nodes=641,subdivisions=8))
+                        row.update(self.evaluate(theta,_rob_baseline,hardware=__import__('shuttle_sim.hardware',fromlist=['Hardware']).Hardware(**sc['hardware']),stray=sc['stray_V_m'],frequency_scale=sc['frequency_scale'],initial_nbar=sc.get('initial_nbar',0.),exact_nodes=641,subdivisions=8))
                         row['status']='ok'
                     except Exception as ex:
                         from shuttle_sim.field import Rejected as _Rej
@@ -1042,7 +1075,7 @@ class Runner:
             _src_files = [Path(__file__).parent.parent / p for p in _tracked if p]
         except Exception:
             _src_files = list(Path(__file__).parent.glob('*.py'))
-        write_json(out/'manifest.json',{'package':'shuttle_sim 0.2.0','python':sys.version,
+        write_json(out/'manifest.json',{'package':f'shuttle_sim {__import__("shuttle_sim").__version__}','python':sys.version,
             'numpy':np.__version__,'scipy':scipy.__version__,'platform':platform.platform(),
             'elapsed_s':time.time()-started,'run_unix_time':started,
             'input_sha256':hashlib.sha256(json.dumps(self.cfg,sort_keys=True).encode()).hexdigest(),
