@@ -1231,10 +1231,10 @@ function init(){
     }
   };
   // GDS file upload
-  document.getElementById('inpGdsFile').onchange=async(e=>{
+  document.getElementById('inpGdsFile').onchange=async (e) => {
     let f=e.target.files[0]; if(!f) return;
     document.getElementById('gdsUploadStatus').textContent="загружаю "+f.name+"...";
-    let buf=await f.arrayBuffer(); let b64= btoa(String.fromCharCode(...new Uint8Array(buf)));
+    let buf=await f.arrayBuffer(); let bytes=new Uint8Array(buf); let binary=""; for(let i=0;i<bytes.length;i++) binary+=String.fromCharCode(bytes[i]); let b64=btoa(binary);
     let r=await fetch('/api/upload',{method:'POST',headers:{"Content-Type":"application/json"},body:JSON.stringify({filename:f.name,content_base64:b64})});
     let j=await r.json();
     if(j.ok){
@@ -1243,7 +1243,7 @@ function init(){
     } else {
       document.getElementById('gdsUploadStatus').textContent="ошибка "+j.error;
     }
-  });
+  };
   // initial load
   loadConfig(); refreshRuns(); setInterval(refreshRuns, 3000);
   // override poll to respect selected run
