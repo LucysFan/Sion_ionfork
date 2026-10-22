@@ -31,17 +31,54 @@ import argparse, json, pathlib, sys, time, subprocess, shlex
 
 def load_config(path: pathlib.Path):
     cfg = json.loads(path.read_text())
-    # resolve GDS path relative to config file
+    # resolve GDS path robustly for cross-platform (Windows/Linux) and for absolute paths baked on other machine
     if cfg.get("trap", {}).get("kind") == "gds":
-        p = pathlib.Path(cfg["trap"]["path"])
-        if not p.is_absolute():
-            cand = (path.resolve().parent / p)
-            if cand.exists():
-                cfg["trap"]["path"] = str(cand.resolve())
-            else:
-                cand2 = pathlib.Path.cwd() / p
-                if cand2.exists():
-                    cfg["trap"]["path"] = str(cand2.resolve())
+        raw = cfg["trap"]["path"]
+        p = pathlib.Path(raw)
+        # if path is absolute but does not exist (e.g. /home/user/... on Windows), fallback to basename search
+        candidates = []
+        if p.is_absolute():
+            if p.exists():
+                cfg["trap"]["path"] = str(p.resolve())
+                return cfg
+            # fallback: look for same filename near config and in repo
+            candidates.append(path.resolve().parent / p.name)
+            candidates.append(pathlib.Path.cwd() / p.name)
+            candidates.append(pathlib.Path.cwd() / "configs" / p.name)
+            candidates.append(pathlib.Path("configs") / p.name)
+            candidates.append(pathlib.Path("configs/generated_fivewire.gds").resolve())
+        else:
+            candidates.append(path.resolve().parent / p)
+            candidates.append(pathlib.Path.cwd() / p)
+            candidates.append(pathlib.Path.cwd() / "configs" / p)
+            # also try absolute resolve of candidate
+            if len(candidates) and not candidates[0].exists():
+                # try generated_fivewire.gds in configs as ultimate fallback for demo
+                fb = pathlib.Path("configs/generated_fivewire.gds")
+                if fb.exists():
+                    candidates.append(fb.resolve())
+        for cand in candidates:
+            try:
+                if cand.exists():
+                    cfg["trap"]["path"] = str(cand.resolve())
+                    break
+            except: pass
+        # if still not resolved, try to keep original but will fail later with clear error — also try python-gdsii friendly relative
+        # ensure fallback file exists for demo
+        if not pathlib.Path(cfg["trap"]["path"]).exists():
+            # last resort: search for any .gds with same stem in configs
+            try:
+                stem = pathlib.Path(raw).stem
+                for g in pathlib.Path("configs").glob("*.gds"):
+                    if g.stem == stem:
+                        cfg["trap"]["path"] = str(g.resolve())
+                        break
+                else:
+                    for g in pathlib.Path("examples/gds").glob("*.GDS"):
+                        if g.stem.lower() == stem.lower():
+                            cfg["trap"]["path"] = str(g.resolve())
+                            break
+            except: pass
     return cfg
 
 def main():

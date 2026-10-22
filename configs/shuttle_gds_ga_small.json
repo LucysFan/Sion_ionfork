@@ -5,7 +5,7 @@
     "charge_e": 1,
     "length_scale_m": 1e-06,
     "rf_frequency_hz": 20000000.0,
-    "path": "/home/user/Sion_ionfork/configs/generated_fivewire.gds",
+    "path": "generated_fivewire.gds",
     "electrode_map": [
       {
         "name": "RF0",
