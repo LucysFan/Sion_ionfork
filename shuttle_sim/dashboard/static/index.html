@@ -84,12 +84,82 @@ input[type=range]{accent-color:var(--accent)}
 </div>
 
 <div class="tabs">
-  <button class="tab-btn active" data-tab="overview">Overview</button>
+  <button class="tab-btn active" data-tab="setup">Setup · GDS ⚙️</button>
+  <button class="tab-btn" data-tab="overview">Training <span style="font-weight:400;font-size:11px;opacity:0.7">fitness / diversity / hall</span></button>
+  <button class="tab-btn" data-tab="islands">GA <span style="font-weight:400;font-size:11px;opacity:0.7">islands / migration</span></button>
   <button class="tab-btn" data-tab="trap">Trap · Animation <span style="font-weight:400;font-size:11px;opacity:0.7">3 % per island</span></button>
 </div>
 
+<!-- Setup tab — unified file: GDS + distance + time -> optimization, always-on -->
+<div id="pane-setup" class="tab-pane active">
+<div style="padding:16px 20px;display:grid;grid-template-columns:320px 1fr;gap:16px">
+  <div class="card">
+    <h3>Единый файл · GDS + расстояние + время <small>тот самый общий файл — правишь здесь, жмёшь Запустить</small></h3>
+    <div class="mono" style="font-size:11px;color:var(--muted);margin-bottom:10px">Конфиг = <code>configs/unified_live.json</code> (trap + hardware + task + ga). Дашборд висит всегда, не только во время GA — даже когда ничего не считается, видишь предыдущие прогоны.</div>
+    <div style="display:grid;gap:10px">
+      <label class="kv">GDS файл <input type="file" id="inpGdsFile" accept=".gds,.GDS" class="btn" style="width:100%"></label>
+      <div id="gdsUploadStatus" class="mono" style="font-size:11px;color:var(--muted)"></div>
+      <label class="kv">или путь к GDS <input type="text" id="inpGdsPath" placeholder="configs/generated_fivewire.gds" style="width:100%;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text)"></label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <label class="kv">дистанция мкм <input type="number" id="inpDistance" value="30" min="5" max="500" step="5" style="width:100%;padding:6px;border-radius:8px;background:var(--panel2);border:1px solid var(--border);color:var(--text)"></label>
+        <label class="kv">время мкс <input type="number" id="inpDuration" value="15" min="5" max="200" step="1" style="width:100%;padding:6px;border-radius:8px;background:var(--panel2);border:1px solid var(--border);color:var(--text)"></label>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <label class="kv">hold мкс <input type="number" id="inpHold" value="2" min="0" max="20" step="0.5" style="width:100%;padding:6px;border-radius:8px;background:var(--panel2);border:1px solid var(--border);color:var(--text)"></label>
+        <label class="kv">протокол <select id="selProtocol" class="btn" style="width:100%;padding:6px"><option value="one_way">one_way</option><option value="round_trip">round_trip</option><option value="repeated">repeated</option></select></label>
+      </div>
+      <label class="kv">поколений GA <input type="number" id="inpGens" value="12" min="2" max="100" step="2" style="width:100%;padding:6px;border-radius:8px;background:var(--panel2);border:1px solid var(--border);color:var(--text)"></label>
+      <label class="kv">папка вывода <input type="text" id="inpOut" value="output/live_run" style="width:100%;padding:6px;border-radius:8px;background:var(--panel2);border:1px solid var(--border);color:var(--text)"></label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
+        <button class="btn" id="btnSaveConfig" style="flex:1">💾 Сохранить unified_live.json</button>
+        <button class="btn" id="btnLoadConfig" style="flex:1">↺ Загрузить</button>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="btnRunPipeline" style="flex:1;background:var(--panel2);border-color:var(--accent)">▶ Pipeline робаст (1 θ, 30с)</button>
+        <button class="btn active" id="btnRunGA" style="flex:1">🚀 GA робаст + дашборд (острова)</button>
+      </div>
+      <div id="launchStatus" class="mono" style="font-size:11px;color:var(--muted);min-height:18px"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="btnRefreshRuns">↻ Обновить список прогонов</button>
+        <select id="selRuns" class="btn" style="flex:1;min-width:140px"></select>
+        <button class="btn" id="btnSwitchRun">→ Показать</button>
+      </div>
+      <div id="runsList" class="mono" style="font-size:11px;color:var(--muted);max-height:120px;overflow:auto"></div>
+      <div id="jobsList" class="mono" style="font-size:11px;color:var(--muted)"></div>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Как это работает <small>всегда видно, даже без запусков</small></h3>
+    <div class="mono" style="font-size:12px;line-height:1.6;color:var(--text)">
+      <b>1. Загружаешь GDS</b> — просто кинь файл сюда (или выбери из <code>configs/*.gds</code>).<br>
+      <b>2. Ставишь расстояние и время</b> — например <b>100 мкм за 20 мкс</b> для большой ловушки.<br>
+      <b>3. Жмёшь «GA робаст + дашборд»</b> — острова S/A/V/R/H начнут эволюцию, дашборд сразу показывает <b>Training</b> (красивые графики), <b>GA</b> (миграции, диверсити) и <b>Trap</b> (яма + ион, анимация 60fps).<br>
+      <b>Робастность</b>: остров <code>R</code> оптимизирует <code>0.35*mean + 0.65*worst</code> по 3 train-сценариям (gain/offset/delay/filter/stray) — выживают не быстрые, а устойчивые.<br>
+      <b>Вкладки всегда доступны</b>: даже пока ничего не запущено — видишь предыдущие <code>output/*</code> прогоны, можешь переключать <select style="padding:2px 6px;border-radius:6px;background:var(--panel2);border:1px solid var(--border);color:var(--text)"><option>output/ga_live_demo</option></select>.<br>
+      <div class="notice" style="margin-top:10px">Текущий общий файл: <code id="curConfigPath">configs/unified_live.json</code> — это твой «один файл» для ловушки. Меняешь в Setup → Сохранить → Запустить — всё через него. Хардвер (DAC 20MS/s, RC 1МГц+500кГц, jitter per-sample) уже внутри.</div>
+      <div style="margin-top:10px;display:flex;gap:8px"><span class="badge">GDS → config → Runner → Hardware → ROM → Dynamics → Robust → GA</span></div>
+    </div>
+    <div style="margin-top:12px">
+      <h3 style="margin-bottom:6px">Текущий конфиг (превью)</h3>
+      <pre id="configPreview" class="mono" style="max-height:240px;overflow:auto;background:var(--panel2);padding:10px;border-radius:8px;font-size:11px"></pre>
+    </div>
+  </div>
+</div>
+<div class="card" style="margin:0 20px 16px 20px">
+  <h3>Быстрый старт для большой ловушки <small>скопируй и поменяй только путь к GDS</small></h3>
+  <pre class="mono" style="background:var(--panel2);padding:12px;border-radius:8px;overflow:auto;font-size:11px">{
+  "trap": {"kind":"gds","path":"configs/generated_fivewire.gds","electrode_map":[...],"rf_electrodes":{"RF0":160,"RF1":160},"dc_indices":[2,3,4,5,6,7,8,9,10,11,12,13,14,15,16],"lower_V":-12,"upper_V":12,"initial_dc_V":[1.9,0,10,10,-10,10,10,0,0,10,10,-10,10,10,0],"minimum_seed_m":[0,0,90e-6]},
+  "hardware": {"sample_rate_hz":20e6,"dac_bits":16,"lowpass_hz":[1e6,500e3],"max_jump_V":1.0},
+  "task": {"distance_m":100e-6,"duration_s":20e-6,"hold_s":2e-6,"direction":[1,0,0],"protocol":"one_way","min_frequency_hz":400e3,"max_n_total":0.5,"position_tolerance_m":5e-6},
+  "ga": {"generations":20,"islands":[{"strategy":"S","pop":20,"baseline":"smooth"},{"strategy":"A","pop":20,"baseline":"sta"},{"strategy":"R","pop":25,"baseline":"sta"}]}
+}
+# потом: python -m shuttle_sim.ga --config configs/unified_live.json --out output/ga_big --dashboard --port 8000
+</pre>
+</div>
+</div>
 <!-- Overview tab -->
-<div id="pane-overview" class="tab-pane active">
+<div id="pane-overview" class="tab-pane">
+
 <div class="grid">
   <div class="card">
     <h3>Fitness vs generation <small>best per island · global best (bold) · lower is better</small></h3>
@@ -135,11 +205,37 @@ input[type=range]{accent-color:var(--accent)}
     </div>
     <div id="trajNotice" class="notice" style="margin-top:8px;display:none"></div>
   </div>
+</div>
+<div class="card" style="margin:16px 20px">
+  <h3>Raw state <small id="stateTime"></small></h3>
+  <pre id="raw" class="mono" style="max-height:240px;overflow:auto;background:var(--panel2);padding:12px;border-radius:8px"></pre>
+</div>
+</div> <!-- end overview pane -->
+
+<!-- GA islands tab -->
+<div id="pane-islands" class="tab-pane">
+<div class="grid" style="grid-template-columns:1fr">
   <div class="card" style="grid-column:1/-1">
     <h3>Islands snapshot <small>migration ring S→A→V→R→H→S every N gens + shuffle every 3N · click row to see history</small></h3>
     <table class="table" id="islandTable"></table>
     <div id="migrLog" class="mono" style="margin-top:10px;color:var(--muted)"></div>
   </div>
+  <div class="card">
+    <h3>Hall · per-island best <small>топ-3% уже в Trap вкладке, тут вся популяция</small></h3>
+    <div id="hallIslandBars" class="bar"></div>
+    <div class="mono" id="hallIslandStats" style="margin-top:8px;color:var(--muted)"></div>
+  </div>
+  <div class="card">
+    <h3>Jobs & runs <small>что сейчас считается, где лежат артефакты</small></h3>
+    <div id="jobsCard" class="mono" style="font-size:12px"></div>
+    <div id="runsCard" class="mono" style="font-size:12px;margin-top:8px"></div>
+  </div>
+</div>
+<div class="card" style="margin:16px 20px">
+  <h3>Raw state <small id="stateTime2"></small></h3>
+  <pre id="raw2" class="mono" style="max-height:240px;overflow:auto;background:var(--panel2);padding:12px;border-radius:8px"></pre>
+</div>
+</div> <!-- end islands pane -->
 </div>
 <div class="card" style="margin:16px 20px">
   <h3>Raw state <small id="stateTime"></small></h3>
@@ -1037,6 +1133,146 @@ function init(){
   document.getElementById('chkTrapWell').onchange=()=>{ if(lastState) drawTrap(lastState)}
   document.getElementById('chkTrapIon').onchange=()=>{ if(lastState) drawTrap(lastState)}
   document.getElementById('chkTrapSide').onchange=()=>{ if(lastState) drawTrap(lastState)}
+  // === Setup tab logic (unified file GDS + distance/time) ===
+  async function loadConfig(){
+    try{
+      let r=await fetch('/api/config?ts='+Date.now(),{cache:"no-store"}); let j=await r.json();
+      if(j.config){
+        document.getElementById('configPreview').textContent=JSON.stringify(j.config,null,2).slice(0,12000);
+        document.getElementById('curConfigPath').textContent=j.config_path||"configs/unified_live.json";
+        // fill inputs
+        if(j.config.task){
+          document.getElementById('inpDistance').value=(j.config.task.distance_m*1e6).toFixed(0);
+          document.getElementById('inpDuration').value=(j.config.task.duration_s*1e6).toFixed(0);
+          if(j.config.task.hold_s!=null) document.getElementById('inpHold').value=(j.config.task.hold_s*1e6).toFixed(1);
+          if(j.config.task.protocol) document.getElementById('selProtocol').value=j.config.task.protocol;
+        }
+        if(j.config.ga && j.config.ga.generations) document.getElementById('inpGens').value=j.config.ga.generations;
+        if(j.config.trap && j.config.trap.path) document.getElementById('inpGdsPath').value=j.config.trap.path;
+      }
+      if(j.gds_list){
+        let sel=document.getElementById('inpGdsPath');
+        // add datalist
+        let dl=document.getElementById('gdsDatalist');
+        if(!dl){
+          dl=document.createElement('datalist'); dl.id='gdsDatalist'; sel.setAttribute('list','gdsDatalist'); document.body.appendChild(dl);
+        }
+        dl.innerHTML=j.gds_list.map(p=>`<option value="${p}">`).join('');
+      }
+    }catch(e){ document.getElementById('configPreview').textContent="load error "+e.message}
+  }
+  async function refreshRuns(){
+    try{
+      let r=await fetch('/api/runs?ts='+Date.now(),{cache:"no-store"}); let j=await r.json();
+      let sel=document.getElementById('selRuns');
+      let list=document.getElementById('runsList');
+      sel.innerHTML=""; list.innerHTML="";
+      for(let run of j.runs){
+        let opt=document.createElement('option'); opt.value=run.path; opt.textContent=run.name + (run.has_state?" ●GA":"") + (run.has_status?" ✓":""); 
+        if(run.path===j.current) opt.selected=true;
+        sel.appendChild(opt);
+        let div=document.createElement('div'); div.textContent=run.path + (run.has_state?" [state.json]":"") + (run.has_status?" [status.json]":"");
+        list.appendChild(div);
+      }
+      // also jobs
+      let r2=await fetch('/api/jobs?ts='+Date.now(),{cache:"no-store"}); let j2=await r2.json();
+      let jl=document.getElementById('jobsList'); let jc=document.getElementById('jobsCard');
+      let txt=Object.keys(j2.jobs).length? JSON.stringify(j2.jobs,null,2) : "нет активных запусков — жми GA/Pipeline";
+      if(jl) jl.textContent=txt;
+      if(jc) jc.textContent=txt;
+      let rl=document.getElementById('runsCard'); if(rl) rl.textContent=JSON.stringify(j.runs.slice(0,5),null,2);
+    }catch(e){}
+  }
+  document.getElementById('btnLoadConfig').onclick=loadConfig;
+  document.getElementById('btnSaveConfig').onclick=async()=>{
+    let distance=parseFloat(document.getElementById('inpDistance').value)*1e-6;
+    let duration=parseFloat(document.getElementById('inpDuration').value)*1e-6;
+    let hold=parseFloat(document.getElementById('inpHold').value)*1e-6;
+    let protocol=document.getElementById('selProtocol').value;
+    let gens=parseInt(document.getElementById('inpGens').value);
+    let gds=document.getElementById('inpGdsPath').value;
+    let out=document.getElementById('inpOut').value||"output/live_run";
+    let r=await fetch('/api/config',{method:'POST',headers:{"Content-Type":"application/json"},body:JSON.stringify({distance_m:distance,duration_s:duration,hold_s:hold,protocol:protocol,gds_path:gds,generations:gens})});
+    let j=await r.json(); document.getElementById('launchStatus').textContent= j.ok? "сохранено "+j.path : "ошибка "+(j.error||"");
+    loadConfig();
+  };
+  document.getElementById('btnRunPipeline').onclick=async()=>{
+    let distance=parseFloat(document.getElementById('inpDistance').value)*1e-6;
+    let duration=parseFloat(document.getElementById('inpDuration').value)*1e-6;
+    let gds=document.getElementById('inpGdsPath').value;
+    let out=document.getElementById('inpOut').value||"output/live_run";
+    let protocol=document.getElementById('selProtocol').value;
+    document.getElementById('launchStatus').textContent="запускаю pipeline...";
+    let r=await fetch('/api/launch',{method:'POST',headers:{"Content-Type":"application/json"},body:JSON.stringify({mode:"pipeline",distance_m:distance,duration_s:duration,gds_path:gds,out:out,protocol:protocol})});
+    let j=await r.json(); document.getElementById('launchStatus').textContent= j.ok? "pipeline запущен "+j.job_id+" → "+j.out : "ошибка "+j.error;
+    refreshRuns();
+  };
+  document.getElementById('btnRunGA').onclick=async()=>{
+    let distance=parseFloat(document.getElementById('inpDistance').value)*1e-6;
+    let duration=parseFloat(document.getElementById('inpDuration').value)*1e-6;
+    let gds=document.getElementById('inpGdsPath').value;
+    let gens=parseInt(document.getElementById('inpGens').value);
+    let out=document.getElementById('inpOut').value||"output/live_run";
+    let protocol=document.getElementById('selProtocol').value;
+    document.getElementById('launchStatus').textContent="запускаю GA...";
+    let r=await fetch('/api/launch',{method:'POST',headers:{"Content-Type":"application/json"},body:JSON.stringify({mode:"ga",distance_m:distance,duration_s:duration,gds_path:gds,generations:gens,out:out,protocol:protocol})});
+    let j=await r.json(); document.getElementById('launchStatus').textContent= j.ok? "GA запущен "+j.job_id+" → "+j.out + " (смотри Training/GA/Trap)" : "ошибка "+j.error;
+    refreshRuns();
+  };
+  document.getElementById('btnRefreshRuns').onclick=refreshRuns;
+  document.getElementById('btnSwitchRun').onclick=()=>{
+    let sel=document.getElementById('selRuns'); let run=sel.value;
+    if(run){
+      // update server out_dir via query param hack: reload state with ?run=...
+      // store in localStorage and reload poll with run
+      localStorage.setItem('dashboard_run', run);
+      document.getElementById('launchStatus').textContent="переключено на "+run+" — обновляю...";
+      // poll will use run from localStorage in next fetch override
+    }
+  };
+  // GDS file upload
+  document.getElementById('inpGdsFile').onchange=async(e=>{
+    let f=e.target.files[0]; if(!f) return;
+    document.getElementById('gdsUploadStatus').textContent="загружаю "+f.name+"...";
+    let buf=await f.arrayBuffer(); let b64= btoa(String.fromCharCode(...new Uint8Array(buf)));
+    let r=await fetch('/api/upload',{method:'POST',headers:{"Content-Type":"application/json"},body:JSON.stringify({filename:f.name,content_base64:b64})});
+    let j=await r.json();
+    if(j.ok){
+      document.getElementById('gdsUploadStatus').textContent="загружено → "+j.path;
+      document.getElementById('inpGdsPath').value=j.path;
+    } else {
+      document.getElementById('gdsUploadStatus').textContent="ошибка "+j.error;
+    }
+  });
+  // initial load
+  loadConfig(); refreshRuns(); setInterval(refreshRuns, 3000);
+  // override poll to respect selected run
+  const _oldPoll = poll;
+  poll = async function(){
+    if(!document.getElementById('autoPoll').checked) return
+    let run=localStorage.getItem('dashboard_run');
+    let suffix = run ? "?run="+encodeURIComponent(run) : "";
+    try{
+      let r=await fetch('/api/state'+ (suffix? suffix+(suffix.includes("?")?"&":"?")+"ts="+Date.now() : "?ts="+Date.now()), {cache:"no-store"})
+      let j=await r.json()
+      if(j.status==="waiting"){
+        document.getElementById('liveText').textContent="жду GA — запусти из Setup";
+        document.getElementById('liveDot').style.background="#ffbe55"
+        return
+      }
+      lastState=j
+      document.getElementById('liveText').textContent="live ✓"
+      document.getElementById('liveDot').style.background="#6ef0a8"
+      document.getElementById('raw').textContent=JSON.stringify(j, null, 2).slice(0,8000)
+      let r2=document.getElementById('raw2'); if(r2) r2.textContent=document.getElementById('raw').textContent
+      updateKVs(j)
+      drawFitness(j); drawDivers(j); drawHist(j); drawHall(j); drawHeat(j); drawPareto(j); drawTrajectories(j); drawIslands(j)
+      buildTrapFilters(j); drawTrap(j)
+    }catch(e){
+      document.getElementById('liveText').textContent="poll error: "+e.message.slice(0,60)
+      document.getElementById('liveDot').style.background="#ff6b7a"
+    }
+  }
   poll(); setInterval(poll, 900)
   try{
     let saved=localStorage.getItem("ga_fit_series")
