@@ -452,9 +452,9 @@ class GAEngine:
             self._write_live(live_evaluated, total_in_gen, island_strategy=island.strategy, current_fitness=genome.fitness)
         for isl in self.islands:
             isl.evaluate(self.runner, live_cb=_live_cb_init)
-        # reset live for next gen tracking
+        # reset live for next gen tracking — start next gen at 0, not 100% (was showing 100% immediately at 2/2)
         self._live_recent=[]
-        self._write_live(total_in_gen, total_in_gen, island_strategy="init", current_fitness=self._live_best)
+        self._write_live(0, total_in_gen, island_strategy="init", current_fitness=self._live_best)
         self._update_hall(); self._write_state()
         for gen in range(1, self.generations+1):
             self.global_gen=gen
