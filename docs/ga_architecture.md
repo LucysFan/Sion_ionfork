@@ -124,4 +124,36 @@ python -m shuttle_sim.ga --config configs/shuttle_ga_island.json --out output/ga
 
 Так получаем **чистый поиск без навязывания формы**: изолированные острова могут найти совсем другую ветвь (например двумя провалами `ω(s)` в `0.2` и `0.7`, а не в середине), и лишь потом она конкурирует в общем холле (холл тоже с `min_dist 0.12`).
 
-Так получаем: **острова держат диверсити, изоляции дают независимые ветви, миграции не дают застрять, штрафы делают физику, CUDA ускоряет если есть, дашборд показывает всё живое без `GIL` блокировки.**
+## 8. Trap-отображение и анимация шаттлинга — отдельная вкладка «Trap · Animation» (3% лучших на остров)
+
+**Требование:** дашборд рисует саму ловушку и анимирует шаттлинг внутри неё для **каждого острова отдельно по 3% лучших кандидатов** (`ceil(pop·0.03) ≥1`, для `pop 20 →1`, для `pop 100 →3`; капается до `3` чтобы не раздуть `state.json`), **не замедляя обучение**.
+
+**Как это не тормозит GA (design non-blocking):**
+
+* **Файл-опрос, а не блокировка.** GA пишет `state.json.tmp → state.json` атомарной заменой (`Path.replace`) после каждой генерации (~30 мс на 300 kB). Дашборд — отдельный `python -m shuttle_sim.dashboard.server` процесс на `0.0.0.0:8000`, только `GET /api/state` каждые `500–900 мс`, `GA` его не ждёт, никакого `GIL`/`Queue` между процессами.
+* **Дешёвая ROM + децимация.** Траектория для анимации — `Runner.evaluate(theta, baseline, exact_nodes=None, return_trajectory=True, trajectory_decimate=80)` (линейно-откликовая ROM без `trap.local` циклов) ≈ `5–8 мс` на кандидата против `~2 с` для `exact_nodes=200`. Для `8 островов ×1 →8×6 мс ≈48 мс` раз в `trap_traj_interval=2` поколений, т.е. ≈ `24 мс/поколение` оверхед < `2%` от `~1 с/поколение·100 особей`.
+* **Кэш по хешу `θ`.** `_traj_cache[(strategy, baseline, round(θ,5), decimate)] → trajectory` — повторная оценка того же генома не идёт в `Runner`; при стагнации острова кэш даёт `0 мс`. Лимит кэша `300` записей (LRU 50).
+* **Интервальная свежесть.** `trap_traj_interval` (дефолт `2`) — пересчёт только каждую 2-ю генерацию или на последней; в промежуточных — отдаётся закэшированный `island_trajectories` (поколение всё равнодвижется). `hall best` траектория отдельно `exact_nodes=200, decimate 250` раз в `2` поколения.
+* **Фронтенд 60fps, бэкенд 0.5fps.** Анимация `requestAnimationFrame` интерполирует уже децимированные `times_s / mean_positions_m / well_centers_m` (≈ `80` точек) линейно по времени; поллинг лишь подменяет массив когда GA обновил `state.json`. Видеопетля `2 с/шаттл` при `1×` скорости.
+
+**Что пишется в `state.json`:**
+
+```json
+{
+  "trap": {"kind":"sion_five_wire","electrodes":[{"name":"rf[0]","type":"rf","paths":[[[x,y],...]],"rf":...}],"bbox":{...},"start_m":[0,0,90e-6],"target_m":[30e-6,0,90e-6],"distance_m":30e-6,"duration_s":15e-06,"height_m":90e-6,"geometry_raw":{...}},
+  "island_trajectories": [{"island_id":0,"strategy":"S","pop":20,"k":1,"candidates":[{"rank":0,"theta":[...],"fitness":1.23,"status":"excessive_excitation","trajectory":{"times_s":[...],"mean_positions_m":[[x,y,z],...],"well_centers_m":[[x,y,z],...],"well_times_s":[...],"_n_total":0.42}}]}]
+}
+```
+
+`_get_island_top_trajectories()` сортирует популяцию по `fitness`, берет `k = ceil(pop*0.03)` (≥1, ≤3), вызывает `evaluate` с `return_trajectory`.
+
+**Вкладка Trap во фронте (`dashboard/static/index.html`):**
+
+* **Два канваса:** `cTrapTop` (top view `x vs y`, `±350 µm` corridor, `y -350..350`, RF gold `#ffbe55`, DC blue `rgba(90,200,255,0.28)`, центральная `DC` серая, shuttle-коридор `rgba(122,240,160,0.07)`) и `cTrapSide` (`x vs z` высота `90 µm`, `75..105 µm`, поверхность кристалла `z=0`). Мировая `µm → canvas` через линейный `xToCanvas/yToCanvas`, электроды клиппятся вьюпортом.
+* **Трейлы и точки:** для каждого кандидата `well` (тонкая `1.6px`, `α 0.55`) и `ion <r>` (толстая `2.2px`) до `curT = gmin+prog·(gmax-gmin)`, точка `curMean` с радиальным градиентом + `well` пунктирным кольцом, цвет острова `COLORS`. Прозрачность падает с `rank`.
+* **Управление:** `▶ play / ■ stop` (`trapLoop` via `requestAnimationFrame`, `wallPerShuttle 2s`), скорость `0.25–4×`, слайдер `progress 0..1` (`sliderTrapTime`), чекбоксы `well/ion/side`, `view {shuttle,full,zoom}`, фильтр островов `trapIslandFilters` (чекбоксы, клик по кандидату изолирует остров). Легенда `t=…µs`.
+* **Адаптивный вьюпорт:** `shuttle` вычисляет `xMin/xMax` как `min/max well.x ±200 µm` (дефолт `cx ±350 µm`), `full` — полный `bbox −10..10 mm`, `zoom` — `cx ±90 µm`. Side `zMin/zMax` `75..105` vs `0..150`.
+* **Кандидаты:** сетка `trapCandidateList` — карточки `S #0 fitness 1.23 n=…` с мини-`θ`, клик изолирует остров. Бейджи `Trap 17 electrodes`, `cands 8`.
+* **Polling:** `setInterval(poll,900)` + `drawTrap` после каждого `fetch`; `drawTrap` интерполирует `interpolatePos(t, times, positions)` бинарным поиском.
+
+Так получаем: **острова держат диверсити, изоляции дают независимые ветви, миграции не дают застрять, штрафы делают физику, CUDA ускоряет если есть, дашборд показывает всё живое без `GIL` блокировки — плюс Trap-вкладка анимирует 3% лучших каждого острова внутри реальной геометрии не тормозя GA.**

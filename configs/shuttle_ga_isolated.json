@@ -71,6 +71,10 @@
     "hall_size": 10,
     "hall_diversity_min_distance": 0.12,
     "seed": 42,
+    "island_top_percent": 0.03,
+    "trap_traj_decimate": 80,
+    "trap_traj_interval": 2,
+    "trap_traj_max_per_island": 3,
     "islands": [
       {"strategy": "S", "pop": 20, "baseline": "smooth"},
       {"strategy": "A", "pop": 20, "baseline": "sta"},
