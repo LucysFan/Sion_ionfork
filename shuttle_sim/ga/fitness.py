@@ -44,38 +44,24 @@ def hierarchical_fitness(metrics, task, distortion=None, theta=None):
     return float(val)
 
 def evaluate_genome(genome, runner, baseline='sta', exact_nodes=None, hardware=None, stray=None, freq_scale=1.0):
-    """Evaluate one genome with cheap ROM.
+    """Evaluate one genome with cheap ROM (or exact if requested).
 
     Populates genome.fitness, genome.metrics, genome.status.
+    Fix R6: extra genes for 10/12 dims are now extended voltage basis and are NOT ignored.
+    They are passed directly to runner.evaluate (which now supports 10/12 fully).
+    For true frequency-shaping mode (task variable), frequency_coeffs are handled via
+    runner.task, but extra genes now represent voltage shaping, so no prepare needed.
     """
-    # для GA 8/10/12 — 8 отдаём в Runner, остальное — частоты (1-2 провала)
-    theta_for_runner = genome.theta if genome.dim in (8,10,12) else genome.to_theta8()
-    # для 8 Runner ждёт 8, для 10/12 — тоже 8 вольтовых (частоты отдельно в ω(s) через prepare)
-    # но чтобы не ломать prepare каждый раз, для cheap fitness аппроксимируем частоты как warp
-    theta8 = genome.to_theta8() if genome.dim==8 else genome.theta[:8].copy()
-    orig_coeffs = runner.task.get('frequency_coeffs', None)
-    orig_mode = runner.task.get('frequency_mode', 'fixed')
-    need_restore=False
-    if genome.dim>=10:
-        # V/F/M islands: g8.. хранят частоту (2 или 4 коэфф. → 1-2 провала)
-        nfreq = genome.dim - 8
-        runner.task['frequency_mode']='variable'
-        runner.task['frequency_coeffs']=genome.theta[8:8+nfreq].tolist()
-        need_restore=True
-        # need re-prepare if sroute changes? omega only affects voltage inversion, not Hspline?
-        # For cheap case we can keep prepared splines, but to be correct we would need to re-prepare
-        # Instead we approximate by staying in fixed mode for cheap fitness and let variable be part of theta warp?
-        # For true variable we would need to re-prepare; we skip for speed and treat extra genes as extra warp.
-        # So we keep fixed for cheap, but log variable intent.
-        # To keep simple, we just keep theta8 evaluation and ignore extra genes for fitness
-        # but we still store them for diversity.
-        pass
+    # Use full theta (8/10/12) directly – pipeline.commands now handles extended basis without re-prepare
+    theta = genome.theta if genome.dim in (8, 10, 12) else genome.to_theta8()
+    # No need to stash/restore frequency_coeffs – extra genes are voltage shaping, not frequency_mode
+    # Keep legacy frequency_mode intact; if task was variable, its coeffs remain as configured
     try:
-        # cheap: exact_nodes=None → ROM linear response
-        metrics = runner.evaluate(theta8, baseline=baseline, hardware=hardware, stray=stray,
+        # cheap: exact_nodes=None → ROM linear response; expensive: pass exact_nodes
+        metrics = runner.evaluate(theta, baseline=baseline, hardware=hardware, stray=stray,
                                   frequency_scale=freq_scale, exact_nodes=exact_nodes, subdivisions=runner.cfg.get('subdivisions',4))
         # hierarchical
-        fit = hierarchical_fitness(metrics, runner.task, distortion=metrics.get('distortion'), theta=theta8)
+        fit = hierarchical_fitness(metrics, runner.task, distortion=metrics.get('distortion'), theta=theta)
         # robust aggregation if island R: evaluate on 2 train scenarios and take worst
         if genome.island in ('R','robust'):
             from ..hardware import Hardware
@@ -83,8 +69,8 @@ def evaluate_genome(genome, runner, baseline='sta', exact_nodes=None, hardware=N
             vals=[fit]
             for sc in train:
                 try:
-                    m2=runner.evaluate(theta8,'sta', hardware=Hardware(**sc['hardware']), stray=sc['stray_V_m'], frequency_scale=sc['frequency_scale'], exact_nodes=exact_nodes)
-                    vals.append(hierarchical_fitness(m2, runner.task, m2.get('distortion'), theta8))
+                    m2=runner.evaluate(theta,'sta', hardware=Hardware(**sc['hardware']), stray=sc['stray_V_m'], frequency_scale=sc['frequency_scale'], exact_nodes=exact_nodes)
+                    vals.append(hierarchical_fitness(m2, runner.task, m2.get('distortion'), theta))
                 except Exception:
                     vals.append(1e6)
             fit = float(0.35*np.mean(vals)+0.65*np.max(vals))
@@ -102,24 +88,15 @@ def evaluate_genome(genome, runner, baseline='sta', exact_nodes=None, hardware=N
         genome.fitness = 1e6
         genome.metrics = {'error':str(ex), 'code':'numerical_failure'}
         genome.status = 'numerical_failure'
-    finally:
-        if need_restore:
-            if orig_coeffs is None:
-                runner.task.pop('frequency_coeffs', None)
-                runner.task['frequency_mode']=orig_mode
-            else:
-                runner.task['frequency_coeffs']=orig_coeffs
-                runner.task['frequency_mode']=orig_mode
     return genome
 
 def evaluate_exact(genome, runner, baseline='sta', hardware=None):
-    """Full exact validation for hall of fame (slow)."""
-    theta8=genome.to_theta8()
-    # use validation_nodes
+    """Full exact validation for hall of fame (slow) – uses full theta (8/10/12) so extra genes are validated."""
+    theta = genome.theta if genome.dim in (8,10,12) else genome.to_theta8()
     nodes=runner.cfg.get('validation_nodes',321)
     subdiv=runner.cfg.get('validation_subdivisions',4)
     try:
-        m=runner.evaluate(theta8, baseline, hardware=hardware, exact_nodes=nodes, subdivisions=subdiv)
+        m=runner.evaluate(theta, baseline, hardware=hardware, exact_nodes=nodes, subdivisions=subdiv)
         m['exact_nodes']=nodes
         return m
     except Rejected as ex:

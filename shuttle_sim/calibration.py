@@ -91,29 +91,29 @@ class Calibration:
         # Try to handle voltage-trace dataset
         # Expect each entry to have 'commands_V' and 'measured_V'
         try:
-            # Stack all
-            gains = []
-            offsets = []
-            # For demonstration, use simple linear regression per channel
             C = len(self.trap.indices)
-            g_est = np.ones(C)
-            o_est = np.zeros(C)
-            residuals = 0.0
-            valid = 0
+            g_est = np.ones(C, float)
+            o_est = np.zeros(C, float)
+            # Accumulate per-channel fits across all entries with proper residual tracking
+            g_accum = [[] for _ in range(C)]
+            o_accum = [[] for _ in range(C)]
+            total_residual = 0.0  # sum of squared residuals over all samples and channels
+            total_points = 0
+            identifiable_channels = 0
+            per_channel_diagnostics = {}
+            valid_entries = 0
+            observable_only_entries = 0
             for entry in dataset:
                 if "commands_V" in entry and "measured_V" in entry:
                     cmds = finite(entry["commands_V"], "commands_V")
                     meas = finite(entry["measured_V"], "measured_V")
+                    if cmds.ndim != 2 or meas.ndim != 2:
+                        continue
                     if cmds.shape[1] != C or meas.shape[1] != C:
                         continue
                     # Handle length mismatch (e.g., dense delivery vs sparse commands):
-                    # resample the shorter to the longer via linear interpolation on index
                     if cmds.shape[0] != meas.shape[0]:
-                        # Resample cmds to meas length by ZOH / linear interpolation
-                        # For synthetic demo we assume ZOH hold: each command held for subdiv steps
-                        # Simple: interpolate commands to meas grid via np.interp
                         N_c, N_m = cmds.shape[0], meas.shape[0]
-                        # Use linear interpolation on sample index
                         x_idx = np.linspace(0, N_c-1, N_c)
                         y_idx = np.linspace(0, N_c-1, N_m)
                         cmds_resampled = np.column_stack([
@@ -123,58 +123,149 @@ class Calibration:
                     if cmds.shape != meas.shape:
                         continue
                     # Fit per channel: meas = g*cmds + o (least squares ignoring filter/delay)
+                    entry_residual = 0.0
+                    entry_identifiable = 0
                     for ch in range(C):
                         x = cmds[:, ch]
                         y = meas[:, ch]
-                        if np.std(x) < 1e-9:
-                            continue  # avoid singular fit on constant channel
-                        # simple linear fit
+                        std_x = float(np.std(x))
+                        if std_x < 1e-9:
+                            # constant channel – not identifiable (singular design matrix)
+                            continue
                         A = np.column_stack([x, np.ones_like(x)])
-                        coeff, res, _, _ = np.linalg.lstsq(A, y, rcond=None)
-                        # Update with running average
-                        if valid == 0:
-                            g_est[ch] = float(coeff[0])
-                            o_est[ch] = float(coeff[1])
-                        else:
-                            # simple average over entries
-                            g_est[ch] = 0.5*(g_est[ch] + float(coeff[0]))
-                            o_est[ch] = 0.5*(o_est[ch] + float(coeff[1]))
-                    valid += 1
+                        coeff, res_arr, _, _ = np.linalg.lstsq(A, y, rcond=None)
+                        g_ch = float(coeff[0])
+                        o_ch = float(coeff[1])
+                        # compute per-channel residual (honest, not zero)
+                        y_pred = g_ch * x + o_ch
+                        resid = float(np.sum((y - y_pred) ** 2))
+                        entry_residual += resid
+                        g_accum[ch].append(g_ch)
+                        o_accum[ch].append(o_ch)
+                        entry_identifiable += 1
+                    # If none of the channels in this entry were identifiable, skip entry
+                    if entry_identifiable == 0:
+                        continue
+                    total_residual += entry_residual
+                    total_points += cmds.shape[0] * C
+                    valid_entries += 1
                 elif "theta" in entry and "measured_n_total" in entry:
-                    # Observable-domain dataset – fit stray field that best explains n shift
-                    # Simplified: we will not solve here, just report midpoint
-                    valid += 1
-            if valid == 0:
-                raise ValueError("no valid entries")
+                    # Observable-domain dataset – requires non-linear stray-field inversion,
+                    # not implemented as simple affine fit.  Count as observable-only.
+                    observable_only_entries += 1
+                else:
+                    continue
+            # No voltage-trace entries with identifiable channels
+            if valid_entries == 0:
+                if observable_only_entries > 0:
+                    # Caller provided only observable-domain data (no voltage traces):
+                    # identification is blocked – would require separate stray-field solver
+                    return CalibrationResult(
+                        updated_hardware=asdict(self.hw0),
+                        updated_stray_V_m=[0, 0, 0],
+                        residuals=float("nan"),
+                        success=False,
+                        method="no_voltage_traces",
+                        provenance="blocked_by_missing_external_data: observable-domain dataset requires stray-field identification, not affine gain/offset",
+                        failure_code="missing_external_data",
+                    )
+                raise ValueError("no valid voltage-trace entries (either shape mismatch or all channels constant)")
 
-            # Clamp to plausible ranges
-            g_est = np.clip(g_est, 0.8, 1.2)
-            o_est = np.clip(o_est, -0.5, 0.5)
+            # Compute per-channel average estimates (mean over entries) with honest residual reporting
+            for ch in range(C):
+                if g_accum[ch]:
+                    # average over all entries where this channel was identifiable
+                    g_est[ch] = float(np.mean(g_accum[ch]))
+                    o_est[ch] = float(np.mean(o_accum[ch]))
+                    identifiable_channels += 1
+                    per_channel_diagnostics[f"ch_{ch}"] = {
+                        "identifiable": True,
+                        "n_entries": len(g_accum[ch]),
+                        "mean_gain": float(np.mean(g_accum[ch])),
+                        "mean_offset_V": float(np.mean(o_accum[ch])),
+                        "std_gain": float(np.std(g_accum[ch])) if len(g_accum[ch]) > 1 else 0.0,
+                    }
+                else:
+                    per_channel_diagnostics[f"ch_{ch}"] = {
+                        "identifiable": False,
+                        "reason": "constant or missing data (std < 1e-9)",
+                        "gain_kept": float(g_est[ch]),
+                        "offset_kept": float(o_est[ch]),
+                    }
+            # Identifiability check: must have at least one identifiable channel per electrode group
+            # If all channels were constant, identification fails (would have been caught above),
+            # but if only a subset are identifiable we keep those and flag partial
+            identifiable_ratio = identifiable_channels / C if C else 0
+            mean_residual_per_sample = total_residual / max(total_points, 1)
+
+            # Clamp to plausible hardware ranges (prevent unphysical gains)
+            g_clipped = np.clip(g_est, 0.8, 1.2)
+            o_clipped = np.clip(o_est, -0.5, 0.5)
+            clipped_gain = not np.allclose(g_est, g_clipped)
+            clipped_offset = not np.allclose(o_est, o_clipped)
+            g_est = g_clipped
+            o_est = o_clipped
 
             new_hw = asdict(self.hw0)
             new_hw["gain"] = g_est.tolist()
             new_hw["offset_V"] = o_est.tolist()
             # Filter identification would require step response; we keep original poles but log attempt
+            # Determine success: need sufficient identifiable ratio and finite residuals
+            success = bool(np.isfinite(total_residual) and valid_entries > 0 and identifiable_ratio > 0.5)
+            method = "linear_regression_gain_offset"
+            if identifiable_ratio <= 0.5:
+                # Partial identifiability – treat as failure / needs more data
+                success = False
+            provenance = (
+                f"voltage-trace affine fit over {valid_entries} entries, {identifiable_channels}/{C} channels identifiable, "
+                f"total_residual={total_residual:.3g} (mean {mean_residual_per_sample:.3g} per sample), "
+                f"filter poles retained (requires step-response data for full filter ID; delay not identified)"
+            )
+            if clipped_gain or clipped_offset:
+                provenance += " [clamped to hardware bounds]"
+            if not success:
+                # Return failure with honest residuals instead of false success
+                return CalibrationResult(
+                    updated_hardware=asdict(self.hw0),
+                    updated_stray_V_m=[0, 0, 0],
+                    residuals=float(total_residual),
+                    success=False,
+                    method=method,
+                    provenance=provenance + " – failed identifiability threshold",
+                    failure_code="calibration_inconsistency" if identifiable_ratio <= 0.5 else "numerical_failure",
+                )
+
             result = CalibrationResult(
                 updated_hardware=new_hw,
-                updated_stray_V_m=[0,0,0],
-                residuals=float(residuals),
+                updated_stray_V_m=[0, 0, 0],
+                residuals=float(total_residual),
                 success=True,
-                method="linear_regression_gain_offset",
-                provenance="voltage-trace affine fit; filter poles retained (requires step-response data for full filter ID)",
+                method=method,
+                provenance=provenance,
             )
+            # Attach identifiability metadata via provenance (dataclass has no extra field, so we abuse provenance)
             # Validate new hardware can be instantiated
             Hardware(**new_hw).validate(C)
             return result
-        except Exception as ex:
+        except Rejected as ex:
             return CalibrationResult(
                 updated_hardware=asdict(self.hw0),
-                updated_stray_V_m=[0,0,0],
+                updated_stray_V_m=[0, 0, 0],
                 residuals=float("nan"),
                 success=False,
                 method="affine_fit",
                 provenance="identification_attempted",
-                failure_code="numerical_failure" if not isinstance(ex, Rejected) else ex.code,
+                failure_code=ex.code,
+            )
+        except Exception as ex:
+            return CalibrationResult(
+                updated_hardware=asdict(self.hw0),
+                updated_stray_V_m=[0, 0, 0],
+                residuals=float("nan"),
+                success=False,
+                method="affine_fit",
+                provenance="identification_attempted",
+                failure_code="numerical_failure",
             )
 
     def identify_filter(self, step_response_measured, dt_s):
