@@ -142,9 +142,38 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_header("Content-Type","application/json")
             self.send_header("Access-Control-Allow-Origin","*")
             self.end_headers()
+            running=False
+            running_job=None
+            running_out=None
+            running_start=None
+            progress={}
             with _JOBS_lock:
-                jobs={k:{"cmd":v["cmd"],"started":v["started"],"alive": v["proc"].poll() is None} for k,v in _JOBS.items()}
-            self.wfile.write(json.dumps({"jobs":jobs}).encode())
+                jobs={}
+                for k,v in _JOBS.items():
+                    alive = v["proc"].poll() is None
+                    jobs[k]={"cmd":v["cmd"],"started":v["started"],"alive": alive, "out":v.get("out",""), "mode": v["cmd"][2] if len(v["cmd"])>2 else ""}
+                    if alive:
+                        running=True
+                        running_job=k
+                        running_out=v.get("out")
+                        running_start=v.get("started")
+                # derive progress from state.json of running job
+                if running and running_out:
+                    try:
+                        p=pathlib.Path(running_out)/"state.json"
+                        if p.exists():
+                            st=json.loads(p.read_text())
+                            gg=st.get("global_generation",0)
+                            tg=st.get("total_generations",0) or st.get("ga",{}).get("generations",0) or 0
+                            elapsed=st.get("elapsed_s", time.time() - (running_start or time.time()))
+                            perc = (gg/tg*100) if tg else 0
+                            progress={"global_generation":gg,"total_generations":tg,"percent":perc,"elapsed_s":elapsed,"best": (st.get("hall_of_fame",[{}])[0].get("fitness") if st.get("hall_of_fame") else None)}
+                        else:
+                            # no state yet, show 0
+                            progress={"global_generation":0,"total_generations":0,"percent":0,"elapsed_s": time.time() - (running_start or time.time()) if running_start else 0}
+                    except:
+                        progress={}
+            self.wfile.write(json.dumps({"jobs":jobs,"running":running,"running_job":running_job,"running_out":running_out,"progress":progress}).encode())
             return
         # serve static
         if self.path=="/":
@@ -245,8 +274,45 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as e:
                 _reply({"error":str(e)},500)
             return
+        if path=="/api/stop":
+            # stop running training — only stop button may interrupt
+            try:
+                target_id=data.get("job_id") if data else None
+                stopped=[]
+                with _JOBS_lock:
+                    for jid, info in list(_JOBS.items()):
+                        if target_id and jid!=target_id:
+                            continue
+                        proc=info.get("proc")
+                        if proc and proc.poll() is None:
+                            try:
+                                proc.terminate()
+                                try:
+                                    proc.wait(timeout=5)
+                                except subprocess.TimeoutExpired:
+                                    proc.kill()
+                                    try:
+                                        proc.wait(timeout=3)
+                                    except:
+                                        pass
+                                stopped.append(jid)
+                            except Exception as e:
+                                pass
+                if stopped:
+                    _reply({"ok":True,"stopped":stopped})
+                else:
+                    _reply({"ok":False,"error":"no running job","stopped":[]}, 404)
+            except Exception as e:
+                _reply({"error":str(e)},500)
+            return
         if path=="/api/launch":
             # data: {mode: "pipeline"|"ga", distance_m, duration_s, gds_path, generations, out_dir, protocol}
+            # — guard: prevent two algorithms at once
+            with _JOBS_lock:
+                for jid, info in list(_JOBS.items()):
+                    if info.get("proc") and info["proc"].poll() is None:
+                        _reply({"ok":False,"error":"already running","running_job":jid,"out":info.get("out"),"cmd":info.get("cmd")}, 409)
+                        return
             try:
                 mode=data.get("mode","ga")
                 distance=data.get("distance_m")
