@@ -153,8 +153,7 @@ def fig_waveforms():
         ax.plot(t_us, ideal[key] - ideal[key][0], color=color, lw=2.1, label=f"команда {key}")
     _style(
         ax,
-        "Изменение команды ΔV(t) относительно начального значения  "
-        "(15 каналов, 4 основных выделены)",
+        "Изменение команды ΔV(t) относительно старта",
         "время, мкс",
         "ΔV, В",
     )
@@ -180,16 +179,25 @@ def fig_waveforms():
     ax2.axhline(dist["rms_deviation_V"] * 1e3, color=WARN, lw=1.4, ls="--")
     ax2.text(
         len(ch_max) - 0.4,
-        dist["rms_deviation_V"] * 1e3 * 1.08,
+        dist["rms_deviation_V"] * 1e3 * 1.10,
         f"rms {dist['rms_deviation_V']*1e3:.1f} мВ",
         color=WARN,
         ha="right",
         fontsize=9,
     )
+    # max deviation and LSB as one quiet line, so the numbers stay on the figure
+    ax2.text(
+        0.0,
+        ch_max.max() * 1e3 * 1.02,
+        f"max {dist['max_deviation_V']*1e3:.0f} мВ  ·  LSB {dist['lsb_V']*1e6:.0f} мкВ  ·  "
+        f"клиппинга {dist['clipping_events']}",
+        fontsize=8.6,
+        color=MUTED,
+        va="bottom",
+    )
     _style(
         ax2,
-        f"Отклонение доставленного сигнала от команды: max {dist['max_deviation_V']*1e3:.0f} мВ, "
-        f"LSB {dist['lsb_V']*1e6:.0f} мкВ, случаев клиппинга {dist['clipping_events']} (шкала в мВ)",
+        "Отклонение доставленного сигнала от команды, мВ",
         "канал DC",
         "|ΔV|, мВ",
     )
@@ -729,7 +737,7 @@ def fig_animation(n_frames=80, fps=13):
         axV.plot(t_us_d, deliv[key] - deliv[key][0], color=color, lw=1.2, alpha=0.55)
     cursor = axV.axvline(0, color=ACCENT, lw=0.9, ls="--", alpha=0.9)
     dots = [axV.plot([], [], "o", ms=5.5, color=c, zorder=5)[0] for c in colors]
-    _style(axV, "ΔV доставленных напряжений (4 основных канала)", "время, мкс", "ΔV, В")
+    _style(axV, "Доставленные напряжения, 4 канала", "время, мкс", "ΔV, В")
     axV.set_xlim(0, t_max_us)
 
     # ---------- x(t) ----------
@@ -835,11 +843,11 @@ def fig_architecture():
     ax.axis("off")
     ax.set_facecolor(BG)
 
-    ax.text(0.35, 5.95, "Восемь слоёв конвейера: модуль, назначение и артефакт", fontsize=15, fontweight="bold", color=TEXT)
+    ax.text(0.35, 5.95, "Восемь слоёв конвейера", fontsize=15, fontweight="bold", color=TEXT)
     ax.text(
         0.35,
         5.55,
-        "каждый слой реализован отдельным модулем с явным программным интерфейсом и собственным артефактом",
+        "у каждого слоя свой модуль и свой артефакт",
         fontsize=10,
         color=MUTED,
     )
@@ -895,7 +903,7 @@ def fig_architecture():
     ax.text(
         0.35,
         0.40,
-        "все величины в СИ: метры, секунды, герцы, вольты, килограммы  ·  результат — напряжения на электродах, а не агрегированная оценка",
+        "все величины в СИ  ·  на выходе напряжения на электродах, а не сводная оценка",
         fontsize=9.2,
         color=MUTED,
     )
