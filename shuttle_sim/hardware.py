@@ -74,19 +74,29 @@ class Hardware:
                 y[k+1]=state[-1]
         if not ideal:
             delay=np.broadcast_to(self.delay_s,(C,))
-            # B16: include trigger latency (common) and jitter (per-channel random)
+            # B16/P4: trigger latency (common static shift) + per-sample time jitter (global, not per-channel skew)
+            # Previous implementation used per-channel static skew (jit_per_ch) which is not time jitter; now implement true per-sample jitter
+            # and keep per-channel skew as separate diagnostic (skew_draw) for backwards compat.
             trig = float(self.trigger_latency_s)
             jit = float(self.jitter_s)
             if jit > 0:
                 # deterministic pseudo-random per call based on command hash for reproducibility
-                # Use first sample sum as seed
                 seed = int(np.sum(c) * 1e6) % (2**31)
                 rng = np.random.default_rng(seed)
-                jit_per_ch = rng.uniform(-jit, jit, size=C)
+                # P4: per-sample global time jitter (common to all channels, varies per time point)
+                time_jitter = rng.uniform(-jit, jit, size=len(t))
+                # For diagnostics, also generate a per-channel static skew draw (previous behavior) but do not use as jitter
+                skew_draw = rng.uniform(-jit/10, jit/10, size=C)  # small skew, labeled separately
             else:
-                jit_per_ch = np.zeros(C)
-            total_delay = delay + trig + jit_per_ch
-            y=np.column_stack([np.interp(t-total_delay[j],t,y[:,j],left=y[0,j]) for j in range(C)])
+                time_jitter = np.zeros(len(t))
+                skew_draw = np.zeros(C)
+            # Static total delay includes only delay + trigger + small skew (diagnostic), time jitter is per-sample
+            total_delay = delay + trig + skew_draw
+            # Apply per-sample time jitter as time warping: y_delivered(t) = y_filtered(t - delay - trig - skew - time_jitter(t))
+            # Use vectorized interpolation per channel with time_jitter array
+            y=np.column_stack([np.interp(t - total_delay[j] - time_jitter, t, y[:,j], left=y[0,j], right=y[-1,j]) for j in range(C)])
+            # Keep legacy name jit_per_ch for backwards compat (now alias to skew_draw) but also expose time_jitter
+            jit_per_ch = skew_draw
         else:
             total_delay = np.zeros(C)
             jit_per_ch = np.zeros(C)
@@ -99,6 +109,10 @@ class Hardware:
                 'trigger_latency_s': float(trig),
                 'jitter_s': float(self.jitter_s),
                 'jitter_per_channel_s': jit_per_ch.tolist() if 'jit_per_ch' in locals() else [0.0]*C,
+                'skew_per_channel_s': skew_draw.tolist() if 'skew_draw' in locals() else [0.0]*C,
+                'time_jitter_s': time_jitter.tolist() if 'time_jitter' in locals() else [0.0]*len(t) if 't' in locals() else [0.0],
+                'max_time_jitter_s': float(np.max(np.abs(time_jitter))) if 'time_jitter' in locals() else 0.0,
+                'jitter_model': 'per-sample global time jitter + per-channel static skew (skew_draw); previous jit_per_channel was renamed to skew',
                 'total_delay_s': total_delay.tolist() if 'total_delay' in locals() else np.broadcast_to(self.delay_s,(C,)).tolist(),
                 'hold':'zero_order','filter':'exact continuous RC cascade on dense ZOH grid',
                 'hardware_identifier':self.identifier,'calibration_state':'unmeasured_simulation_assumptions'}
