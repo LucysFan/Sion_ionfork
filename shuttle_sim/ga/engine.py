@@ -393,20 +393,91 @@ class GAEngine:
             exact=evaluate_exact(g, self.runner)
             g.metrics['exact'] = exact
 
+    def _write_live(self, evaluated, total, island_strategy=None, current_fitness=None):
+        # lightweight live update inside generation — не тяжёлый как _write_state (без trap траекторий)
+        try:
+            frac = evaluated/total if total else 0
+            live_gen = self.global_gen + frac
+            # keep recent 40
+            if not hasattr(self, '_live_recent'):
+                self._live_recent=[]
+                self._live_best=None
+                self._live_last_write=0
+            if current_fitness is not None:
+                if self._live_best is None or current_fitness < self._live_best:
+                    self._live_best=current_fitness
+                self._live_recent.append(dict(island=island_strategy, fitness=float(current_fitness), gen=self.global_gen, ts=time.time()))
+                if len(self._live_recent)>60:
+                    self._live_recent.pop(0)
+            # throttle 0.2s
+            now=time.time()
+            if now - getattr(self,'_live_last_write',0) < 0.2 and evaluated % 2 !=0:
+                return
+            self._live_last_write=now
+            live_state=dict(
+                global_generation=self.global_gen,
+                live_generation=live_gen,
+                evaluated_in_gen=evaluated,
+                total_in_gen=total,
+                gen_progress=frac,
+                overall_progress=(self.global_gen+frac)/self.generations if self.generations else 0,
+                elapsed_s=time.time()-self.start_time,
+                current_island=island_strategy,
+                current_fitness=current_fitness,
+                live_best=self._live_best,
+                recent=self._live_recent[-30:],
+                timestamp=time.time(),
+                # also include per-island best for live header
+                islands_live=[dict(strategy=isl.strategy, best=float(min([g.fitness for g in isl.population if g.fitness is not None], default=1e9)), evaluated=len([g for g in isl.population if g.fitness is not None]), pop=isl.pop_size) for isl in self.islands]
+            )
+            tmp=self.out/"live.json.tmp"
+            final=self.out/"live.json"
+            tmp.write_text(json.dumps(live_state, default=str))
+            tmp.replace(final)
+        except Exception as e:
+            pass
+
     def run(self, verbose=True):
+        # live tracking for real-time inside generation + per-generation state
+        if not hasattr(self, '_live_recent'):
+            self._live_recent=[]
+            self._live_best=None
+            self._live_last_write=0
+        total_in_gen=sum(isl.pop_size for isl in self.islands)
+        # initial evaluate with live
+        live_evaluated=0
+        def _live_cb_init(island, genome):
+            nonlocal live_evaluated
+            live_evaluated+=1
+            self._write_live(live_evaluated, total_in_gen, island_strategy=island.strategy, current_fitness=genome.fitness)
         for isl in self.islands:
-            isl.evaluate(self.runner)
+            isl.evaluate(self.runner, live_cb=_live_cb_init)
+        # reset live for next gen tracking
+        self._live_recent=[]
+        self._write_live(total_in_gen, total_in_gen, island_strategy="init", current_fitness=self._live_best)
         self._update_hall(); self._write_state()
         for gen in range(1, self.generations+1):
             self.global_gen=gen
+            total_in_gen=sum(isl.pop_size for isl in self.islands)
+            live_evaluated=0
+            self._live_recent=[]
+            # live callback per genome inside this generation
+            def _live_cb(island, genome):
+                nonlocal live_evaluated
+                live_evaluated+=1
+                self._write_live(live_evaluated, total_in_gen, island_strategy=island.strategy, current_fitness=genome.fitness)
             for isl in self.islands:
-                isl.evolve_one_generation(self.runner)
+                isl.evolve_one_generation(self.runner, live_cb=_live_cb)
             if self.migration.should_migrate(gen):
                 self.migration.migrate(gen)
+                # re-evaluate migrants with live
+                live_evaluated=0
                 for isl in self.islands:
-                    isl.evaluate(self.runner)
+                    isl.evaluate(self.runner, live_cb=_live_cb)
             self._update_hall()
             self._write_state()
+            # ensure live shows gen completion
+            self._write_live(total_in_gen, total_in_gen, island_strategy="gen_done", current_fitness=self._live_best)
             if gen%5==0:
                 self._evaluate_exact_hall()
                 self._write_state()
@@ -418,6 +489,8 @@ class GAEngine:
                     print(f"Gen {gen}/{self.generations} best {best.fitness:.4g} island {best.island} status {best.status} hall {[round(g.fitness,3) for g in self.hall_of_fame[:3]]}")
             self.checkpoint()
         self._evaluate_exact_hall(); self._write_state()
+        # final live at 100%
+        self._write_live(total_in_gen, total_in_gen, island_strategy="done", current_fitness=self._live_best)
         self.checkpoint(final=True)
         return self.hall_of_fame
 

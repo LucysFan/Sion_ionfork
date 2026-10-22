@@ -156,6 +156,22 @@ class Handler(SimpleHTTPRequestHandler):
                 tail="no run.log yet — GA initializing (GDS loading), check again in 5s; if persists 60s, check output folder permissions"
             self.wfile.write(json.dumps({"log": tail, "log_path": str(log_path), "exists": log_path.exists()}).encode())
             return
+        if self.path.startswith("/api/live"):
+            out_dir = self._resolve_out_dir()
+            self.send_response(200)
+            self.send_header("Content-Type","application/json")
+            self.send_header("Access-Control-Allow-Origin","*")
+            self.end_headers()
+            p = out_dir / "live.json"
+            if p.exists():
+                try:
+                    self.wfile.write(p.read_bytes())
+                except:
+                    self.wfile.write(b'{"status":"live read error"}')
+            else:
+                # fallback: synthesize from state if no live yet (per-generation only)
+                self.wfile.write(b'{"status":"no live yet","message":"GA writes live.json every ~0.2s inside generation"}')
+            return
         if self.path.startswith("/api/jobs"):
             self.send_response(200)
             self.send_header("Content-Type","application/json")
