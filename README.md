@@ -1,94 +1,103 @@
 # SION — Surface Ion Shuttling
 
-> **Hardware-aware, trap-aware, geometry-derived пайплайн транспорта одного иона в планарной ловушке.**  
-> Никаких игрушечных парабол, никаких виртуальных score-API, никаких скрытых 1D-моделей — только реальные напряжения на электродах от начала до конца.
+### Транспорт одиночного иона в планарной ловушке: расчёт от геометрии электродов до числа фононов
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://python.org) [![SION 0.2](https://img.shields.io/badge/SION-0.2.0-green)](#) [![License GPL](https://img.shields.io/badge/license-GPL-lightgrey)](#) [![LAMMPS optional](https://img.shields.io/badge/LAMMPS-optional-orange)](#)
+<p>
+  <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-3776AB?style=flat-square">
+  <img alt="shuttle_sim" src="https://img.shields.io/badge/shuttle__sim-0.3.0-2ea043?style=flat-square">
+  <img alt="surface-ion" src="https://img.shields.io/badge/surface--ion-1.1.2-6f42c1?style=flat-square">
+  <img alt="License" src="https://img.shields.io/badge/license-GPL--3.0-lightgrey?style=flat-square">
+  <img alt="LAMMPS" src="https://img.shields.io/badge/LAMMPS-optional-orange?style=flat-square">
+  <img alt="Scope" src="https://img.shields.io/badge/scope-simulation--only-blue?style=flat-square">
+</p>
 
-Этот репозиторий — форк [SION](https://github.com/LucysFan/Sion_ionfork) с полностью переработанным симуляционным стеком `shuttle_sim` (спецификация *planar_trap_shuttling_agent_v2*). Старый `sion/sion.py` (LAMMPS) сохранён для совместимости, новый стек работает **без LAMMPS и без аппаратуры** — чистая симуляция, но честная по физике и железу.
+<a id="top"></a>
 
----
+![Пять прогонов пайплайна](assets/fig-scorecard.png)
+
+*Рис. 1.* Результаты пяти конфигураций, входящих в репозиторий. Значения взяты из файлов `status.json`
+и `comparison.json` соответствующих прогонов.
+
+Репозиторий содержит вычислительный конвейер для синтеза и проверки протоколов шаттлинга одиночного
+иона в планарной ловушке. Потенциал вычисляется по заданной геометрии электродов; напряжения
+находятся решением задачи инверсии с ограничениями; затем они проходят через модель аппаратного
+тракта (квантование ЦАП, ZOH, RC-фильтр, усиление, смещение, задержка, slew-лимит) и только после
+этого используются в трёхмерной динамике гауссова пакета. Результат выражается в единицах,
+принятых в эксперименте: нагрев `n_total` в фононах, ошибка позиции и минимальная секулярная
+частота. Все величины задаются в СИ.
+
+![Ион в ловушке](assets/anim-shuttle.gif)
+
+*Рис. 2.* Номинальный прогон `output/shuttle_reference`: положение иона при движении на 30 мкм и
+обратно (слева), доставленные напряжения и координата `x(t)` (справа). Анимация построена по данным
+`delivered_path.csv` и `delivered_waveform.csv`; порядок построения описан в разделе
+[«Иллюстрации в документации»](#assets).
+
+**Состав конвейера**
+
+| Компонент | Реализация |
+|---|---|
+| Ловушка | `sion_five_wire` (аналитическая геометрия) или `gds` — каналы задаются парами `(layer, datatype)` |
+| Управление | `θ ∈ ℝ⁸`: 2 параметра time-warp и 6 параметров SVD-коррекции |
+| Аппаратный тракт | квантование ЦАП (разрядность, LSB, клиппинг), ZOH, RC-каскад, усиление и смещение, задержка, джиттер, slew-лимит |
+| Динамика | трёхмерная локальная гармоническая модель, точный пропагатор или DOP853, ковариация 6×6 |
+| Приёмка | номинальный прогон, multi-fidelity валидация, робастный ансамбль, сканирование паузы, коды отказа |
+| Оптимизация | Powell по 8 параметрам, островной генетический алгоритм (5 стратегий), closed-loop с фиксированным бюджетом |
+| Артефакты | около 34 файлов на прогон: конфигурация, волновые формы, траектория, диагностики, `status.json` |
+
+| Задача | Реализация | Результат номинального прогона |
+|:---|:---|:---|
+| Идеальный сигнал `V(t)` искажается аппаратурой (квантование, фильтрация, усиление, задержка, slew), а потенциал нелинейно зависит от геометрии электродов; аппроксимация одномерной параболой вносит систематическую ошибку. | Потенциал вычисляется по геометрии; напряжения находятся инверсией при ограничениях; искажения вносятся моделью тракта до расчёта динамики; каждая ступень имеет отдельный артефакт с числовой диагностикой. | `n_total = 0.0071` фонона, ошибка позиции `1.38 нм`, `f_min = 688 кГц`; результат подтверждён multi-fidelity валидацией и робастным ансамблем. |
+
+**Интерпретация метрик**
+
+| Метрика | Допустимое значение | Условие отказа | Физический смысл |
+|---|---|---|---|
+| `n_total` | ≤ 0.5 фонона | `> 0.5` | нагрев, требующий последующего охлаждения |
+| `position_error_m` | ≤ 5 мкм | `> position_tolerance_m` | отклонение от целевой позиции |
+| `minimum_frequency_hz` | ≥ 400 кГц | `weak_confinement` | ослабление удержания иона |
+| `max_deviation_V`, `rms_deviation_V` | десятки мВ, клиппинг отсутствует | `hardware_saturation`, `slew_limit` | команда не воспроизводится аппаратурой |
+
+<a id="toc"></a>
 
 ## Содержание
 
-- [Что такое шаттлинг и зачем он нужен](#что-такое-шаттлинг-и-зачем-он-нужен)
-- [Быстрый старт](#быстрый-старт)
-- [Формальная физическая постановка](#формальная-физическая-постановка)
-- [8 архитектурных слоёв](#8-архитектурных-слоёв)
-- [TrapAdapter и геометрии](#trapadapter-и-геометрии)
-- [Канонические пути](#канонические-пути)
-- [TransportTask — один конфиг, три протокола](#transporttask--один-конфиг-три-протокола)
-- [Параметризации (≥4, включая low-dim для closed-loop)](#параметризации-4-включая-low-dim-для-closed-loop)
-- [Фиксированная и переменная частота](#фиксированная-и-переменная-частота)
-- [Инверсия напряжений](#инверсия-напряжений)
-- [Аппаратная прямая модель (forward)](#аппаратная-прямая-модель-forward)
-- [Waveform postprocessing и тайминг](#waveform-postprocessing-и-тайминг)
-- [Локальная редуцированная модель и диагностики](#локальная-редуцированная-модель-и-диагностики)
-- [Динамика: multi-fidelity и независимая валидация](#динамика-multi-fidelity-и-независимая-валидация)
-- [Потери, метрики, агрегация, иерархия приоритетов](#потери-метрики-агрегация-иерархия-приоритетов)
-- [Робастность: ансамбли](#робастность-ансамбли)
-- [Калибровка → обновление модели → ресинтез → closed-loop](#калибровка--обновление-модели--ресинтез--closed-loop)
-- [Наблюдаемые в эксперименте: цепочка до loss](#наблюдаемые-в-эксперименте-цепочка-до-loss)
-- [Безопасный closed-loop в низкой размерности](#безопасный-closed-loop-в-низкой-размерности)
-- [Safety, коды отказов, единицы СИ, оптимизаторы](#safety-коды-отказов-единицы-си-оптимизаторы)
-- [Конфиги и 7-point демонстрация](#конфиги-и-7-point-демонстрация)
-- [Артефакты и воспроизводимость](#артефакты-и-воспроизводимость)
-- [Структура проекта](#структура-проекта)
-- [FAQ / Возможные проблемы](#faq--возможные-проблемы)
-- [Цитирование](#цитирование)
+**Начало работы**
+- [Быстрый старт](#quickstart) · [Программный интерфейс](#api) · [Артефакты прогона](#output)
+
+**Описание метода**
+- [Архитектура: восемь слоёв](#architecture) · [Аппаратная модель](#hardware) · [Метрики и приоритеты](#metrics)
+- [Геометрия из GDS](#gds) · [Конфигурации](#configs)
+
+**Результаты**
+- [Номинальный прогон](#results-nominal) · [Валидация](#results-validation) · [Робастность](#results-robust)
+- [Островной генетический алгоритм](#results-ga) · [Дашборд в реальном времени](#dashboard)
+
+**Сопровождение**
+- [Иллюстрации в документации](#assets) · [Область применимости и ограничения](#honesty)
+- [Диагностика отказов](#faq) · [Структура проекта](#structure) · [Цитирование](#cite)
 
 ---
 
-## Что такое шаттлинг и зачем он нужен
-
-**Шаттлинг** — управляемое перемещение иона (или цепочки) между зонами ловушки без нагрева и потери.
-
-В данном проекте — **одиночный ион ⁴⁰Ca⁺** (или другой `mass_amu`/`charge_e`), дистанция **30–200 мкм**, длительность **10–20 мкс**, допустимый нагрев `max_n_total ≤ 0.5 фонона`, ошибка позиции `≤ 5 мкм`. Всё в **СИ**, всё через реальные напряжения.
-
-Зачем hardware-aware:
-- ЦАП квантует, фильтр сглаживает, усилитель даёт gain/offset, есть задержка и slew-лимит — идеальный `V(t)` ≠ доставленный `V_delivered(t)`.
-- Геометрия электродов задаёт нелинейный псевдопотенциал — нельзя заменить на 1D параболу.
-- На аппаратуре шумы и stray-поля — нужен робастный синтез.
-
-Пайплайн решает это **end-to-end**: от `trap.geometry` до `n_total` с учётом DAC → RC → задержка → 3D-гармоника → Гаусс.
-
-### Строгий аппаратный спецификация (2026-10-21)
-
-> **Ионная высота 90 мкм** (`minimum_seed_m [0,0,90e-6]`), **секулярная ≤1.2 МГц**, **RF 30 и 60 МГц** (четырех-стержень). Старый `shuttle_reference.json` с `199 мкм / 20 МГц` сохранён как legacy-пример, строгие прогоны — `configs/shuttle_90um_30MHz.json`, `shuttle_90um_60MHz.json`, `shuttle_90um_100um_strict_30MHz.json` (100 мкм требует `±20 В` или variable-ω). Сравнение `GA smooth 0.000162` vs `pipeline sta 0.0049` **несопоставимо** (разные baseline/бюджеты/суррогат) — честное сравнение только на **одинаковой метрике, одинаковых exact_nodes и одинаковом бюджете** (см. [Потери, метрики, агрегация](#потери-метрики-агрегация-иерархия-приоритетов) и `candidate_reranking.json`).
-
----
+<a id="quickstart"></a>
 
 ## Быстрый старт
 
-### Установка
-
 ```bash
 git clone https://github.com/LucysFan/Sion_ionfork && cd Sion_ionfork
-pip install -r requirements-shuttle.txt   # numpy, scipy, jinja2, termcolor, gdspy, h5py, ...
-# LAMMPS / MS-MPI — только если нужен старый sion/sion.py, для shuttle_sim не требуются
+pip install -r requirements-shuttle.txt      # numpy, scipy, jinja2, matplotlib, python-gdsii, …
+# LAMMPS и MS-MPI требуются только для устаревшего модуля sion/sion.py
 ```
 
-### Запуск из CLI (без аппаратуры, только симуляция)
+Полный номинальный прогон (30 мкм, 15 мкс на плечо, round-trip, геометрия five-wire):
 
 ```bash
-# 1) референс: 30 мкм, 15 мкс, round-trip, Sion five-wire
 python -m shuttle_sim --config configs/shuttle_reference.json --out output/shuttle_reference
-
-# 2) one-way / repeated — тот же пайплайн, другой TransportTask
-python -m shuttle_sim --config configs/shuttle_oneway.json --out output/shuttle_oneway
-python -m shuttle_sim --config configs/shuttle_repeated.json --out output/shuttle_repeated
-
-# 3) GDS-ловушка (слой/datatype → канал задаёте вы, нет скрытого порядка полигонов)
-python -m shuttle_sim --config configs/shuttle_gds.json --out output/shuttle_gds
-
-# 4) переменная конфайнмент-частота
-python -m shuttle_sim --config configs/shuttle_variable_freq.json --out output/shuttle_variable_freq
-
-# 5) с нелинейной проверкой центроида (дороже)
-python -m shuttle_sim --config configs/shuttle_reference.json --out output/ref_full --full-field
 ```
 
-Каждый прогон пишет ~30 файлов (см. [Артефакты](#артефакты-и-воспроизводимость)) и печатает `status.json`:
+По завершении (около 2–3 минут) в каталоге `output/shuttle_reference/` записываются 34 файла и
+выводится сводка приёмки:
+
 ```json
 {
   "simulation_acceptance_passed": true,
@@ -96,504 +105,594 @@ python -m shuttle_sim --config configs/shuttle_reference.json --out output/ref_f
   "numerical_validation_passed": true,
   "robust_all_passed": true,
   "hold_scan_all_passed": true,
-  "safety_passed": true
+  "safety_passed": true,
+  "experiment_ready": false
 }
 ```
 
-### Python API (Runner)
+Остальные конфигурации запускаются той же командой:
+
+```bash
+python -m shuttle_sim --config configs/shuttle_oneway.json        --out output/shuttle_oneway
+python -m shuttle_sim --config configs/shuttle_repeated.json      --out output/shuttle_repeated
+python -m shuttle_sim --config configs/shuttle_gds.json           --out output/shuttle_gds
+python -m shuttle_sim --config configs/shuttle_variable_freq.json --out output/shuttle_variable_freq
+python -m shuttle_sim --config configs/shuttle_reference.json     --out output/ref_full --full-field
+```
+
+<a id="api"></a>
+
+### Программный интерфейс
 
 ```python
 import json, numpy as np
 from pathlib import Path
 from shuttle_sim.pipeline import Runner
-from shuttle_sim.hardware import Hardware
 
 cfg = json.loads(Path("configs/shuttle_reference.json").read_text())
 runner = Runner(cfg)
-runner.prepare()  # 31 опорная точка, SVD-моды, CubicSpline по маршруту
+runner.prepare()                     # 31 опорная точка, SVD-моды, сплайны по маршруту
 
-theta = np.zeros(8)  # 2 warp + 6 SVD-коррекций (low-dim)
-result = runner.evaluate(theta, baseline="sta", exact_nodes=321, subdivisions=8)
-print(result["n_total"], result["position_error_m"], result["minimum_frequency_hz"])
-# -> 0.0047  1.4e-09  687kHz
+theta = np.zeros(8)                  # 2 параметра warp + 6 параметров SVD-коррекции
+res = runner.evaluate(theta, baseline="sta", exact_nodes=321, subdivisions=8)
+print(res["n_total"], res["position_error_m"], res["minimum_frequency_hz"])
+# 0.0049  1.4e-09  687910.0
 
-# робаст
-robust = runner.robust(theta, count=12)
+robust = runner.robust(theta, count=12)      # ансамбль по объявленным неопределённостям
 print(robust["pass_fraction"], robust["mean_n"], robust["worst_n"])
 
-# оптимизация (Powell, bounds, бюджет 80 вызовов, чекпоинт)
-runner.checkpoint = Path("output/tmp/ckpt.json")
-aware = runner.optimize(robust=True)
+aware = runner.optimize(robust=True)         # Powell, ограничения, чекпоинт, фиксированный бюджет
 print(aware["theta"], aware["loss"])
 ```
 
----
+<a id="output"></a>
 
-## Формальная физическая постановка
+### Артефакты прогона
 
-Всё задаётся **явно** в `config.json`, все числа — **СИ**, без скрытых масштабов.
+| Файл | Содержание |
+|---|---|
+| `status.json` | сводка приёмки: номинал, валидация, робастность, сканирование паузы, safety |
+| `ideal_waveform.csv`, `dac_waveform.csv`, `delivered_waveform.csv` | команда, коды ЦАП и доставленный сигнал по 15 каналам |
+| `delivered_path.csv` | реализованная траектория иона `x, y, z (t)` после аппаратного тракта |
+| `route_diagnostics.json`, `delivered_local_diagnostics.json` | позиция, частоты, моды и их перекрытие вдоль маршрута |
+| `comparison.json` | сравнение `smooth`, `sta`, `unaware` и `aware` на единой метрике |
+| `validation.json` | сравнение дешёвой ROM, моделей на 321 и 1281 узле, DOP853; величины дрейфа `Δn` |
+| `robust.json`, `hold_scan.json`, `duration_scan.json` | сценарии возмущений, статистика `mean`/`worst`/`CVaR`, зависимость от паузы и длительности |
+| `safety_report.json`, `fallback_state.json` | результаты проверок и последнее безопасное состояние |
+| `calibration_*.json`, `closed_loop_*.json` | идентификация `gain`/`offset`, ресинтез, low-dim closed-loop |
+| `manifest.json`, `waveform_metadata.json` | версии среды, SHA-256 входных данных и исходников, порядок каналов, единицы |
 
-| Параметр | Поле `config` | Ед. | Смысл |
+<a id="architecture"></a>
+
+## Архитектура: восемь слоёв
+
+![Архитектура](assets/fig-architecture.png)
+
+*Рис. 3.* Слои конвейера, соответствующие модули и артефакты.
+
+Каждый слой реализован отдельным модулем с явным программным интерфейсом и собственным артефактом.
+Дополнительные сведения: [`docs/architecture.md`](docs/architecture.md) — послойное сопоставление со
+спецификацией; [`docs/ga_architecture.md`](docs/ga_architecture.md) — структура островного алгоритма,
+миграция, зал славы и дашборд.
+
+| № | Слой | Модуль | Ответственность |
 |---|---|---|---|
-| Масса / заряд | `trap.mass_amu`, `trap.charge_e` | а.е.м. / e | ⁴⁰Ca⁺ → 40, 1 |
-| Масштаб длины | `trap.length_scale_m` | м | 1 мкм = `1e-6` — внутренний `L` |
+| 1 | Поле | `field.py` | `SionTrap`: псевдопотенциал RF и вклад DC, поиск минимума, гессиан, моды |
+| 2 | Управление | `control.py` | `θ ∈ ℝ⁸`: time-warp, огибающие, SVD-моды; фиксированная и переменная частота |
+| 3 | Инверсия | `voltage.py` | три условия баланса сил и одно условие кривизны, `SLSQP`, ограничения, регуляризация |
+| 4 | Аппаратный тракт | `hardware.py` | ЦАП и ZOH, RC-каскад через `expm`, усиление, смещение, задержка, slew |
+| 5 | Динамика | `dynamics.py` | трёхмерный гауссов пакет, методы `exact` и `DOP853`, ковариация и `n_total` |
+| 6 | Робастность | `pipeline.robust` | ансамбль по `gain`, `offset`, задержке, фильтру, stray-полю и масштабу частоты |
+| 7 | Калибровка | `calibration.py` | `identify_from_residuals` → `update_model` → ресинтез |
+| 8 | Closed-loop | `closed_loop.py` | 8 параметров, `SafetyLayer`, фиксированный бюджет, журнал итераций |
+
+<details>
+<summary><b>Формальная постановка и объект оптимизации</b></summary>
+
+Энергия системы: `U(r) = U_RF(r) + Σ Vᵢ·φᵢ(r) − q·E_stray·r`, где `φᵢ` — потенциал i-го электрода
+из `sion.electrode.System`, `U_RF` — псевдопотенциал. Производные вычисляются через
+`system.individual_potential(r, derivative)`.
+
+Инверсия напряжений (слой 3):
+
+```
+A = [ Gᵀ·L/q ; aᵀ·H·a·L²/q ]          (3 условия баланса сил + 1 условие кривизны)
+b = [ −∇U_RF·L/q ; (mω² − aᵀH_RF a)·L²/q ]
+min ½‖V−prev‖² + ½·reg·‖V‖²   при  A·V = b,  V ∈ [lo, hi]
+```
+
+Далее проверяется условие `‖local − target‖ < 5 нм`. Радиальные моды остаются свободными: лапласиан
+не позволяет задать полный гессиан.
+
+Используются четыре различных определения маршрута (файл `path_conventions.json`):
+
+| Маршрут | Определение |
+|---|---|
+| `user_route` | `start + s·distance·direction`, `s ∈ [0,1]`, задаётся конфигурацией |
+| `nominal_well_path` | `voltage_spline(s)` → `trap.local()` → `route_r`, `route_H` |
+| `realized_path` | доставленные напряжения → точная ROM-реконструкция → расчёт динамики |
+| `optimized_path` | `q(route)` в пространстве параметров; оценивается после аппаратного тракта |
+
+Оптимизации подлежит `q(route)`, валидации — `realized_path`.
+
+</details>
+
+<details>
+<summary><b>Параметризации: обоснование размерности 8</b></summary>
+
+| Семейство | Модуль | Параметры | Определение |
+|---|---|---|---|
+| `TrajectoryParameterization` | `control.py` | `θ₀, θ₁` | `s(t) = x + θ₀·env + θ₁·env·(2s−1)`, `env = 16s²(1−s)²`; значение и наклон на границах равны нулю |
+| `FrequencyProfile` | `control.py` | `a, b` | `ω(s) = ω₀·(1 + a·env + b·env·(2s−1))`, ограничение на отклонение 15 % |
+| `VoltageKnotParameterization` | `control.py` | узлы сплайна | кусочно-сплайновая аппроксимация опорных напряжений (для сравнения) |
+| `CorrectiveBasis` | `control.py` | `θ₂…θ₇` | `ΔV = (e₀,e₁,e₂)·Θ·R_svd`, где `R_svd` — две старшие сингулярные моды `route_V` |
+
+Итоговый вектор `θ ∈ ℝ⁸` содержит 2 параметра временной деформации и 6 параметров в подпространстве,
+которое непосредственно смещает минимум потенциала. Запрос размерности 1000 отклоняется
+(`Rejected('high_dim')`).
+
+</details>
+
+<a id="hardware"></a>
+
+## Аппаратная модель
+
+![Волновые формы](assets/fig-waveforms.png)
+
+*Рис. 4.* Изменение команды `ΔV(t)` относительно начального значения (вверху) и отклонение
+доставленного сигнала от команды по каналам (внизу).
+
+Последовательность преобразований:
+
+```
+commands_V (N × C)
+  → квантование ЦАП:  lsb = (max − min)/(2^bits − 1)
+  → ZOH на сетке k/fs
+  → плотная сетка dt = 1/(fs·subdiv), subdiv 4…16
+  → RC-каскад: точное вычисление expm(M·dt) на ZOH-сетке с предысторией состояния
+  → gain·held + offset (поканально)
+  → skew, задержка и per-sample time-jitter (детерминированный по хешу команд)
+  → проверки: клиппинг → hardware_saturation;  max|ΔV| → slew_limit
+```
+
+В номинальном прогоне искажение составляет `max|ΔV| = 96.7 мВ`, `rms = 27.2 мВ`, `LSB = 366 мкВ`;
+случаев клиппинга нет. Идеальный и доставленный сигналы различаются, и оптимизатор использует
+именно доставленный сигнал.
+
+<details>
+<summary><b>Синхронизация, джиттер и отчёт об искажениях</b></summary>
+
+- `trigger_latency_s` — общий статический сдвиг.
+- `jitter_s` — per-sample временной джиттер, `rng.uniform(-jitter, jitter, len(t))`, учитывается как
+  `y(t − delay − trig − time_jitter(t))` с интерполяцией.
+- `skew_per_channel_s` — статический поканальный сдвиг (прежнее имя `jitter_per_channel_s`).
+- `distortion.json`: `max_command_jump_V`, `lsb_V`, `max_deviation_V`, `rms_deviation_V`,
+  `channel_max_deviation_V`, `delay_s`, `trigger_latency_s`, `jitter_s`, `skew_per_channel_s`,
+  `time_jitter_s`, `max_time_jitter_s`, `jitter_model`, `hold`, `filter`, `hardware_identifier`,
+  `calibration_state`.
+
+Режим `ideal=True` исключает квантование и фильтрацию (одно состояние на команду) и служит для
+сопоставления решений, полученных без учёта и с учётом аппаратных ограничений.
+
+</details>
+
+<a id="metrics"></a>
+
+## Метрики, приоритеты и приёмка
+
+Приоритеты соответствуют спецификации (§8): нарушение условия более высокого уровня отменяет
+результат независимо от остальных показателей.
+
+```
+safety  →  confinement  →  hardware realizability  →  excitation / accuracy  →  speed
+```
+
+Скалярная функция потерь (единая для всех сравнений; компоненты записываются отдельно):
+
+```
+L = log1p(n/n₀) + log1p((pos/tol)²) + log1p((well/tol)²) + 1e-4·‖θ‖²  + штрафы аппаратного тракта
+robust: 0.35·mean + 0.65·max по обучающим сценариям
+```
+
+| Метрика | Источник | Содержание |
+|---|---|---|
+| `n_total`, `n_modes` | все артефакты | нагрев в фононах, бюджет ≤ 0.5 |
+| `position_error_m` | все артефакты | ошибка позиции, допуск 5 мкм |
+| `minimum_frequency_hz` | все артефакты | удержание, порог 400 кГц |
+| `max_deviation_V`, `rms_deviation_V` | `distortion.json` | отклонение доставленного сигнала от команды |
+| `mean_n`, `worst_n`, `cvar_20pct_n`, `pass_fraction` | `robust.json` | статистика хвоста распределения |
+| `refinement_delta_n`, `integrator_delta_n` | `validation.json` | устойчивость результата к выбору модели |
+| `optimization_improved_over_baseline` | `status.json` | превышение результата над нулевым значением `θ` |
+
+Коды отказа (`Rejected`): `no_minimum`, `weak_confinement`, `infeasible_voltages`,
+`hardware_saturation`, `slew_limit`, `route_corridor`, `rom_trust_region`, `numerical_failure`,
+`integrity_failure`, `blocked_by_missing_data`, `high_dim`, `invalid_input`,
+`optimizer_budget_exhaustion`.
+
+<a id="results-nominal"></a>
+
+## Результаты: номинальный прогон
+
+![Траектория](assets/fig-trajectory.png)
+
+*Рис. 5.* Реализованная траектория, скорость и минимальная секулярная частота для номинального
+прогона.
+
+Параметры: 30 мкм в прямом и обратном направлении, 15 мкс на плечо, пауза 2 мкс. Полученные
+значения: `n_total = 0.0071` фонона (1.4 % бюджета 0.5), ошибка позиции `1.38 нм` при допуске 5 мкм,
+минимальная секулярная частота `688 кГц` при пороге 400 кГц.
+
+![Частоты вдоль маршрута](assets/fig-frequencies.png)
+
+*Рис. 6.* Секулярные частоты вдоль маршрута по 41 опорной точке (ROM-диагностика). Старшая мода
+определяет запас по удержанию, две остальные соответствуют радиальным колебаниям.
+
+<a id="results-validation"></a>
+
+## Результаты: валидация (multi-fidelity)
+
+![Валидация](assets/fig-validation.png)
+
+*Рис. 7.* Значения `n_total` на четырёх уровнях точности и величины дрейфа при изменении модели.
+
+Один и тот же прогон рассчитан четырьмя способами; результаты различаются незначительно.
+
+| Сравнение | `Δn` (модуль) |
+|---|---|
+| дешёвая ROM → точная модель (321 узел) | `1.7e-4` |
+| уточнение сетки до 1281 узла | `1.4e-4` |
+| переход от грубой модели к тонкой | `2.2e-3` |
+| смена интегратора (`exact` → `DOP853`) | `3.0e-7` |
+
+Все величины дрейфа меньше допуска `0.01` фонона, `convergence_passed = true`. Дешёвая модель
+пригодна для поиска, а принимаемое решение проверяется на точной.
+
+<a id="results-robust"></a>
+
+## Результаты: робастность
+
+![Робастность](assets/fig-robust.png)
+
+*Рис. 8.* Распределение `n_total` по сценариям возмущений и запас до бюджета 0.5 фонона.
+
+Рассмотрено 6 сценариев с объявленными (не измеренными) возмущениями: `gain`, `offset`, задержка,
+фильтр, stray-поле, масштаб частоты. Все сценарии приняты (`pass_fraction = 1.0`); распределение
+приведено полностью.
+
+| Статистика | `n_total` | Доля бюджета 0.5 |
+|---|---|---|
+| `mean` | `0.0269` | 5 % |
+| `CVaR 20 %` | `0.0744` | 15 % |
+| `worst` | `0.0764` | 15 % |
+
+Среднее значение в 6 раз меньше наихудшего. По этой причине агрегация выполняется как
+`0.35·mean + 0.65·max`, а не как среднее арифметическое.
+
+<a id="results-ga"></a>
+
+## Островной генетический алгоритм
+
+![Island GA](assets/fig-ga.png)
+
+*Рис. 9.* Динамика минимального фитнеса по островам, разнообразие популяции, распределение
+кандидатов зала славы и лучший геном.
+
+Пять островов функционируют одновременно и сохраняют различие стратегий поиска.
+
+| Остров | Базовая траектория | Стратегия | Размерность генома |
+|---|---|---|---|
+| **S** | `smooth` (10s³ − 15s⁴ + 6s⁵) | гладкая адиабатика, малая мутация | 8 |
+| **A** | `sta` (слагаемое `s''/(Tω)²`) | предпочтителен при малых `T`, чувствителен к фильтру | 8 |
+| **V** | `sta` | переменная частота; обеспечивает допустимость на 100 мкм при ±12 В | 10 |
+| **R** | `sta` | отбор по `worst`, а не по `mean` | 8 |
+| **H** | `sta` | штраф за искажение фильтром (`rms`, `max_deviation`) | 8 |
+
+Миграция выполняется по кольцу `S→A→V→R→H→S` каждые 5 поколений. Зал славы использует фильтр
+разнообразия (нормализованное расстояние по `θ` не менее 0.12). Чекпоинт записывается после каждой
+генерации.
+
+Демонстрационный прогон `output/ga_demo` (8 поколений, 106 с): минимальный фитнес `0.00236`,
+`n_total = 0.00125` фонона, ошибка позиции `1.25 нм`. Лучшее решение описывается 10 параметрами
+вместо 200 отсчётов напряжения.
+
+```bash
+# островной алгоритм с дашбордом
+python -m shuttle_sim.ga --config configs/shuttle_ga_island.json --out output/ga_run \
+       --dashboard --port 8000 --generations 40
+```
+
+<a id="dashboard"></a>
+
+## Дашборд в реальном времени
+
+![Дашборд](assets/fig-dashboard.png)
+
+*Рис. 10.* Панели дашборда, построенные по данным `output/ga_demo`.
+
+Запись состояния не блокирует эволюцию: файл `state.json` обновляется атомарно
+(`state.json.tmp → state.json`) после каждой генерации, сервер работает в отдельном процессе и
+только читает его.
+
+```bash
+# отдельный процесс: статические файлы и /api/state по каталогу прогона
+python -m shuttle_sim.dashboard.server --out output/ga_demo --port 8000
+```
+
+В среде предварительного просмотра адрес имеет вид `https://8000-<sandbox>.e2b.app`. Панели:
+фитнес по поколениям и островам, разнообразие, гистограмма `n_total`, зал славы, Парето-фронт
+`n`–`worst`, 15 каналов `V(t)`, траектория `r(t)`, вид ловушки сверху с анимацией кандидатов, граф
+миграций, состояние CUDA (при отсутствии `cupy` используется numpy-реализация без изменения
+результатов).
+
+<a id="gds"></a>
+
+## Геометрия из GDS
+
+![GDS](assets/fig-gds.png)
+
+*Рис. 11.* Топология примера GDS и соответствие слоёв каналам.
+
+Принадлежность канала определяется явной парой `(layer, datatype)` в `electrode_map`; порядок
+полигонов не используется. RF-электроды задаются отдельно; пересечение RF- и DC-каналов
+проверяется при загрузке.
+
+```jsonc
+{
+  "trap": {
+    "kind": "gds",
+    "path": "configs/generated_fivewire.gds",
+    "electrode_map": [
+      {"name": "RF0", "layer": 10, "datatype": 0},
+      {"name": "RF1", "layer": 11, "datatype": 0},
+      {"name": "DC0", "layer": 12, "datatype": 0},
+      {"name": "DC1", "layer": 13, "datatype": 0}
+    ],
+    "rf_electrodes": {"RF0": 160, "RF1": 160},
+    "dc_indices": [2, 3],
+    "lower_V": -12, "upper_V": 12,
+    "initial_dc_V": [2.5, -0.8],
+    "minimum_seed_m": [0, 0, 90e-6],
+    "mass_amu": 40, "charge_e": 1, "length_scale_m": 1e-6, "rf_frequency_hz": 28e6
+  }
+}
+```
+
+<details>
+<summary><b>О единицах измерения в файле примера</b></summary>
+
+`configs/generated_fivewire.gds` — демонстрационный файл для проверки соответствия слоёв, а не
+описание реального устройства: запись UNITS в нём содержит условное значение, поэтому координаты
+на рисунке приведены в единицах GDS. Для реальной геометрии достаточно указать корректную запись
+UNITS: функция `load_trap` переводит единицы файла в метры по коэффициенту `lib_unit / L`.
+
+</details>
+
+<a id="configs"></a>
+
+## Конфигурации
+
+Всего в каталоге `configs/` 13 конфигураций.
+
+| Конфигурация | Ловушка | Протокол | Назначение |
+|---|---|---|---|
+| `shuttle_reference.json` | five-wire, RF 20 МГц | round-trip 30 мкм, 15 мкс | номинальный режим, базовая приёмка |
+| `shuttle_oneway.json` | five-wire | one-way 30 мкм | тот же конвейер с другим протоколом |
+| `shuttle_repeated.json` | five-wire | repeated ×2, 20 мкм | сохранение состояния фильтра на разворотах |
+| `shuttle_gds.json` | GDS, слои 10–26 | round-trip 30 мкм | соответствие слоёв каналам без скрытого порядка |
+| `shuttle_variable_freq.json` | five-wire | round-trip, `coeff [0.03, −0.015]` | переменная частота удержания |
+| `shuttle_90um_30MHz.json` | five-wire, h = 90 мкм, RF 30 МГц, ±12 В | one-way 30 мкм | строгая аппаратная постановка |
+| `shuttle_90um_60MHz.json` | five-wire, h = 90 мкм, RF 60 МГц, ±12 В | one-way 30 мкм | та же геометрия при удвоенной RF |
+| `shuttle_90um_100um_strict_30MHz.json` | h = 90 мкм | round-trip 100 мкм, 10 мкс | предельный случай по напряжениям |
+| `shuttle_100um_10us.json`, `shuttle_100um_50us.json` | ±20 В | one-way 100 мкм, 10 и 50 мкс | влияние длительности на дальний перенос |
+| `shuttle_100um_strict.json` | ±20 В, GA | round-trip 100 мкм | конфигурация генетического алгоритма |
+| `shuttle_ga_island.json` | five-wire | round-trip 30 мкм | пять островов, миграция, зал славы |
+| `shuttle_ga_isolated.json` | h = 90 мкм, переменная `ω` | round-trip 30 мкм | остров с геномом размерности 10 |
+
+<details>
+<summary><b>Поля конфигурации</b></summary>
+
+| Параметр | Поле | Единица | Содержание |
+|---|---|---|---|
+| Масса и заряд | `trap.mass_amu`, `trap.charge_e` | а.е.м., e | ⁴⁰Ca⁺: 40 и 1 |
+| Масштаб длины | `trap.length_scale_m` | м | внутренний масштаб `L`, как правило `1e-6` |
 | RF | `trap.rf_frequency_hz`, `trap.rf_peak_V` | Гц, В | одна частота, общая фаза, псевдопотенциал |
-| Геометрия | `trap.geometry` или `trap.path` (GDS) | мкм | ширина/зазоры/высота или полигоны |
-| DC каналы | `trap.dc_indices`, `trap.lower_V/upper_V`, `trap.initial_dc_V` | В | только эти электроды крутим |
-| Старт | `trap.minimum_seed_m` | м | затравка для поиска минимума `local()` |
-| Железо | `hardware.sample_rate_hz`, `dac_bits/min/max`, `lowpass_hz`, `gain/offset/delay`, `max_jump_V` | Гц, В, с | DAC ZOH + RC-каскад + gain/offset/delay + slew |
-| Транспорт | `task.distance_m`, `duration_s`, `hold_s`, `direction` | м, с, вектор | куда и как долго везём |
-| Качество | `task.min_frequency_hz`, `max_n_total`, `position_tolerance_m` | Гц, фонон, м | `f_min ≥400кГц`, `n≤0.5`, `|Δr|≤5мкм` |
-| Неопределённости | `uncertainty.*_sigma` | В, с | gain/offset/delay/filter/stray/freq — симуляция, не заявления об установке |
+| Геометрия | `trap.geometry` либо `trap.path` с `electrode_map` | мкм, м | аналитическое описание или GDS |
+| DC-каналы | `trap.dc_indices`, `lower_V`, `upper_V`, `initial_dc_V` | В | управляемые электроды и их границы |
+| Начальное приближение | `trap.minimum_seed_m` | м | затравка поиска минимума |
+| Аппаратный тракт | `hardware.*` | Гц, В, с | дискретизация, фильтр, усиление, задержка, slew |
+| Протокол | `task.distance_m`, `duration_s`, `hold_s`, `direction`, `protocol`, `cycles` | м, с, — | параметры переноса |
+| Критерии качества | `task.min_frequency_hz`, `max_n_total`, `position_tolerance_m` | Гц, фонон, м | условия приёмки |
+| Неопределённости | `uncertainty.*_sigma` | В, с, — | объявленные распределения |
 
-**Энергия:** `U(r) = U_RF(r) + Σ V_i · φ_i(r) − q·E_stray·r`, `φ_i` — индивидуальный потенциал i-го электрода (из `sion.electrode.System`), `U_RF` — псевдопотенциал. Производные — через `system.individual_potential(r, derivative)`.
+</details>
 
----
+<a id="assets"></a>
 
-## 8 архитектурных слоёв
+## Иллюстрации в документации
 
-Спека §3.8 — слои независимы, импорты явные:
+Все иллюстрации размещены в каталоге `assets/` и формируются по артефактам прогонов. Ручной ввод
+числовых значений в изображения не применяется, поэтому иллюстрации не могут разойтись с данными.
 
-```
-Field (sion.electrode + SionTrap) 
-  → Control (trajectory/frequency/voltage/corrective) 
-  → Voltage (inversion, bounds, null-space) 
-  → Hardware (DAC/ZOH/RC/gain/delay) 
-  → Dynamics (3D Gaussian) 
-  → Robust (ensembles) 
-  → Calibration (identify/update/resynthesize) 
-  → ClosedLoop (low-dim, safety-gated)
-  + Safety + Observables (сквозные)
+```bash
+python tools/make_docs_assets.py                    # все PNG и GIF
+python tools/make_docs_assets.py --only wave traj   # отдельные группы
 ```
 
-`shuttle_sim/field.py`, `control.py`, `voltage.py`, `hardware.py`, `dynamics.py`, `pipeline.py` (Runner), `safety.py`, `observables.py`, `calibration.py`, `closed_loop.py`, `transport.py`.
+| Тип иллюстрации | Способ получения |
+|---|---|
+| График по результатам расчёта | функция `fig_*(...)` в `tools/make_docs_assets.py` читает `output/<run>/*.json` и `*.csv`, сохраняет PNG в `assets/` |
+| Схема или чертёж | `matplotlib.patches` (примеры: `fig_architecture`, `fig_gds`) либо SVG из векторного редактора; GitHub отображает SVG |
+| Анимация | `matplotlib.animation` с `PillowWriter` → `assets/anim-*.gif`; для записи дашборда — видеозахват и `ffmpeg -i in.mp4 -vf "fps=12,scale=960:-1" out.gif` |
+| Снимок дашборда | `python -m shuttle_sim.dashboard.server --out output/ga_demo --port 8000`, затем снимок окна → `assets/dashboard-live.png` |
+| Карточки с числовыми значениями | `fig_scorecard` читает `status.json` и `comparison.json` всех прогонов |
 
----
-
-## TrapAdapter и геометрии
-
-`class SionTrap` — адаптер над `sion.electrode.System`:
-
-- `basis(r, d)` — `q·φ_i / L^d` (d=1 градиент, d=2 гессиан)
-- `rf(r, d)` — псевдопотенциал при `dcs = fixed` (не-DC электроды)
-- `local(V, seed, stray)` — `least_squares` поиск минимума, проверка `eig(H/m)>0` → `Local(position_m, hessian_J_m2, omega_rad_s, modes)` (3 частоты, ортонорм. моды)
-- `invert(target, axis, ω_ax, prev_V)` — жёсткий баланс сил `Gᵀ·V = -∇U_RF` + одна осевая кривизна `aᵀHa = mω² − aᵀH_RF a`, решение `SLSQP` с `min ||V−prev||² + reg·||V||²` и `bounds [lo,hi]`. Радиальные моды **свободны** — лапласиан не позволяет задать весь гессиан.
-- `load_trap(cfg)` — фабрика:
-  - `kind: sion_five_wire` → `sion.five_wire_trap_design` (параметры `top_dc/bottom_dc/top_rf/bottom_rf/central_dc`, `rf_peak_V → Sion-нормировка √(q/m)/(2LΩ)`)
-  - `kind: gds` → `gdspy.GdsLibrary` + `PolygonPixelElectrode` + `System` (нет неявного порядка — вы сопоставляете `[(layer, datatype) → name]` через `electrode_map`; RF задаёте в `rf_electrodes`; ориентация CCW).
-  - `kind: gds` fallback `python-gdsii` если `gdspy` нет (для CI)
-
-Все частоты — в `omega_rad_s`, гессиан — `J/м²`, чтобы `ω = sqrt(eig(H/m))`.
-
----
-
-## Канонические пути
-
-Путаница «какой путь оптимизируется» — запрещена. В `path_conventions.json`:
-
-- **user_route** — `start + s·distance·direction`, `s∈[0,1]` — то, что задал пользователь.
-- **nominal_well_path** — `voltage_spline(route)` → `trap.local` → `route_r / route_H` (опорные диагностики `route_diagnostics.json`).
-- **realized_path** — после `hardware.deliver` → ROM/точное восстановление `r(t)` → динамика (`delivered_path.csv`).
-- **optimized_path** — `q(route)` в пространстве параметров (warp + коррекции); оценивается **после** аппаратной доставки.
-
-Оптимизируется `q(route)`, валидируется `realized_path`.
-
----
-
-## TransportTask — один конфиг, три протокола
-
-`shuttle_sim/transport.py: TransportTask`
+Добавление новой иллюстрации требует около 15 строк: функция читает артефакт и сохраняет файл.
 
 ```python
-@dataclass
-class TransportTask:
-    distance_m: float
-    duration_s: float
-    hold_s: float
-    direction: np.ndarray  # нормируется
-    protocol: Literal["one_way","round_trip","repeated"]
-    cycles: int = 1
-    min_frequency_hz: float = 400e3
-    max_n_total: float = 0.5
-    position_tolerance_m: float = 5e-6
+# tools/make_docs_assets.py
+def fig_duration_scan():
+    rows = json.loads((RUN / "duration_scan.json").read_text())
+    t = [r["duration_s"] * 1e6 for r in rows]
+    n = [r["metrics"]["n_total"] for r in rows]
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.plot(t, n, "o-", color=ACCENT)
+    _style(ax, "Длительность плеча и нагрев", "T, мкс", "n_total, фононы")
+    _save(fig, "fig-duration-scan.png")
+
+JOBS["duration"] = fig_duration_scan        # регистрация в словаре JOBS
+# запуск: python tools/make_docs_assets.py --only duration
 ```
 
-- `one_way` — 1 leg, цель `target`
-- `round_trip` — 2 legs (туда-обратно), цель `start`
-- `repeated` — `2·cycles` legs + holds, фильтр-состояние и динамика **не сбрасываются** на разворотах (физично).
+Вставка в документ выполняется стандартными средствами Markdown:
 
-`grid()` строит сетку ЦАП: `nleg = round(T0·fs)`, `nhold = round(hold·fs)`, требует целых периодов и `≥20` отсчётов/leg, каждый эндпоинт ровно один раз.
+```markdown
+![Команда и доставленный сигнал](assets/fig-waveforms.png)
 
----
-
-## Параметризации (≥4, включая low-dim для closed-loop)
-
-| Семейство | Где | Параметры | Идея |
-|---|---|---|---|
-| **Trajectory** | `control.TrajectoryParameterization` | `θ0,θ1` | `s(t) = x + θ0·env + θ1·env·(2s-1)`, `env=16s²(1-s)²`, `x=P([0,1])(s)`, полином `P([0,0,16,-32,16])` — нуль значения и наклона на границах |
-| **FrequencyProfile** | `control.FrequencyProfile` | `mode fixed/variable` | `fixed` — ω_const; `variable` — `ω(s)=ω0·(1+a·env+b·env·(2s-1))` (см. ниже) |
-| **VoltageKnot** | `control.VoltageKnotParameterization` | `knots_s, knots_V` | кусочно-сплайн по опорным узлам (сравнение) |
-| **CorrectiveBasis** | `control.CorrectiveBasis` | `θ2..θ7` | `ΔV = (e0,e1,e2)·Θ·R_svd`, `R_svd` — топ-2 SVD `route_V−mean` (null-space) |
-| **Итого Runner** | `pipeline.Runner.commands(theta, baseline)` | `θ∈ℝ⁸` : 2 warp + 6 SVD | `baseline smooth (10s³−15s⁴+6s⁵)` или `sta (35s⁴−84s⁵+70s⁶−20s⁷ + s''/(Tω)²)` + warp + коррекция, проверка `V∈[lo,hi]` |
-
-**Low-dim для closed-loop — обязательно 8**, не 1000. Проверка: попытка `θ∈ℝ¹⁰⁰⁰` → `Rejected` (`high_dim`).
-
----
-
-## Фиксированная и переменная частота
-
-`FrequencyProfile.omega_scaling(s)`:
-
-- `fixed` → `1`
-- `variable` → `1 + a·env + b·env·(2s−1)`, `|mod|≤0.15` (±15% чтобы не провалить `f_min`)
-
-В `Runner.prepare()` опорные напряжения `invert()` считаются с `ω(s)` — геометрия реально перестраивается. Коэффициенты `a,b` берутся из `task.frequency_coeffs`.
-
----
-
-## Инверсия напряжений
-
-`SionTrap.invert`:
-
-```
-A = [ Gᵀ·L/q ;  aᵀ·H·a·L²/q ]   (4 строки: 3 силы + 1 кривизна)
-b = [ −∇U_RF·L/q ; (mω² − aᵀH_RF a)·L²/q ]
-min ½||V−prev||² + ½reg||V||²
-s.t. A·V = b,  V∈[lo,hi]   (SLSQP, ftol 1e-11, maxiter 150)
-проверка ||A·V−b||<1e-6 и ||r_min − target||<5нм
+*Рис. 4.* Изменение команды ΔV(t) и отклонение доставленного сигнала по каналам.
 ```
 
-`reg=1e-4` — минимальное изменение + малая энергия, null-space остаётся для временной гладкости.
+Требования к иллюстрациям:
 
----
+1. Имя файла отражает содержание: `fig-<тема>.png`, `anim-<тема>.gif`.
+2. Ширина графиков 1200–1300 px, разрешение 145–160 dpi; размер GIF не более 1 МБ (частота
+   12–15 кадров/с, ширина 960–1200 px).
+3. Каждая иллюстрация сопровождается подписью с указанием содержания, источника данных и единиц.
+4. Числовые значения не вводятся вручную: источником служат файлы в `output/`, повторный запуск
+   `tools/make_docs_assets.py` обновляет изображения.
+5. Схемы помечаются как схемы и не интерпретируются как результат измерения.
 
-## Аппаратная прямая модель (forward)
+<a id="honesty"></a>
 
-`shuttle_sim/hardware.py: Hardware`
+## Область применимости и ограничения
 
-**Не заявления об аппаратуре, а объявленная симуляционная цепочка** (`identifier: declared-simulation-chain-v1`):
+Приведённые результаты получены расчётом, а не измерением на установке. Ограничения зафиксированы
+в артефактах:
 
-```
-commands_V (N×C, float)
-  → квантование DAC: lsb=(max−min)/(2^bits−1), codes=rint((V−min)/lsb)
-  → ZOH k/fs
-  → плотная сетка dt=1/fs/subdiv (subdiv 4–16)
-  → каскад RC: poles 2π·lowpass_hz, A=−diag(poles) с поддиагональю, B, M=[A B;0 0], E=expm(M·dt), state=Ad·state+Bd·input
-  → gain/offset: y = held·gain+offset
-  → skew/delay: линейная интерполяция t−delay_j
-```
+- `calibration_state: unmeasured_simulation_assumptions`, `hardware_identifier:
+  declared-simulation-chain-v1`, `experiment_ready: false` — до подключения реальной установки;
+- модель поля — трёхмерная локальная гармоническая; полное RF-микродвижение и негауссова квантовая
+  эволюция не моделируются (указано в `manifest.json` и `validation.json`);
+- распределения неопределённостей в `robust` объявлены, а не измерены;
+- демонстрационный набор данных калибровки синтетический: `calibration_resynthesis.json` содержит
+  `improved: false` (0.0049 → 0.0236) — идентификация по трём точкам ухудшила модель, и этот
+  результат сохранён без изменений;
+- демонстрация closed-loop ограничена бюджетом: `evaluations 11`, `optimizer_success: false`,
+  `termination: Maximum number of function evaluations…`; значение потерь снизилось с `0.0472`
+  до `0.0158`;
+- запрос размерности 1000 для closed-loop отклоняется: `closed_loop_param_check.json`,
+  `rejected_as_expected: true`;
+- при отсутствии внешних данных калибровка не подменяется расчётом: `calibration_blocked.json`,
+  `blocked_by_missing_external_data`;
+- сопоставление результатов генетического алгоритма и конвейера корректно только при совпадении
+  `trap`, `hardware`, `exact_nodes` и бюджета вычислений.
 
-Проверки: `V∈[dac_min,dac_max]` иначе `hardware_saturation`, `max|ΔV|>max_jump_V` → `slew_limit`.
+<a id="faq"></a>
 
-**Тайминг/джиттер** (P4/B16): `trigger_latency_s` — общий статический сдвиг, `jitter_s` — **per-sample глобальный time-jitter** (`rng.uniform(-jitter, jitter, len(t))`, детерминирован по хешу команд для воспроизводимости), применяется как `y(t - delay - trig - time_jitter(t))` с интерполяцией. Старая `jitter_per_channel_s` переименована в `skew_per_channel_s` (per-channel статический skew) и хранится как `skew_draw`; `time_jitter_s` массив и `max_time_jitter_s` + `jitter_model` пишутся в `distortion.json` и `waveform_metadata.json`.
+## Диагностика отказов
 
-**Distortion report** (`distortion.json`): `max_command_jump_V`, `lsb_V`, `max_deviation_V`, `rms_deviation_V`, `channel_max_deviation_V`, `delay_s`, `trigger_latency_s`, `jitter_s`, `skew_per_channel_s`, `time_jitter_s`, `max_time_jitter_s`, `jitter_model`, `hold`, `filter`, `hardware_identifier`, `calibration_state`.
+<details>
+<summary><b><code>infeasible_voltages</code> на 100 мкм за 10 мкс при ±12 В</b></summary>
 
-Идеальный прогон `ideal=True` — без квантования/фильтра, один стейт на команду (для сравнения `hardware_unaware`).
+Такое поведение ожидаемо: `SLSQP` не находит `V ∈ [−12, 12]` для дальней точки при `ω = 400 кГц`.
+Способы устранения в порядке возрастания затрат: увеличить `duration_s`; расширить границы до ±20 В,
+согласовав значения с `hardware.dac_min/max`; включить переменную частоту (`coeff [0.03, −0.015]`),
+снижая частоту в середине маршрута. При заданном `task.durations_scan_s` прогон записывает
+`duration_scan.json`, по которому определяется предельная длительность.
 
----
+</details>
 
-## Waveform postprocessing и тайминг
+<details>
+<summary><b><code>slew_limit</code> и <code>hardware_saturation</code></b></summary>
 
-- Сохранение: `ideal_waveform.csv` (time + V), `dac_waveform.csv` (коды int), `delivered_waveform.csv` (после фильтра), `delivered_path.csv`.
-- Тайминг: общий идеальный клок, `sample_period = 1/fs`, `last_sample: terminal command, held indefinitely`, `trigger_latency 0` (в симуляции). Проверка `duration/hold` — целое число периодов.
+Необходимо уменьшить `max_jump_V`, увеличить `sample_rate_hz` либо приблизить параметры `θ`
+(деформацию времени) к нулю. Значение `max_command_jump_V` в `distortion.json` указывает канал и
+участок, на котором возникает ограничение.
 
----
+</details>
 
-## Локальная редуцированная модель и диагностики
+<details>
+<summary><b><code>weak_confinement</code> и <code>rom_trust_region</code></b></summary>
 
-**ROM** — линейный отклик вокруг геометрии, **никогда** не рукописная парабола:
+Условие `f_min` не выполнено либо минимум сместился дальше `rom_max_shift_m` (20 мкм) от
+номинального положения. Требуется увеличить `reg` и уменьшить `θ₂…θ₇`. Файл
+`delivered_local_diagnostics.json` содержит поля `mode_rotation_risk` и `relative_min_gap`,
+указывающие участок с нарушением структуры мод.
 
-```
-dv = V_delivered − voltage_spline(s)
-g  = dv·Gspline(s)
-H  = Hspline(s) + dv·BHspline(s)   (BH — вторые производные basis)
-r  = r_nominal − H⁻¹·(g − q·E_stray)
-```
+</details>
 
-Проверка `eig(H/m) ≥ (2π·f_min)²` иначе `weak_confinement`, `||r−r_nominal|| ≤ rom_max_shift_m (20мкм)` иначе `rom_trust_region`.
+<details>
+<summary><b><code>numerical_failure</code> и <code>no_minimum</code></b></summary>
 
-**Диагностики** (`route_diagnostics.json`, `delivered_local_diagnostics.json`):
-- `position_m`, `frequencies_hz`, `modes_columns` (сортированные по частоте, но не трекнутые по метке)
-- `adjacent_mode_overlap` + венгерский `linear_sum_assignment` для трекинга `tracked_labels`
-- `mode_rotation_risk` если `max overlap <0.95`
-- `relative_min_gap = min Δω / max ω`
+Начальное приближение `minimum_seed_m` расположено слишком близко к поверхности либо `least_squares`
+не сошёлся. Следует увеличить `z` затравки (например, с 70 до 200 мкм) и проверить, что
+`initial_dc_V` лежит внутри `[lo, hi]`.
 
-41 опорная точка по `s∈[−0.05,1.05]`, `CubicSpline` для `H,G,BH`, `R_svd` из `SVD(route_V)`.
+</details>
 
----
+<details>
+<summary><b>GDS: сообщение «mapped electrode has no polygons»</b></summary>
 
-## Динамика: multi-fidelity и независимая валидация
+Необходимо сопоставить `layer` и `datatype` с содержимым файла. Перечень полигонов выводит
+`python tools/gds_reader.py configs/generated_fivewire.gds --scale 1e-6`; параметр `--scale`
+требуется, если запись UNITS содержит условное значение. Полигоны обходятся против часовой
+стрелки — при отрицательной площади направление меняется автоматически.
 
-`shuttle_sim/dynamics.py` — **3D гаусс** (`ħ=1.05e-34`), без RF-микродвижения/стохастики:
+</details>
 
-- `initial_state(local, mass)` — ковариация `C = R·diag((2n̄+1)ħ/(2mω))·Rᵀ` (+ импульсная).
-- `propagate(ts, r(t), H(t), ...)` — `method exact` (кусочно-аффинный, `S=exp(A·dt)`, точное решение для `K=const` + линейно едущий минимум) vs `dop853` (адаптивный, `rtol 2e-10`). `hold linear` или `zero_order`.
-- `summarize` — `n_modes`, `n_total`, `coherent/covariance`, `position_error`, `well_target_error`, проверка `C≽0`, `C+ i·ħ/2·J ≽0`.
-- `validate_full_field_centroid` — нелинейный псевдопотенциал `Sion` (`DOP853` с шагом `min(dt, π/(max ω·T))`), **только** `coherent_n`, не полный `n`.
+<details>
+<summary><b>LAMMPS: сообщение «identical uids» (модуль <code>sion/sion.py</code>)</b></summary>
 
-**Multi-fidelity** в `Runner.run`:
-- `cheap` — ROM без `exact_nodes`
-- `321 / 641 / 1281` узлов + `subdiv 8/16` + `dop853` — независимый метод, та же физика
-- `validation.json`: `refinement_delta_n`, `integrator_delta_n`, `tolerance 0.005`, `convergence_passed`
+Требуется перезапуск ядра (IPython): устаревший стек LAMMPS сохраняет состояние между вызовами.
+Для `shuttle_sim` LAMMPS не используется.
 
----
+</details>
 
-## Потери, метрики, агрегация, иерархия приоритетов
-
-**Скалярные потери** (для оптимизации, но пишутся покомпонентно, **P1/B1 единая метрика**):
-
-```
-L = log1p(n/n0) + log1p((pos/tol)²) + log1p((well/tol)²) + 1e-4·||θ||²
-    + hardware_штраф (f_min, distortion) + 0.2·observable_loss (см. ниже)
-robust: 0.35·mean + 0.65·max  по train-сценариям
-rerank: тот же L с config-весами rerank_weights {n:1,pos:1,well:1} (B1 — не 1e8·pos)
-```
-
-**Честный бенчмарк** (B2/Б2): все кандидаты (`sta` ноль, `smooth` ноль, `unaware`, `aware` + кросс-baseline) оцениваются на **одинаковом** `exact_nodes` (161/321) и **одинаковых** `subdivisions`, одной нормализованной метрикой `log1p`. Флаг `optimization_improved_over_baseline` в `status.json` считается честно: `selected_score < best_zero_score - 1e-9 && selected.accepted` (P3 tie `1e-9` prefer `sta`). Сравнение `GA smooth 0.000162` vs `pipeline sta 0.0049` **невалидно**, если `GA` шёл на `smooth` baseline с другим бюджетом/ROM без `hardware.deliver`; честно — запустить оба на одном `trap`/`hardware`/`exact_nodes`/`budget` и сравнить `rerank_full`.
-
-**Канонические метрики** (`comparison.json`, `validation.json`):
-`n_total`, `n_modes`, `position_error_m`, `well_target_error_m`, `minimum_frequency_hz`, `distortion.max/rms`, `accepted`, `quality_failures`.
-
-**Агрегации** (`robust.json`, `observable_aggregation.json`): `mean_n`, `worst_n`, `cvar_20pct_n`, `pass_fraction`, `mean/worst/weighted_worst/cvar` по наблюдаемым.
-
-**Иерархия** (спека §8): `safety (Rejected)` > `confinement` > `hardware (slew/saturation/distortion)` > `excitation/accuracy` > `speed` (скорость — через `durations_scan_s` 12/15/20 мкс, не жертвуя `n`).
-
----
-
-## Робастность: ансамбли
-
-`Runner.scenarios(count, seed)` — объявленное, **не измеренное** распределение:
-
-```
-gain   ~ N(1, gain_sigma)            (0.008)
-offset ~ N(0, offset_sigma_V)         (0.008 В)
-delay  ~ U(0, additional_delay_max)   (5 нс)
-lowpass~ logN(0, log_filter_sigma)    (0.07)
-stray  ~ N(0, stray_sigma_V_m)        (0.15 В/м)
-freq_scale ~ logN(0, log_frequency_sigma) (0.02)
-```
-
-`Runner.robust(theta, count)` — held-out MC на `exact_nodes 641`, `all_scenarios_valid`, `pass_fraction`.
-
-Оптимизация `robust=True` — тренируется на `robust_training_samples=2`, оценивается на `robust_samples=6–12`.
-
----
-
-## Калибровка → обновление модели → ресинтез → closed-loop
-
-Порядок **связан и обязателен** (`calibration.py` → `pipeline.run`):
-
-1. `identify_from_residuals(dataset: [{commands_V, measured_V}])` — линейная регрессия `gain/offset` поканально (ресемплинг `interp` если длины ≠, пропуск `std<1e-9`, running average). Возвращает `CalibrationResult(success, updated_hardware, provenance)`. Пустой датасет → `blocked_by_missing_data` (не `numerical_failure`).
-2. `update_model(result)` — `Hardware(gain, offset)` с валидацией.
-3. `evaluate` с обновлённым железом → `calibration_resynthesis.json` (pre/post `n_total`, `improved`).
-4. `closed_loop` — fine-tune **в том же** `θ₈` (см. ниже).
-
-Демо: синтетический датасет с `true_gain 1.02, offset 0.015` → `identified gain ~1.013 offset 0.027 success true`.
-
-Также `identify_filter` — fit шага по `lowpass_hz`.
-
----
-
-## Наблюдаемые в эксперименте: цепочка до loss
-
-`shuttle_sim/observables.py` — **цепочка обработка → потеря**, одинаково для симуляции и эксперимента:
-
-```
-raw (симуляция: n_total, pos) 
-→ observables: sideband_asymmetry ≈ (n/(n+1)), recooling_time ∝ n, displacement_proxy
-→ observable_loss (скаляр) → агрегация mean/worst/weighted_worst/cvar
-```
-
-`processing_chain(metrics, task)` → `{observables, loss, provenance}`.  
-`observable_aggregation.json` — пример агрегации по робастным сценариям.
-
-Физично: `asymmetry 0.833→0.333` при изменении `n` — калибровка реагирует на вход, не захардкожена.
-
----
-
-## Безопасный closed-loop в низкой размерности
-
-`shuttle_sim/closed_loop.py: ClosedLoopRefiner`
-
-- Только `θ∈ℝ⁸` (2 warp + 6 SVD), попытка `θ∈ℝ¹⁰⁰⁰` → `high_dim_rejected`.
-- Бюджет `closed_loop_budget 10–12`, Powell с `bounds`, история `evaluations`, `safety_layer` на каждом шаге.
-- `demo_emulated_run(true_perturb)` — эмуляция возмущённого железа (`gain 1.02`...), показывает `converged`, `best_loss`.
-- `param_check` — high-dim инжект → `rejected_as_expected true`.
-
-**SafetyLayer** (`safety.py`) — отдельно: `voltage bounds`, `hardware_saturation`, `slew`, `f_min`, `rom_trust_region`, `fallback_state` (`θ=0` — последний безопасный).
-
----
-
-## Safety, коды отказов, единицы СИ, оптимизаторы
-
-**Коды `Rejected`:**
-`no_minimum`, `weak_confinement`, `infeasible_voltages`, `hardware_saturation`, `slew_limit`, `route_corridor`, `rom_trust_region`, `numerical_failure`, `integrity_failure`, `blocked_by_missing_data`, `high_dim` + `invalid_input`/`optimizer_budget_exhaustion`.
-
-**СИ — везде:** `м, с, Гц, В, кг, Дж/м²`. Внутри `dynamics` масштаб `L=1мкм, T=1мкс` для численной устойчивости, снаружи — СИ.
-
-**Оптимизаторы — bounded + чекпоинты:**
-- `SLSQP` для `invert` (bounds, eq-констрэйнт)
-- `Powell` для `optimize` (bounds `[-0.10,0.10]×2 + [-0.4,0.4]×6`, `maxfev 80`, `xtol 1e-3`, `ftol 1e-4`, `checkpoint.json` atomic, `best_loss` сохраняется даже если бюджет исчерпан)
-
-**Нет стабов:** поле реагирует на `V` (сдвиг `1e-4` м), железо на `gain`, наблюдаемые на `n`.
-
----
-
-## Конфиги и 7-point демонстрация
-
-В `configs/`:
-
-| Конфиг | Ловушка | Протокол | Частота | Что демонстрирует |
-|---|---|---|---|---|
-| `shuttle_reference.json` | `sion_five_wire` (15 DC, 1.1.2) | `round_trip 30мкм 15мкс` | fixed | номинал |
-| `shuttle_oneway.json` | та же | `one_way` | fixed | one-way |
-| `shuttle_repeated.json` | та же | `repeated cycles=2` | fixed | repeated (фильтр не сбрасывается) |
-| `shuttle_gds.json` | `gds` (17 Boundaries, layers 10-26, `generated_fivewire.gds`) | `one_way 30мкм` | fixed | GDS-маппинг без неявного порядка |
-| `shuttle_variable_freq.json` | `sion_five_wire` | `one_way` | **variable** `coeff [0.03,-0.015]` | переменный конфайнмент |
-| *(порождённые тестом)* `shuttle_100um_*.json` | `five_wire` 100мкм | `one_way 10/50мкс` | fixed/variable | 100мкм ±12В infeasible → ±20В STA `n 0.0039` |
-
-**7-point demo (§7 спеки) — все `simulation_acceptance_passed=true` (~13.4M артефактов):**
-1. **Nominal** — `reference` `n 0.0047, pos 1нм, fmin 687кГц`
-2. **Hardware-aware** — `aware` лучше `unaware`/`sta`/`smooth` (reranking по exact ROM)
-3. **Independent validation** — `validation.json: cheap vs 321 vs 641 vs dop853 Δn <0.005` (pass)
-4. **Robust** — `robust.json: pass_fraction 1.0, mean 0.0046 worst 0.0074`
-5. **Closed-loop-ready** — `closed_loop_emulated.json` + `param_check high_dim rejected`
-6. **Round-trip** — `repeated` с holds, фильтр-состояние персистентно
-7. **Saved artifacts** — SHA256, provenance, воспроизводимо
-
-Два уровня приёмки **без живой установки** — simulation-ready: `nominal_quality_passed && numerical_validation_passed`.
-
----
-
-## Артефакты и воспроизводимость
-
-`output/<run>/` (~32 файла):
-
-```
-config.json, trap_snapshot.json, route_diagnostics.json, transport_task.json,
-path_conventions.json, ideal/dac/delivered_waveform.csv, delivered_path.csv,
-delivered_local_diagnostics.json, comparison.json (smooth/sta/ideal/delivered/unaware/aware),
-validation.json (cheap/321/641/dop853), robust.json, hold_scan.json, duration_scan.json,
-safety_report.json, fallback_state.json, observables.json, observable_loss.json,
-aggregation.json, calibration_demo.json, calibration_blocked.json, calibration_resynthesis.json,
-closed_loop_emulated.json, closed_loop_param_check.json, manifest.json, waveform_metadata.json,
-status.json, optimizer_checkpoint.json, ...
-```
-
-`manifest.json`: `python/numpy/scipy/platform`, `input_sha256`, `source_sha256` по `*.py`, `trap_source`, `physics: RF pseudopotential + 3D local harmonic Gaussian`, `layers: [field,control,voltage,hardware,dynamics,robust,calibration,closed_loop,safety,observables]`.
-
-`waveform_metadata.json`: `channel_order, sample_period_s, code_min/max, dac_bits, hold, clock, trigger_latency, calibration_state, sha256(dac_waveform.csv)` — `verify_export()`.
-
-Честность: `calibration_demo` — синтетика с объявленным `true_gain`, не хардкод; `robust` — simulation-only распределение.
-
----
+<a id="structure"></a>
 
 ## Структура проекта
 
 ```
 Sion_ionfork/
-├── readme.md                      # этот файл
-├── requirements-shuttle.txt       # зависимости shuttle_sim (без LAMMPS)
-├── shuttle_sim/                   # 8 слоёв (СИ, bounded, чекпоинты)
-│   ├── __main__.py                # CLI: python -m shuttle_sim --config ... --out ...
-│   ├── pipeline.py                # Runner (prepare/grid/commands/rom/evaluate/optimize/robust/run)
-│   ├── field.py                   # SionTrap, load_trap, Local, Rejected, finite
-│   ├── control.py                 # Trajectory/Frequency/VoltageKnot/CorrectiveBasis (4 семейства)
-│   ├── voltage.py                 # thin wrapper над SionTrap.invert
-│   ├── hardware.py                # Hardware (DAC ZOH, RC expm, gain/offset/delay, distort)
-│   ├── dynamics.py                # propagate (exact/dop853), summarize, full_field_centroid
-│   ├── transport.py               # TransportTask (one_way/round_trip/repeated)
-│   ├── safety.py                  # SafetyLayer, fallback
-│   ├── observables.py             # processing_chain, aggregate_losses
-│   ├── calibration.py             # Calibration (identify/update, filter)
-│   └── closed_loop.py             # ClosedLoopRefiner (low-dim, budget, history)
-├── sion/                          # оригинальный пакет (electrode + pylion + sion.py)
-│   ├── electrode/                 # System, PolygonPixelElectrode, ...
-│   └── pylion/                    # LAMMPS-шаблоны (опционально)
-├── configs/                       # 5 референс-конфигов + GDS
-│   ├── shuttle_reference.json
-│   ├── shuttle_oneway.json
-│   ├── shuttle_repeated.json
-│   ├── shuttle_gds.json
-│   ├── shuttle_variable_freq.json
-│   └── generated_fivewire.gds     # 17 полигонов, layers 10-26
-├── examples/
-│   ├── shuttling.ipynb            # старый SION shuttling (LAMMPS)
-│   ├── gds/test.GDS               # пример GDS
-│   └── ...
-└── output/                        # артефакты прогонов (не коммитить большие)
-    ├── shuttle_reference/         # 2.8M, 32 файла, status true
-    ├── shuttle_gds/               # GDS-прогон
-    ├── shuttle_variable_freq/     # variable freq
-    └── shuttle_oneway|repeated/   # протоколы
+├── README.md                     # настоящий документ
+├── assets/                       # иллюстрации для документации (формируются по output/)
+├── tools/
+│   ├── make_docs_assets.py       # построение рисунков и анимации по артефактам прогонов
+│   ├── gds_reader.py             # чтение GDSII без внешних зависимостей
+│   └── preview_readme.py         # локальный рендер документа для проверки вёрстки
+├── shuttle_sim/                  # вычислительный конвейер (СИ, ограничения, чекпоинты)
+│   ├── __main__.py               # CLI: python -m shuttle_sim --config … --out …
+│   ├── pipeline.py               # Runner: prepare/grid/commands/rom/evaluate/optimize/robust/run
+│   ├── field.py                  # SionTrap, load_trap, Local, Rejected
+│   ├── control.py                # четыре семейства параметризаций
+│   ├── voltage.py hardware.py    # инверсия напряжений и аппаратная модель
+│   ├── dynamics.py               # трёхмерный гауссов пакет, exact и dop853
+│   ├── safety.py observables.py  # сквозные проверки и наблюдаемые
+│   ├── calibration.py closed_loop.py transport.py
+│   ├── ga/                       # островной алгоритм: engine, island, migration, fitness, cuda
+│   └── dashboard/                # сервер и статические файлы дашборда
+├── sion/                         # исходный пакет: electrode, pylion, sion.py (LAMMPS)
+├── configs/                      # 13 конфигураций и пример GDS
+├── docs/                         # architecture.md, ga_architecture.md
+├── examples/                     # ноутбуки (исходный SION, GDS, моды)
+├── output/                       # артефакты прогонов, по каталогу на прогон
+└── tests/                        # test_regression.py: safety, калибровка, closed-loop
 ```
 
----
+Проверка: `pytest tests/test_regression.py -q` (ускоренная конфигурация: 15 узлов, 4 оценки).
 
-## Минимальный пример: GDS-ловушка
-
-```json
-// configs/my_gds.json
-{
-  "trap": {
-    "kind": "gds",
-    "path": "configs/generated_fivewire.gds",
-    "cell": null,
-    "electrode_map": [
-      {"name": "DC0", "layer": 10, "datatype": 0},
-      {"name": "DC1", "layer": 11, "datatype": 0}
-    ],
-    "rf_electrodes": {"RF": 120},
-    "dc_indices": [0,1],
-    "lower_V": -12, "upper_V": 12,
-    "initial_dc_V": [2.5, -0.8],
-    "minimum_seed_m": [0,0,70e-6],
-    "mass_amu": 40, "charge_e": 1,
-    "length_scale_m": 1e-6, "rf_frequency_hz": 28e6
-  },
-  "hardware": { "sample_rate_hz": 80e6, "dac_bits": 16, "dac_min_V": -12, "dac_max_V": 12,
-                "lowpass_hz": [1.8e6,1.8e6], "gain": 1, "offset_V": 0, "delay_s": 0, "max_jump_V": 1.8 },
-  "task": { "distance_m": 50e-6, "duration_s": 10e-6, "hold_s": 2e-6, "direction": [1,0,0],
-            "protocol": "one_way", "min_frequency_hz": 400e3, "max_n_total": 0.5, "position_tolerance_m": 5e-6 }
-}
-```
-
-```bash
-# dc_indices — индексы в System после маппинга (проверяется на RF-пересечение)
-# initial_dc_V — затравка для первого local() (внутри [lo,hi])
-python -m shuttle_sim --config configs/my_gds.json --out output/my_gds
-# → output/my_gds/trap_snapshot.json, delivered_waveform.csv, validation.json, ...
-```
-
----
-
-## FAQ / Возможные проблемы
-
-**`infeasible_voltages` на 100 мкм 10 мкс при ±12В** — нормально: `SLSQP` не находит `V∈[−12,12]` для дальней точки с `ω=400кГц`. Решения: `lower/upper ±20В + dac_min/max ±20В + variable freq coeff [0.03,-0.015]` (см. 100µm probe: STA `n 0.0039` при ±20В) или увеличить `duration_s` (30µm 10мкс `n 0.025` → 15мкс `n 0.005`).
-
-**`slew_limit` / `hardware_saturation`** — уменьшить `max_jump_V` или сгладить `θ` (warp ближе к 0), или поднять `sample_rate_hz`.
-
-**`weak_confinement` / `rom_trust_region`** — провалилась `f_min` или минимум уехал `>20мкм` от номинала → увеличить `reg`, уменьшить `θ2..7`, проверить `rom_max_shift_m`.
-
-**`numerical_failure` / `no_minimum`** — затравка `minimum_seed_m` ниже поверхности `<0.01·L` или `least_squares` не сошёлся → поднять `z` затравки (70→200 мкм).
-
-**`calibration_demo: numerical_failure Incompatible dimensions`** — было: длины `commands 681` vs `measured 2721` (dense grid `subdiv 4`). Исправлено: `interp` + пропуск `std<1e-9` + running average.
-
-**GDS: `mapped electrode has no polygons`** — проверьте `layer/datatype` в `electrode_map`, `lib.unit` (gdspy unit → метры через `lib.unit/L`), полигоны должны быть CCW (код разворачивает если `area<0`).
-
-**LAMMPS-ошибка `identical uids`** (старый `sion.py`) — перезапустите kernel (IPython).
-
----
+<a id="cite"></a>
 
 ## Цитирование
 
-Если публикуете результаты, полученные с `SION`, пожалуйста, цитируйте:
+При публикации результатов, полученных с использованием `SION`, следует цитировать:
 
-1. *Surface trap with adjustable ion couplings for scalable and parallel gates*, Phys. Rev. A 109, 022605 (2024) — https://journals.aps.org/pra/abstract/10.1103/PhysRevA.109.022605
+> *Surface trap with adjustable ion couplings for scalable and parallel gates*,
+> Phys. Rev. A **109**, 022605 (2024) — https://journals.aps.org/pra/abstract/10.1103/PhysRevA.109.022605
 
-Лицензия: **GPL**
+Лицензия: **GPL-3.0-or-later**.
 
 ---
 
-*Симуляция — только симуляция: `calibration_state: unmeasured_simulation_assumptions`, `hardware_identifier: declared-simulation-chain-v1`, `experiment_ready: false` до подключения реальной установки. Всё, что заявлено как измеренное — объявлено как симуляция.*
+<sub>Результаты получены расчётом. Состояние калибровки `unmeasured_simulation_assumptions`,
+идентификатор аппаратной модели `declared-simulation-chain-v1`, признак `experiment_ready: false`
+сохраняются до подключения реальной установки.</sub>

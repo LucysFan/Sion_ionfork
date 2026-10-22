@@ -4,7 +4,7 @@ from Cython.Distutils import build_ext
 import numpy
 
 
-with open('readme.md') as readme_file:
+with open('README.md') as readme_file:
     readme = readme_file.read()
 
 
