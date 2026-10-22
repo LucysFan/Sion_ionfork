@@ -137,6 +137,25 @@ class Handler(SimpleHTTPRequestHandler):
             else:
                 self.wfile.write(b'{"status":"no pipeline yet"}')
             return
+        if self.path.startswith("/api/log"):
+            out_dir = self._resolve_out_dir()
+            self.send_response(200)
+            self.send_header("Content-Type","application/json")
+            self.send_header("Access-Control-Allow-Origin","*")
+            self.end_headers()
+            log_path = out_dir / "run.log"
+            tail=""
+            if log_path.exists():
+                try:
+                    txt=log_path.read_text(encoding="utf-8", errors="replace")
+                    lines=txt.splitlines()
+                    tail="\n".join(lines[-250:])
+                except Exception as e:
+                    tail=f"read error: {e}"
+            else:
+                tail="no run.log yet — GA initializing (GDS loading), check again in 5s; if persists 60s, check output folder permissions"
+            self.wfile.write(json.dumps({"log": tail, "log_path": str(log_path), "exists": log_path.exists()}).encode())
+            return
         if self.path.startswith("/api/jobs"):
             self.send_response(200)
             self.send_header("Content-Type","application/json")
@@ -157,22 +176,50 @@ class Handler(SimpleHTTPRequestHandler):
                         running_job=k
                         running_out=v.get("out")
                         running_start=v.get("started")
-                # derive progress from state.json of running job
+                # derive progress from state.json of running job — fallback to config if state not yet written
                 if running and running_out:
                     try:
                         p=pathlib.Path(running_out)/"state.json"
+                        cfg_p=pathlib.Path(running_out)/"config.json"
+                        tg_cfg=0
+                        if cfg_p.exists():
+                            try:
+                                cfg=json.loads(cfg_p.read_text())
+                                tg_cfg=int(cfg.get("ga",{}).get("generations",0) or cfg.get("total_generations",0) or 0)
+                            except:
+                                tg_cfg=0
+                        # also try unified_live fallback
+                        if not tg_cfg:
+                            try:
+                                uni=pathlib.Path("configs/unified_live.json")
+                                if uni.exists():
+                                    uu=json.loads(uni.read_text())
+                                    tg_cfg=int(uu.get("ga",{}).get("generations",0) or 0)
+                            except:
+                                pass
                         if p.exists():
                             st=json.loads(p.read_text())
                             gg=st.get("global_generation",0)
-                            tg=st.get("total_generations",0) or st.get("ga",{}).get("generations",0) or 0
+                            tg=st.get("total_generations",0) or st.get("ga",{}).get("generations",0) or tg_cfg or 12
                             elapsed=st.get("elapsed_s", time.time() - (running_start or time.time()))
                             perc = (gg/tg*100) if tg else 0
-                            progress={"global_generation":gg,"total_generations":tg,"percent":perc,"elapsed_s":elapsed,"best": (st.get("hall_of_fame",[{}])[0].get("fitness") if st.get("hall_of_fame") else None)}
+                            progress={"global_generation":gg,"total_generations":tg,"percent":perc,"elapsed_s":elapsed,"best": (st.get("hall_of_fame",[{}])[0].get("fitness") if st.get("hall_of_fame") else None), "status":"running"}
                         else:
-                            # no state yet, show 0
-                            progress={"global_generation":0,"total_generations":0,"percent":0,"elapsed_s": time.time() - (running_start or time.time()) if running_start else 0}
-                    except:
-                        progress={}
+                            # no state yet — GA initializing (GDS load, Runner prep). Show config total so bar is meaningful
+                            elapsed = time.time() - (running_start or time.time()) if running_start else 0
+                            # try history count as partial progress
+                            gg_hist=0
+                            try:
+                                hist_dir=pathlib.Path(running_out)/"history"
+                                if hist_dir.exists():
+                                    gg_hist=len(list(hist_dir.glob("gen_*.json")))
+                            except:
+                                gg_hist=0
+                            tg = tg_cfg or 12
+                            perc = (gg_hist/tg*100) if tg else 0
+                            progress={"global_generation":gg_hist,"total_generations":tg,"percent":perc,"elapsed_s": elapsed, "status":"initializing"}
+                    except Exception as e:
+                        progress={"global_generation":0,"total_generations":0,"percent":0,"elapsed_s": time.time() - (running_start or time.time()) if running_start else 0, "status":"initializing"}
             self.wfile.write(json.dumps({"jobs":jobs,"running":running,"running_job":running_job,"running_out":running_out,"progress":progress}).encode())
             return
         # serve static
@@ -352,11 +399,16 @@ class Handler(SimpleHTTPRequestHandler):
                     cfg["ga"]["generations"]=gens
                     cfg_path.write_text(json.dumps(cfg,indent=2))
                     cmd=[sys.executable,"-m","shuttle_sim.ga","--config",str(cfg_path),"--out",str(out_path),"--generations",str(gens)]
-                # launch detached
-                proc=subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                # launch detached — log to run.log so dashboard can show live tail even when state.json not yet written
+                log_path=out_path/"run.log"
+                try:
+                    log_f=open(log_path, "w", buffering=1, encoding="utf-8", errors="replace")
+                except:
+                    log_f=subprocess.PIPE
+                proc=subprocess.Popen(cmd, stdout=log_f if isinstance(log_f, int) is False and log_f!=subprocess.PIPE else subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
                 job_id=f"{mode}_{int(time.time())}"
                 with _JOBS_lock:
-                    _JOBS[job_id]={"proc":proc,"cmd":cmd,"started":time.time(),"out":str(out_path)}
+                    _JOBS[job_id]={"proc":proc,"cmd":cmd,"started":time.time(),"out":str(out_path), "log":str(log_path)}
                 _reply({"ok":True,"job_id":job_id,"cmd":cmd,"out":str(out_path),"mode":mode})
             except Exception as e:
                 _reply({"error":str(e)},500)

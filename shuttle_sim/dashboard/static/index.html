@@ -93,6 +93,7 @@ input[type=range]{accent-color:var(--accent)}
   <button class="btn" id="btnStopTraining" disabled style="background:var(--bad);color:#fff;border-color:var(--bad);opacity:0.6;min-width:90px">■ Стоп</button>
   <span class="kv" style="font-size:11px;color:var(--muted)">одновременно — только одно обучение, прерывание только стопом</span>
 </div>
+<div id="trainingLogWrap" style="padding:0 20px 10px 20px;display:none"><div class="mono" style="font-size:11px;color:var(--muted);margin-bottom:4px">лог текущего прогона (run.log) — показывается при инициализации и во время обучения</div><pre id="trainingLog" class="mono" style="max-height:160px;overflow:auto;background:var(--panel2);padding:8px;border-radius:8px;font-size:11px;white-space:pre-wrap;border:1px solid var(--border)"></pre></div>
 
 <div class="tabs">
   <button class="tab-btn active" data-tab="setup">Setup · GDS ⚙️</button>
@@ -1269,6 +1270,11 @@ function init(){
   // GDS file upload
   document.getElementById('inpGdsFile').onchange=async (e) => {
     let f=e.target.files[0]; if(!f) return;
+    if(f.name.toLowerCase().endsWith('.json')){
+      document.getElementById('gdsUploadStatus').textContent="⚠ это JSON-конфиг, а не GDS. Для shuttle_gds_ga_small просто оставь путь configs/generated_fivewire.gds и поставь поколений 2 — не грузи .json как GDS. Если хочешь загрузить готовый конфиг, используй «Сохранить/Загрузить unified_live.json»";
+      e.target.value="";
+      return;
+    }
     document.getElementById('gdsUploadStatus').textContent="загружаю "+f.name+"...";
     let buf=await f.arrayBuffer(); let bytes=new Uint8Array(buf); let binary=""; for(let i=0;i<bytes.length;i++) binary+=String.fromCharCode(bytes[i]); let b64=btoa(binary);
     let r=await fetch('/api/upload',{method:'POST',headers:{"Content-Type":"application/json"},body:JSON.stringify({filename:f.name,content_base64:b64})});
@@ -1323,17 +1329,21 @@ function init(){
     const progBar=document.getElementById('trainingProg');
     const progText=document.getElementById('trainingProgText');
     const elapsedEl=document.getElementById('trainingElapsed');
+    const logWrap=document.getElementById('trainingLogWrap');
     if(running){
       if(btnPipe) btnPipe.disabled=true;
       if(btnGA) btnGA.disabled=true;
       if(btnSave) btnSave.disabled=true;
       if(btnStop){ btnStop.disabled=false; btnStop.style.opacity="1"; }
-      if(statusText) statusText.textContent="Обучение идёт" + (progInfo.mode? " · "+progInfo.mode : (jobId? " · "+jobId : ""));
+      let isInit=progInfo.status==="initializing" || (progInfo.total_generations>0 && progInfo.global_generation===0 && (progInfo.percent||0)===0);
+      if(statusText) statusText.textContent=isInit ? ("Инициализация · "+(progInfo.mode||"GA")+" (загрузка GDS, подготовка Runner)…") : ("Обучение идёт" + (progInfo.mode? " · "+progInfo.mode : (jobId? " · "+jobId : "")));
       if(jobIdEl) jobIdEl.textContent= jobId? "("+jobId+")" : "";
       let pct=progInfo.percent||0;
-      if(progBar) progBar.style.width=pct.toFixed(1)+"%";
-      if(progText) progText.textContent=pct.toFixed(1)+"% ("+(progInfo.global_generation||0)+"/"+(progInfo.total_generations||"—")+")";
+      if(progBar) { progBar.style.width=Math.max(pct, isInit? 4 : 0).toFixed(1)+"%"; if(isInit) progBar.style.opacity="0.7"; else progBar.style.opacity="1"; }
+      let tot=progInfo.total_generations||"—";
+      if(progText) progText.textContent=isInit ? `0% (0/${tot}) · init` : pct.toFixed(1)+"% ("+(progInfo.global_generation||0)+"/"+tot+")";
       if(elapsedEl) elapsedEl.textContent= progInfo.elapsed_s!=null ? fmtSec(progInfo.elapsed_s) : "—";
+      if(logWrap) logWrap.style.display="block";
     } else {
       if(btnPipe) btnPipe.disabled=false;
       if(btnGA) btnGA.disabled=false;
@@ -1342,13 +1352,12 @@ function init(){
       if(statusText) statusText.textContent="Обучение не запущено";
       if(jobIdEl) jobIdEl.textContent="";
       if(elapsedEl) elapsedEl.textContent="—";
-      // keep progress at last value if we have state, else 0 — don't reset abruptly while polling catches up
+      if(logWrap) { /* keep visible 10s after finish to show final log, then hide */ setTimeout(()=>{ if(!trainingRunning) logWrap.style.display="none"; }, 8000); }
       if(!progInfo.percent){
-        // no progress info → show 0
         if(progBar && progBar.style.width==="") progBar.style.width="0%";
       } else {
         let pct=progInfo.percent||0;
-        if(progBar) progBar.style.width=pct.toFixed(1)+"%";
+        if(progBar) { progBar.style.width=pct.toFixed(1)+"%"; progBar.style.opacity="1"; }
         if(progText) progText.textContent=pct.toFixed(1)+"% ("+(progInfo.global_generation||0)+"/"+(progInfo.total_generations||"—")+")";
       }
     }
@@ -1368,6 +1377,16 @@ function init(){
       setTrainingUI(running, jobId, prog);
       let jl=document.getElementById('jobsList'); if(jl) jl.textContent=JSON.stringify(j,null,2);
       let jc=document.getElementById('jobsCard'); if(jc) jc.textContent=JSON.stringify(j,null,2);
+      // fetch log tail when training (especially during initializing when state.json missing)
+      if(running){
+        try{
+          let out=j.running_out||document.getElementById('inpOut').value||"output/live_run";
+          let lr=await fetch('/api/log?run='+encodeURIComponent(out)+'&ts='+Date.now(),{cache:"no-store"});
+          let lj=await lr.json();
+          let logEl=document.getElementById('trainingLog');
+          if(logEl) logEl.textContent = lj.log || "(лог пуст — процесс запускается)";
+        }catch(e){}
+      }
     }catch(e){}
   }
   document.getElementById('btnStopTraining').onclick=async()=>{
