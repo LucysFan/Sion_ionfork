@@ -52,6 +52,10 @@
 
 Пайплайн решает это **end-to-end**: от `trap.geometry` до `n_total` с учётом DAC → RC → задержка → 3D-гармоника → Гаусс.
 
+### Строгий аппаратный спецификация (2026-10-21)
+
+> **Ионная высота 90 мкм** (`minimum_seed_m [0,0,90e-6]`), **секулярная ≤1.2 МГц**, **RF 30 и 60 МГц** (четырех-стержень). Старый `shuttle_reference.json` с `199 мкм / 20 МГц` сохранён как legacy-пример, строгие прогоны — `configs/shuttle_90um_30MHz.json`, `shuttle_90um_60MHz.json`, `shuttle_90um_100um_strict_30MHz.json` (100 мкм требует `±20 В` или variable-ω). Сравнение `GA smooth 0.000162` vs `pipeline sta 0.0049` **несопоставимо** (разные baseline/бюджеты/суррогат) — честное сравнение только на **одинаковой метрике, одинаковых exact_nodes и одинаковом бюджете** (см. [Потери, метрики, агрегация](#потери-метрики-агрегация-иерархия-приоритетов) и `candidate_reranking.json`).
+
 ---
 
 ## Быстрый старт
@@ -281,7 +285,9 @@ commands_V (N×C, float)
 
 Проверки: `V∈[dac_min,dac_max]` иначе `hardware_saturation`, `max|ΔV|>max_jump_V` → `slew_limit`.
 
-**Distortion report** (`distortion.json`): `max_command_jump_V`, `lsb_V`, `max_deviation_V`, `rms_deviation_V`, `channel_max_deviation_V`, `delay_s`, `hold`, `filter`, `hardware_identifier`, `calibration_state`.
+**Тайминг/джиттер** (P4/B16): `trigger_latency_s` — общий статический сдвиг, `jitter_s` — **per-sample глобальный time-jitter** (`rng.uniform(-jitter, jitter, len(t))`, детерминирован по хешу команд для воспроизводимости), применяется как `y(t - delay - trig - time_jitter(t))` с интерполяцией. Старая `jitter_per_channel_s` переименована в `skew_per_channel_s` (per-channel статический skew) и хранится как `skew_draw`; `time_jitter_s` массив и `max_time_jitter_s` + `jitter_model` пишутся в `distortion.json` и `waveform_metadata.json`.
+
+**Distortion report** (`distortion.json`): `max_command_jump_V`, `lsb_V`, `max_deviation_V`, `rms_deviation_V`, `channel_max_deviation_V`, `delay_s`, `trigger_latency_s`, `jitter_s`, `skew_per_channel_s`, `time_jitter_s`, `max_time_jitter_s`, `jitter_model`, `hold`, `filter`, `hardware_identifier`, `calibration_state`.
 
 Идеальный прогон `ideal=True` — без квантования/фильтра, один стейт на команду (для сравнения `hardware_unaware`).
 
@@ -335,13 +341,16 @@ r  = r_nominal − H⁻¹·(g − q·E_stray)
 
 ## Потери, метрики, агрегация, иерархия приоритетов
 
-**Скалярные потери** (для оптимизации, но пишутся покомпонентно):
+**Скалярные потери** (для оптимизации, но пишутся покомпонентно, **P1/B1 единая метрика**):
 
 ```
 L = log1p(n/n0) + log1p((pos/tol)²) + log1p((well/tol)²) + 1e-4·||θ||²
     + hardware_штраф (f_min, distortion) + 0.2·observable_loss (см. ниже)
 robust: 0.35·mean + 0.65·max  по train-сценариям
+rerank: тот же L с config-весами rerank_weights {n:1,pos:1,well:1} (B1 — не 1e8·pos)
 ```
+
+**Честный бенчмарк** (B2/Б2): все кандидаты (`sta` ноль, `smooth` ноль, `unaware`, `aware` + кросс-baseline) оцениваются на **одинаковом** `exact_nodes` (161/321) и **одинаковых** `subdivisions`, одной нормализованной метрикой `log1p`. Флаг `optimization_improved_over_baseline` в `status.json` считается честно: `selected_score < best_zero_score - 1e-9 && selected.accepted` (P3 tie `1e-9` prefer `sta`). Сравнение `GA smooth 0.000162` vs `pipeline sta 0.0049` **невалидно**, если `GA` шёл на `smooth` baseline с другим бюджетом/ROM без `hardware.deliver`; честно — запустить оба на одном `trap`/`hardware`/`exact_nodes`/`budget` и сравнить `rerank_full`.
 
 **Канонические метрики** (`comparison.json`, `validation.json`):
 `n_total`, `n_modes`, `position_error_m`, `well_target_error_m`, `minimum_frequency_hz`, `distortion.max/rms`, `accepted`, `quality_failures`.

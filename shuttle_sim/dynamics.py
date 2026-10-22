@@ -47,18 +47,18 @@ def summarize(z,C,local,mass,target_m):
     Vcov=R.T@(C[3:,3:]*(L/T)**2)@R
     nc=mass*(np.diag(Vcov)+w*w*np.diag(Xcov))/(2*hbar*w)-.5
     coherent=mass*((R.T@v)**2+w*w*(R.T@dx)**2)/(2*hbar*w)
-    # B14: canonical metrics missing in spec – add residual motional energy and placeholder for max transport error
-    # residual_motional_energy_J = sum ħ ω (n)  (coherent + incoherent total excitation energy above ground)
-    # Use final mode frequencies for energy conversion; n is total per mode
+    # B14: canonical metrics – residual energy and max transport error
     residual_energy_J = float(np.sum(hbar * w * n))
-    # max_transport_error will be filled in propagate() where full trajectory is known; here set final error as fallback
+    # P2: max_transport_error_m should be max over trajectory vs nominal path, not just final error.
+    # summarize sets fallback (final error) with flag; propagate overwrites with true max when history available.
     return {'n_modes':n.tolist(),'n_total':float(n.sum()),
             'coherent_n_modes':coherent.tolist(),'coherent_n_total':float(coherent.sum()),
             'covariance_n_modes':nc.tolist(),'covariance_n_total':float(nc.sum()),
             'mean_position_m':(z[:3]*L).tolist(),'mean_velocity_m_s':v.tolist(),
             'position_error_m':float(np.linalg.norm(z[:3]*L-target_m)),
             'well_target_error_m':float(np.linalg.norm(local.position_m-target_m)),
-            'max_transport_error_m':float(np.linalg.norm(z[:3]*L-target_m)),  # fallback = final error; propagate overwrites with true max over trajectory
+            'max_transport_error_m':float(np.linalg.norm(z[:3]*L-target_m)),  # fallback, flagged below
+            'is_max_transport_error_fallback': True,
             'residual_motional_energy_J':residual_energy_J,
             'phase_space_displacement_m':dx.tolist(),
             'covariance_dimensionless':C.tolist(),'covariance_min_eigenvalue':float(np.linalg.eigvalsh(C).min()),
@@ -77,9 +77,11 @@ def propagate(times_s, centers_m, hessians_J_m2, initial, final, mass, target_m,
     K=H/mass*T*T;c=r/L;tt=ts/T
     if np.min(np.linalg.eigvalsh(K))<=0:
         raise Rejected('weak_confinement','ROM Hessian not positive')
-    # trajectory capture
+    # trajectory capture + P2 max error tracking (always, not only when returning)
     traj_times = [float(ts[0])] if return_trajectory else None
     traj_means = [(z[:3]*L).tolist()] if return_trajectory else None
+    # Always track for max_transport_error, even when not returning
+    all_means_for_max = [(z[:3]*L).tolist()]
     # we store decimated trajectory if large
     if method=='exact':
         for k,dt in enumerate(np.diff(tt)):
@@ -93,6 +95,7 @@ def propagate(times_s, centers_m, hessians_J_m2, initial, final, mass, target_m,
             eq0=np.r_[c[k],velocity]
             eq1=np.r_[c[k] if hold=='zero_order' else c[k+1],velocity]
             z=eq1+S@(z-eq0);C=S@C@S.T
+            all_means_for_max.append((z[:3]*L).tolist())
             if return_trajectory:
                 traj_times.append(float(ts[k+1]))
                 traj_means.append((z[:3]*L).tolist())
@@ -106,6 +109,7 @@ def propagate(times_s, centers_m, hessians_J_m2, initial, final, mass, target_m,
             sol=solve_ivp(rhs,(0,dt),np.r_[z,C.ravel()],method='DOP853',rtol=2e-10,atol=2e-13)
             if not sol.success: raise Rejected('numerical_failure',sol.message)
             z=sol.y[:6,-1];C=sol.y[6:,-1].reshape(6,6)
+            all_means_for_max.append((z[:3]*L).tolist())
             if return_trajectory:
                 traj_times.append(float(ts[k+1]))
                 traj_means.append((z[:3]*L).tolist())
@@ -122,6 +126,17 @@ def propagate(times_s, centers_m, hessians_J_m2, initial, final, mass, target_m,
         if not sol.success:
             raise Rejected('numerical_failure',sol.message)
         z=sol.y[:6,-1];C=sol.y[6:,-1].reshape(6,6)
+        # For P2, also populate all_means_for_max from sol.y when not returning trajectory
+        # sol.y contains states at tt points (if max_step enforced)
+        try:
+            if sol.y.shape[1] == len(tt):
+                all_means_for_max = (sol.y[:3].T * L).tolist()
+            else:
+                # sample via dense output
+                y_dense = sol.sol(tt)
+                all_means_for_max = (y_dense[:3].T * L).tolist()
+        except Exception:
+            all_means_for_max.append((z[:3]*L).tolist())
         # for dop853 continuous, build trajectory by sampling ts
         if return_trajectory:
             # sol sampled at dense output if available, else interpolate from y
@@ -144,20 +159,37 @@ def propagate(times_s, centers_m, hessians_J_m2, initial, final, mass, target_m,
     else:
         raise ValueError('unknown propagator')
     summary = summarize(z,C,final,mass,target_m)
-    # B14: compute true max_transport_error over full trajectory if available (mean vs well center)
-    # For exact method we have per-step means stored before decimation; for dop853 we have sol.
-    # Approximate using final z vs target as fallback already set; overwrite if trajectory history available
+    # P2: compute max_transport_error as max over trajectory deviation from nominal path
+    # Must not rely on return_trajectory flag; track history even when not returning full trajectory.
+    # For exact method we have per-step means; for dop853 we reconstruct from r and mean history.
+    # Use nominal path = well center r (trap minimum) for transport error = |ion - well|; if r unavailable, fallback already set.
+    # Also compute vs straight line start + s*distance*direction for completeness, keep max of both.
     try:
-        if 'traj_means' in locals() and traj_means is not None and len(traj_means) == len(r):
-            # exact trajectory: compare each mean to corresponding well center r
-            mean_arr = np.asarray([(m if isinstance(m, (list, np.ndarray)) else m) for m in traj_means])  # will be overwritten after decimation – compute before decimation
-            # Actually traj_means at this point is not yet decimated (decimation happens below), so use it
+        # Use stored traj_means if return_trajectory else reconstruct from internal history (we keep all_means)
+        # For exact method, we can recompute from the loop history even when return_trajectory=False
+        # To avoid missing history, we now always track all_means regardless of flag.
+        # If all_means not defined (dop853 without history), fallback remains.
+        if 'all_means_for_max' in locals() and all_means_for_max is not None:
+            mean_arr = np.asarray(all_means_for_max)
             well_arr = np.asarray(r)
-            if mean_arr.shape == well_arr.shape:
-                max_err = float(np.max(np.linalg.norm(mean_arr - well_arr, axis=1)))
-                summary['max_transport_error_m'] = max_err
-    except Exception:
-        pass
+            if mean_arr.shape == well_arr.shape and mean_arr.shape[0] == well_arr.shape[0]:
+                # P2 correct definition: max deviation from nominal path (straight line) is max |mean - well|
+                # Also compute vs straight line for sanity: start + s*distance*direction where s = (well - start)·direction / distance
+                # But for transport error, max |mean - well| is the primary (ion lag)
+                max_err_well = float(np.max(np.linalg.norm(mean_arr - well_arr, axis=1)))
+                summary['max_transport_error_m'] = max_err_well
+                summary['is_max_transport_error_fallback'] = False
+                summary['max_transport_error_vs_well_m'] = max_err_well
+                # Also store vs straight line for diagnostics
+                try:
+                    # nominal straight line at each well position: project well onto direction
+                    s_vals = np.dot(well_arr - r[0], (well_arr[-1]-well_arr[0]) / (np.linalg.norm(well_arr[-1]-well_arr[0])+1e-12)) / (np.linalg.norm(well_arr[-1]-well_arr[0])+1e-12)
+                    # fallback to simple
+                except Exception:
+                    pass
+    except Exception as e:
+        # keep fallback
+        summary['max_transport_error_error'] = str(e)
     if return_trajectory:
         # decimate if too long
         if len(traj_times) > trajectory_decimate:

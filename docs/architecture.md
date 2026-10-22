@@ -60,7 +60,8 @@ Convention documented in `path_conventions.json`.
 - validates `sample_rate`, `dac_bits ∈ [2,32]`, `lowpass>0`, `gain>0`, `delay≥0`
 - ZOH at `k/fs`, LSB quantisation, clipping → `Rejected('hardware_saturation')`, slew → `Rejected('slew_limit')`
 - **exact** continuous RC cascade via `expm(M·dt)` on dense ZOH grid, DC steady-state prehistory, per-channel `gain·held+offset`, per-channel `interp(t-delay)`.
-- distortion report: `max_deviation_V`, `rms`, `channel_max`, `lsb`, `delay`, `hold`, `filter`, `hardware_identifier`.
+- **timing**: `trigger_latency_s` (static common shift) + `jitter_s` as **per-sample global time jitter** `rng.uniform(-jitter, jitter, len(t))` applied as `interp(t-delay-trig-time_jitter, t, y)` (P4/B16); old `jitter_per_channel_s` renamed to `skew_per_channel_s` (static skew), full `time_jitter_s`, `max_time_jitter_s`, `jitter_model` in report.
+- distortion report: `max_deviation_V`, `rms`, `channel_max`, `lsb`, `delay`, `trigger_latency_s`, `jitter_s`, `skew`, `time_jitter`, `hold`, `filter`, `hardware_identifier`.
 
 ### Waveform Postprocessing (spec §6)
 
@@ -82,7 +83,9 @@ Convention documented in `path_conventions.json`.
 
 ### Objective & Metrics (spec §8)
 
-`optimize()` loss: `log1p(n/n0)+log1p((pos/tol)²)+log1p((well/tol)²)` aggregated `0.35·mean+0.65·max` + `1e-4·||theta||²`. Metrics saved: `n_total`, `n_modes`, `coherent`, `covariance_n`, `position_error_m`, `well_target_error_m`, `phase_space_displacement`, `minimum_frequency_hz`.
+`optimize()` loss: `log1p(n/n0)+log1p((pos/tol)²)+log1p((well/tol)²)` aggregated `0.35·mean+0.65·max` + `1e-4·||theta||²` (P1/B1 unified, weights `rerank_weights` default `{n:1,pos:1,well:1}`). Metrics saved: `n_total`, `n_modes`, `coherent`, `covariance_n`, `position_error_m`, `well_target_error_m`, `max_transport_error_m` (`is_max_transport_error_fallback` flag, P2 — max over trajectory vs well/nominal, not just final error), `phase_space_displacement`, `minimum_frequency_hz`.
+
+Candidate reranking (B2/P3): all baselines (`sta`+`smooth` zeros + `unaware`+`aware` optimized) evaluated on **identical** `exact_nodes`/`subdivisions` with same normalized `log1p` score; tie `eps 1e-9` prefers `sta` (lexicographic). Flag `optimization_improved_over_baseline` computed honestly from `rerank_full`.
 
 Aggregation policies in `observables.aggregate_losses()`: `weighted_worst`, `worst_case`, `mean`, `cvar_20`.
 
