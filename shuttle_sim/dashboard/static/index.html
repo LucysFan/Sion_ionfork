@@ -22,6 +22,8 @@ header h1{font-size:15px;margin:0;font-weight:800;letter-spacing:.02em}
 .card h3{margin:0 0 10px 0;font-size:13px;letter-spacing:.02em;color:var(--text);display:flex;justify-content:space-between;align-items:center}
 .card h3 small{color:var(--muted);font-weight:500;font-size:11px}
 canvas{width:100%;height:220px;display:block;background:var(--panel2);border-radius:10px}
+canvas.trap-main{height:360px;background:#0f1930}
+canvas.trap-side{height:200px;background:#121c2e}
 .pareto{height:260px}
 .table{width:100%;border-collapse:collapse;font-size:12px}
 .table th{color:var(--muted);font-weight:600;text-align:left;padding:6px 6px;border-bottom:1px solid var(--border)}
@@ -41,10 +43,17 @@ canvas{width:100%;height:220px;display:block;background:var(--panel2);border-rad
 .progress i{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));width:0%}
 .notice{padding:12px;border-radius:10px;background:#1a2338;border:1px dashed #2a3a5c;color:var(--muted);font-size:12px}
 .footer{padding:16px 20px;color:var(--muted);font-size:11px}
-.controls{display:flex;gap:8px;align-items:center}
+.controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .btn{font-size:12px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text);cursor:pointer}
 .btn:hover{filter:brightness(1.1)}
+.btn.active{background:var(--accent);color:#0b1220;border-color:var(--accent);font-weight:700}
 .status-dot{width:10px;height:10px;border-radius:50%;display:inline-block}
+.tabs{display:flex;gap:8px;padding:10px 20px 0 20px;border-bottom:1px solid var(--border)}
+.tab-btn{padding:8px 14px;border-radius:10px 10px 0 0;border:1px solid var(--border);border-bottom:none;background:var(--panel);color:var(--muted);cursor:pointer;font-size:12px;font-weight:600}
+.tab-btn.active{background:var(--panel2);color:var(--text);border-color:var(--accent)}
+.tab-pane{display:none}
+.tab-pane.active{display:block}
+input[type=range]{accent-color:var(--accent)}
 </style>
 </head>
 <body>
@@ -74,6 +83,13 @@ canvas{width:100%;height:220px;display:block;background:var(--panel2);border-rad
   </div>
 </div>
 
+<div class="tabs">
+  <button class="tab-btn active" data-tab="overview">Overview</button>
+  <button class="tab-btn" data-tab="trap">Trap · Animation <span style="font-weight:400;font-size:11px;opacity:0.7">3 % per island</span></button>
+</div>
+
+<!-- Overview tab -->
+<div id="pane-overview" class="tab-pane active">
 <div class="grid">
   <div class="card">
     <h3>Fitness vs generation <small>best per island · global best (bold) · lower is better</small></h3>
@@ -125,24 +141,67 @@ canvas{width:100%;height:220px;display:block;background:var(--panel2);border-rad
     <div id="migrLog" class="mono" style="margin-top:10px;color:var(--muted)"></div>
   </div>
 </div>
-
 <div class="card" style="margin:16px 20px">
   <h3>Raw state <small id="stateTime"></small></h3>
   <pre id="raw" class="mono" style="max-height:240px;overflow:auto;background:var(--panel2);padding:12px;border-radius:8px"></pre>
 </div>
-<div class="footer">GA writes <code>state.json</code> atomically — this dashboard polls <code>/api/state</code> every 2s (separate process, zero slowdown). Migration and per-island history are in <code>history/gen_*.json</code>. Use <code>python -m shuttle_sim.ga --config configs/shuttle_ga_island.json --out output/ga_test --dashboard</code>.</div>
+</div> <!-- end overview pane -->
+
+<!-- Trap animation tab -->
+<div id="pane-trap" class="tab-pane">
+  <div style="padding:16px 20px;display:flex;gap:16px;flex-wrap:wrap;align-items:center">
+    <div class="badge" id="trapBadge">Trap —</div>
+    <div class="badge" id="trapCandidatesBadge">candidates —</div>
+    <div class="kv">shuttle <b id="trapDistance">—</b> · height <b id="trapHeight">90 µm</b> · RF <b id="trapRF">30 MHz</b></div>
+  </div>
+
+  <div style="padding:0 20px 16px 20px;display:grid;grid-template-columns:1fr;gap:16px">
+    <div class="card">
+      <h3>Trap top view + shuttling animation <small>electrodes (RF gold, DC blue, central grey) · ion path along x · <span style="color:var(--accent)">non-blocking: GA writes state.json atomically, dashboard polls 500ms, trajectory cheap decimated cache</span></small></h3>
+      <canvas id="cTrapTop" width="1200" height="360" class="trap-main"></canvas>
+      <div class="legend" id="trapTopLegend" style="flex-wrap:wrap"></div>
+      <div style="display:flex;gap:12px;margin-top:10px;flex-wrap:wrap;align-items:center">
+        <button class="btn" id="btnTrapPlay">▶ play</button>
+        <button class="btn" id="btnTrapStop">■ stop</button>
+        <label class="kv">speed <select id="selTrapSpeed" class="btn" style="padding:2px 6px"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label>
+        <label class="kv" style="flex:1;min-width:180px">time <input type="range" id="sliderTrapTime" min="0" max="1000" value="0" style="width:100%"></label>
+        <span class="kv mono" id="trapTimeLabel">t=— µs x=— µm</span>
+        <label class="kv"><input type="checkbox" id="chkTrapWell" checked> well trail</label>
+        <label class="kv"><input type="checkbox" id="chkTrapIon" checked> ion trail</label>
+        <label class="kv"><input type="checkbox" id="chkTrapSide" checked> side view</label>
+        <label class="kv">view <select id="selTrapView" class="btn" style="padding:2px 6px"><option value="shuttle" selected>shuttle corridor (±350 µm)</option><option value="full">full trap (±10 mm)</option><option value="zoom">ultra zoom (±90 µm)</option></select></label>
+      </div>
+      <div class="controls" id="trapIslandFilters" style="margin-top:8px"></div>
+      <div id="trapNotice" class="notice" style="margin-top:10px;display:none"></div>
+    </div>
+    <div class="card" id="cardTrapSide" style="">
+      <h3>Side view — height over surface <small>x (shuttle) vs z (height, µm) · ion 90 µm over chip · RF pseudopotential minimum</small></h3>
+      <canvas id="cTrapSide" width="1200" height="200" class="trap-side"></canvas>
+      <div class="legend" id="trapSideLegend"></div>
+    </div>
+    <div class="card">
+      <h3>Candidates — per-island top 3 % (decimated cheap ROM) <small>each island ceil(pop*0.03) at least 1, cached by theta hash, recomputed every 2 gens · click to isolate</small></h3>
+      <div id="trapCandidateList" class="mono" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px"></div>
+      <div class="notice" style="margin-top:10px">Dashboard design: GA writes <code>state.json.tmp → state.json</code> atomically; HTTP server polls file every <b>500 ms</b> in separate process (no GIL block). Trajectory for hall best is <code>exact_nodes=200</code> every 2 gens; per-island 3 % is <code>exact_nodes=None ROM decimate 80</code> cached → ≤~8 ms per candidate, interval 2 gens. Animation runs at 60 fps via <code>requestAnimationFrame</code> on frontend, interpolating decimated points. No extra load on training loop.</div>
+    </div>
+    <div class="card">
+      <h3>Trap snapshot (from Runner) <small id="trapTimeState"></small></h3>
+      <pre id="trapRaw" class="mono" style="max-height:200px;overflow:auto;background:var(--panel2);padding:12px;border-radius:8px"></pre>
+    </div>
+  </div>
+</div>
+
+<div class="footer">GA writes <code>state.json</code> atomically — this dashboard polls <code>/api/state</code> every 0.5–1.5s (separate process, zero slowdown). Migration and per-island history are in <code>history/gen_*.json</code>. New trap tab animates per-island 3 % best cheap trajectories without blocking evolution (decimated 80, cached). Use <code>python -m shuttle_sim.ga --config configs/shuttle_ga_isolated.json --out output/ga_test --dashboard</code>.</div>
 
 <script>
-const ISLANDS = ["S","A","V","R","H"]
-const COLORS = {S:"#5ac8ff", A:"#ffbe55", V:"#7af0a0", R:"#c58aff", H:"#ff7a7a", smooth:"#5ac8ff", sta:"#ffbe55", variable:"#7af0a0", robust:"#c58aff", hardware:"#ff7a7a"}
-const NAMES = {S:"S smooth", A:"A STA", V:"V variable", R:"R robust", H:"H hardware"}
-
-let lastState=null, pollTimer=null
-let sparkHist = []
-
+const ISLANDS = ["S","A","V","R","H","Q1","Q2","F"]
+const COLORS = {S:"#5ac8ff", A:"#ffbe55", V:"#7af0a0", R:"#c58aff", H:"#ff7a7a", Q1:"#ff6b9e", Q2:"#5affda", F:"#ffd05a", smooth:"#5ac8ff", sta:"#ffbe55", variable:"#7af0a0", robust:"#c58aff", hardware:"#ff7a7a", free:"#ffd05a"}
+const NAMES = {S:"S smooth", A:"A STA", V:"V variable", R:"R robust", H:"H hardware", Q1:"Q1 quarantine", Q2:"Q2 quarantine", F:"F free 12-dim"}
+let lastState=null
+let trapAnim={playing:false, raf:null, progress:0, speed:1, lastTs:0, islandVisibility:{}}
 function fmtSec(s){ if(s==null) return "—"; if(s<60) return s.toFixed(1)+"s"; const m=Math.floor(s/60), sec=(s%60).toFixed(0); return m+"m "+sec+"s"}
 function fmtFit(v){ if(v==null) return "—"; if(v>=1e4) return v.toExponential(2); return v.toFixed(3)}
-function islandColor(id){ return COLORS[id]||"#8aa0c8"}
+function islandColor(id){ return COLORS[id]||COLORS[String(id)[0].toUpperCase()]||"#8aa0c8"}
 
 function drawAxes(ctx,w,h,opts){
   ctx.clearRect(0,0,w,h)
@@ -153,85 +212,57 @@ function drawAxes(ctx,w,h,opts){
   if(opts.xlabel){ ctx.fillStyle="#8aa0c8"; ctx.font="10px sans-serif"; ctx.fillText(opts.xlabel, 42, h-6)}
   if(opts.ylabel){ ctx.save(); ctx.translate(12, h/2); ctx.rotate(-Math.PI/2); ctx.fillStyle="#8aa0c8"; ctx.font="10px sans-serif"; ctx.fillText(opts.ylabel, -30, 0); ctx.restore()}
 }
-
 function drawFitness(state){
   const c=document.getElementById('cFitness'), ctx=c.getContext('2d'), W=c.width, H=c.height
   drawAxes(ctx,W,H,{xlabel:"generation", ylabel:"log fitness"})
-  if(!state||!state.islands[0]||!state.islands[0].history && !state.islands.some(i=>i.history)) {
-    // fallback: build from history files? use island history arrays if available via gen histories
-  }
-  // build per-island series from hall/history: we stored history in state as flat or nested.
-  // Engine stores per-island history inside state.migration? Actually state has islands snapshot + hall + per-island history embedded in checkpoint? Our state includes islands with last history point only?
-  // We will read from global generation loop: state has islands[].history? No, state currently has islands snapshots plus history files are separate.
-  // For this dashboard we reconstruct from history files if needed, but we have island.history in state via checkpoint-like? Let's use state.islands[].history via island table? Actually engine's state includes islands snapshots (last point) and hall; for line chart we need history.
-  // So we collect histories via fetching /api/history + combining, but for speed we use state.history if present, else synthesize from island snapshot histories passed as state.islands[i].generation series.
-  // Let's use state.islands[].generation trajectories stored in state as `history` files: we will fetch history JSONs batch.
-  // Quick path: if state has `islands` with `history` arrays (from checkpoint), draw them; otherwise show hall fitness over time approximated.
-  let series={}
-  // Try to use state.migration_history for markers, and per-island best arrays if available via `state.hall`? fallback to hall-only
-  // First, attempt to find full histories inside state (engine writes `gen_hist`? let's check actual state keys)
-  // Inspect lastState keys
-  let hasFull=false
-  if(state && state.islands){
-    // check if any island has `history` field with array
-    // In engine's state we stored islands as snapshots only, but also global `history` we can build from `history/gen_*.json` files separately.
-    // Instead we will maintain client-side sparkHist by appending each poll's bests.
-  }
-  // Use sparkHist accumulator: push per-island best/m diversity each poll
-  // This keeps chart live without needing server to serve full history.
-  if(!window.__fitSeries) window.__fitSeries = {S:[],A:[],V:[],R:[],H:[], global:[]}
+  if(!window.__fitSeries) window.__fitSeries = {S:[],A:[],V:[],R:[],H:[],Q1:[],Q2:[],F:[], global:[]}
   if(state){
     for(let isl of state.islands){
       let strat = isl.strategy || isl.id
-      // strat may be 'S' or 'smooth' etc. normalize to single letter
-      let key = String(strat)[0].toUpperCase(); if(!"SAVRH".includes(key)) key=isl.strategy?.[0]||"S"
+      let key = String(strat)[0].toUpperCase(); if(!"SAVRH".includes(key) && !"QF".includes(key)) key=String(strat)
+      // normalize Q1/Q2/F
+      if(["Q1","Q2","F"].includes(String(strat))) key=String(strat)
+      else if(!window.__fitSeries[key]) key="S"
       if(isl.best_fitness!=null) window.__fitSeries[key].push({x: state.global_generation, y: isl.best_fitness})
     }
     if(state.hall_of_fame && state.hall_of_fame[0]) window.__fitSeries.global.push({x: state.global_generation, y: state.hall_of_fame[0].fitness})
   }
   let ser = window.__fitSeries
-  // compute y bounds log scale
   let allY=[]
   for(let k of Object.keys(ser)) for(let p of ser[k]) if(p.y<1e6) allY.push(p.y)
   if(allY.length===0){ ctx.fillStyle="#8aa0c8"; ctx.font="12px sans-serif"; ctx.fillText("waiting for first generation…", W/2-80,H/2); return}
   let minY=Math.min(...allY), maxY=Math.max(...allY)
-  // log stretch
   let logMin=Math.log10(Math.max(1e-3,minY+0.1)), logMax=Math.log10(Math.max(maxY+0.2, minY+1))
   if(logMax-logMin<0.5){ logMax=logMin+0.5}
   let maxX=Math.max(5, state? state.total_generations||20 :20, ...Object.values(ser).flatMap(a=>a.map(p=>p.x)))
   function xTo(px, W){ return 40 + (px/maxX)*(W-50)}
   function yTo(v, H){ let lv=Math.log10(Math.max(1e-3,v+0.1)); let t=(lv-logMin)/(logMax-logMin); return H-20 - t*(H-40) }
-  // draw lines
-  for(let k of ["S","A","V","R","H"]){
+  for(let k of ["S","A","V","R","H","Q1","Q2","F"]){
     let pts=ser[k]; if(!pts||pts.length<2) continue
-    ctx.strokeStyle=islandColor(k); ctx.lineWidth=k==="global"?1.6:1.4; ctx.beginPath()
+    ctx.strokeStyle=islandColor(k); ctx.lineWidth=1.4; ctx.beginPath()
     pts.forEach((p,i)=>{ let x=xTo(p.x,W), y=yTo(p.y,H); if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y)})
     ctx.stroke()
-    // dots
     ctx.fillStyle=islandColor(k)
     pts.forEach(p=>{ let x=xTo(p.x,W), y=yTo(p.y,H); ctx.beginPath();ctx.arc(x,y,2,0,Math.PI*2);ctx.fill()})
   }
-  // global bold
   if(ser.global.length>1){
     ctx.strokeStyle="#ffffff"; ctx.lineWidth=2; ctx.setLineDash([]); ctx.beginPath()
     ser.global.forEach((p,i)=>{ let x=xTo(p.x,W), y=yTo(p.y,H); if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y)}); ctx.stroke()
   }
-  // y labels
   ctx.fillStyle="#8aa0c8"; ctx.font="10px monospace"
   for(let i=0;i<=3;i++){ let t=i/3, lv=logMin + t*(logMax-logMin), v=Math.pow(10,lv)-0.1; let y=H-20 - t*(H-40); if(v>0) ctx.fillText(fmtFit(Math.max(0,v)), W-42, y+3)}
   ctx.fillText("0", 6, H-16)
-  // legend
   let leg=document.getElementById('fitnessLegend')
-  leg.innerHTML=["S","A","V","R","H"].map(k=>`<span style="display:inline-flex;align-items:center;gap:6px;margin-right:10px"><i style="width:12px;height:3px;background:${islandColor(k)};display:inline-block;border-radius:99px"></i>${NAMES[k]||k}</span>`).join('')+`<span style="margin-left:8px"><i style="width:12px;height:3px;background:#fff;display:inline-block"></i> global best</span>`
+  leg.innerHTML=["S","A","V","R","H","Q1","Q2","F"].filter(k=>ser[k]&&ser[k].length).map(k=>`<span style="display:inline-flex;align-items:center;gap:6px;margin-right:10px"><i style="width:12px;height:3px;background:${islandColor(k)};display:inline-block;border-radius:99px"></i>${NAMES[k]||k}</span>`).join('')+`<span style="margin-left:8px"><i style="width:12px;height:3px;background:#fff;display:inline-block"></i> global best</span>`
 }
-
 function drawDivers(state){
   const c=document.getElementById('cDivers'), ctx=c.getContext('2d'), W=c.width,H=c.height
   drawAxes(ctx,W,H,{xlabel:"generation", ylabel:"diversity"})
-  if(!window.__divSeries) window.__divSeries={S:[],A:[],V:[],R:[],H:[]}
+  if(!window.__divSeries) window.__divSeries={S:[],A:[],V:[],R:[],H:[],Q1:[],Q2:[],F:[]}
   if(state){
     for(let isl of state.islands){
-      let key=String(isl.strategy||isl.id)[0].toUpperCase(); if(!"SAVRH".includes(key)) key="S"
+      let key=String(isl.strategy||isl.id)
+      if(["Q1","Q2","F"].includes(key)){} else { key=key[0].toUpperCase(); if(!"SAVRH".includes(key)) key="S" }
       if(isl.diversity!=null) window.__divSeries[key].push({x:state.global_generation, y:isl.diversity})
     }
   }
@@ -241,7 +272,7 @@ function drawDivers(state){
   let maxX=Math.max(5, state? state.total_generations||20:20, ...Object.values(ser).flatMap(a=>a.map(p=>p.x)))
   function xTo(px,W){ return 40+(px/maxX)*(W-50)}
   function yTo(v,H){ let t=(v-minY)/(maxY-minY); return H-20 - t*(H-40)}
-  for(let k of ["S","A","V","R","H"]){
+  for(let k of ["S","A","V","R","H","Q1","Q2","F"]){
     let pts=ser[k]; if(!pts||pts.length<2) continue
     ctx.strokeStyle=islandColor(k); ctx.lineWidth=1.3; ctx.beginPath()
     pts.forEach((p,i)=>{ let x=xTo(p.x,W), y=yTo(p.y,H); if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y)}); ctx.stroke()
@@ -249,22 +280,16 @@ function drawDivers(state){
   ctx.fillStyle="#8aa0c8"; ctx.font="10px monospace"
   ctx.fillText(maxY.toFixed(2), W-36, 14); ctx.fillText("0", W-36, H-12)
 }
-
 function drawHist(state){
   const c=document.getElementById('cHist'), ctx=c.getContext('2d'), W=c.width,H=c.height
   drawAxes(ctx,W,H,{xlabel:"fitness", ylabel:"count"})
   if(!state||!state.hall_of_fame){ ctx.fillStyle="#8aa0c8"; ctx.fillText("waiting…",W/2-20,H/2); return}
-  // For histogram we really want population fitness distribution. We have only hall and island bests; synthesize from hall + islands snapshots
-  // Compute bins from all current island populations if available via state.islands snapshots? Only best/mean/worst stored snapshot.
-  // So we fake histogram from hall (top 10) + islands bests to still show shape. For true hist we would need full pops, but this is visual.
   let vals=[]
   if(state.islands){
     for(let isl of state.islands){
-      // approximate population spread: best, mean, worst snapshot => expand
       if(isl.best_fitness!=null) vals.push(isl.best_fitness)
       if(isl.mean_fitness!=null) vals.push(isl.mean_fitness)
       if(isl.best_fitness!=null && isl.mean_fitness!=null){
-        // add synthetic spread
         vals.push((isl.best_fitness+isl.mean_fitness)/2)
         if(vals.length<30) vals.push(isl.best_fitness*1.2)
       }
@@ -279,12 +304,10 @@ function drawHist(state){
   let counts=new Array(bins).fill(0)
   for(let v of vals){ let idx=Math.min(bins-1, Math.floor((v-minV)/bw)); counts[idx]++}
   let maxC=Math.max(...counts)
-  // draw bars
   let left=40, right=W-10, top=14, bot=H-20
   let bwPx=(right-left)/bins -4
   for(let i=0;i<bins;i++){
     let hgt=(counts[i]/maxC)*(bot-top-10); let x=left+i*(right-left)/bins+2, y=bot-hgt
-    // gradient
     let grd=ctx.createLinearGradient(x,y,x,y+hgt); grd.addColorStop(0,"#5ac8ff"); grd.addColorStop(1,"#2450ff")
     ctx.fillStyle=grd; ctx.fillRect(x,y,bwPx,hgt)
     ctx.fillStyle="#8aa0c8"; ctx.font="8px monospace"
@@ -293,7 +316,6 @@ function drawHist(state){
   }
   document.getElementById('histStats').textContent = `n=${vals.length} min ${fmtFit(minV)} mean ${fmtFit(vals.reduce((a,b)=>a+b,0)/vals.length)} max ${fmtFit(maxV)} maxC ${maxC}`
 }
-
 function drawHall(state){
   const bars=document.getElementById('hallBars'), table=document.getElementById('hallTable')
   if(!state||!state.hall_of_fame){ bars.innerHTML=""; table.innerHTML=""; return}
@@ -302,7 +324,7 @@ function drawHall(state){
   bars.innerHTML=""
   for(let i=0;i<Math.min(10,hall.length);i++){
     let h=hall[i]; let col=islandColor(String(h.island).toUpperCase()[0])
-    let norm=1 - (h.fitness-minF)/range // lower better => taller
+    let norm=1 - (h.fitness-minF)/range
     let hg=12 + norm*88
     let d=document.createElement('div')
     d.title=`#${i} island ${h.island} f=${h.fitness.toFixed(3)} n=${h.n_total?.toExponential?.(2)||"—"}`
@@ -312,22 +334,18 @@ function drawHall(state){
     d.style.flex="1"
     bars.appendChild(d)
   }
-  // table
   let html=`<tr><th>#</th><th>isl</th><th>fitness</th><th>n_total</th><th>pos µm</th><th>fmin MHz</th><th>dist V</th><th>θ</th></tr>`
   for(let i=0;i<Math.min(10,hall.length);i++){
     let h=hall[i]
-    let pos=h.pos_err!=null? (h.pos_err*1e6).toFixed(2): (h.n_total!=null?"—":"—")
-    // hall stores metrics differently: try pos_err vs position_error_m
-    let posUm = h.pos_err!=null? h.pos_err*1e6 : (h.metrics?.position_error_m? h.metrics.position_error_m*1e6 : null)
-    let ntot = h.n_total ?? h.metrics?.n_total ?? null
-    let fmin = h.fmin!=null? h.fmin/1e6 : (h.metrics?.minimum_frequency_hz? h.metrics.minimum_frequency_hz/1e6 : null)
-    let dist = h.distortion!=null? h.distortion : (h.metrics?.distortion?.max_deviation_V ?? null)
+    let posUm = h.pos_err!=null? h.pos_err*1e6 : null
+    let ntot = h.n_total ?? null
+    let fmin = h.fmin!=null? h.fmin/1e6 : null
+    let dist = h.distortion!=null? h.distortion : null
     let th = h.theta? ("["+h.theta.slice(0,4).map(v=>v.toFixed(2)).join(", ")+"]") : "—"
     html+=`<tr><td>${i}</td><td><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${islandColor(String(h.island)[0].toUpperCase())}"></span> ${h.island}</td><td>${fmtFit(h.fitness)}</td><td class="mono">${ntot!=null?ntot.toExponential(2):"—"}</td><td class="mono">${posUm!=null?posUm.toFixed(2):"—"}</td><td class="mono">${fmin!=null? fmin.toFixed(2):"—"}</td><td class="mono">${dist!=null? dist.toFixed(3):"—"}</td><td class="mono" title="${h.theta? h.theta.join(", "):""}">${th}</td></tr>`
   }
   table.innerHTML=html
 }
-
 function drawHeat(state){
   const cont=document.getElementById('heat'), valsEl=document.getElementById('thetaVals')
   if(!state||!state.hall_of_fame){ cont.innerHTML=""; return}
@@ -340,24 +358,20 @@ function drawHeat(state){
     label.textContent=`#${idx} ${h.island} f=${fmtFit(h.fitness)}`
     row.appendChild(label)
     let theta=h.theta||[]
-    // bounds for color scale
     for(let gi=0; gi<theta.length; gi++){
       let v=theta[gi]
-      // bounds: 0-1: [-0.10,0.10], 2-7: [-0.4,0.4], 8-9: [-0.15,0.15]
       let lo,hi
       if(gi<2){ lo=-0.10; hi=0.10}else if(gi<8){ lo=-0.4; hi=0.4}else{ lo=-0.15; hi=0.15}
-      let norm=(v-lo)/(hi-lo) // 0..1
+      let norm=(v-lo)/(hi-lo)
       let cell=document.createElement('div'); cell.className="heat-cell"
-      // color: blue for negative large, white center, orange/red for positive; split freq differently
       let hue, sat="78%", lit="56%"
-      if(gi>=8){ // freq genes reddish scale
+      if(gi>=8){
         hue = norm>0.5?  10 + (norm-0.5)*40 : 340 + norm*20
         lit = 50 + Math.abs(norm-0.5)*30 +"%"
       } else {
         hue = norm>0.5? 205 : 25
         let intens=Math.abs(norm-0.5)*2
         lit = 38 + intens*28 +"%"
-        // interpolate saturation by intens
         sat = 70+ intens*20 +"%"
       }
       cell.style.background=`hsl(${hue} ${sat} ${lit})`
@@ -365,70 +379,56 @@ function drawHeat(state){
       cell.title=`g${gi}=${v.toFixed(4)} [${lo},${hi}]`
       row.appendChild(cell)
     }
-    // pad to 10
     for(let gi=theta.length; gi<10; gi++){ let c=document.createElement('div'); c.className="heat-cell"; c.style.background="#1a2744"; row.appendChild(c)}
     cont.appendChild(row)
   }
-  // vals text for best
   if(hall[0]&&hall[0].theta){
     valsEl.textContent = "best θ: [" + hall[0].theta.map(v=>v.toFixed(3)).join(", ") + "] island " + hall[0].island
   }
 }
-
 function drawPareto(state){
   const c=document.getElementById('cPareto'), ctx=c.getContext('2d'), W=c.width, H=c.height
   drawAxes(ctx,W,H,{xlabel:"n_total (log)", ylabel:"pos error µm / distortion V"})
   if(!state||!state.hall_of_fame){ return}
   let hall=state.hall_of_fame
-  // need two clouds: pos vs n, distortion vs n
-  // Collect hall points; also maybe add island pops synthetic? Use hall only for clean.
-  let xs=hall.map(h=> h.n_total ?? h.metrics?.n_total ?? 0.001).filter(v=>v>0)
+  let xs=hall.map(h=> h.n_total ?? 0.001).filter(v=>v>0)
   if(xs.length===0) return
-  let ysPos=hall.map(h=> (h.pos_err ?? h.metrics?.position_error_m ?? 1e-6)*1e6)
-  let ysDist=hall.map(h=> h.distortion ?? h.metrics?.distortion?.rms_deviation_V ?? h.metrics?.distortion?.max_deviation_V ?? 0)
+  let ysPos=hall.map(h=> (h.pos_err ?? 1e-6)*1e6)
+  let ysDist=hall.map(h=> h.distortion ?? 0)
   let minX=Math.min(...xs), maxX=Math.max(...xs)
   let minY=Math.min(...ysPos, ...ysDist.filter(v=>v>0)), maxY=Math.max(...ysPos, ...ysDist)
-  // log for x
   let logMinX=Math.log10(Math.max(1e-5,minX)), logMaxX=Math.log10(Math.max(maxX*1.1, minX*2))
   if(logMaxX-logMinX<0.5) logMaxX=logMinX+0.5
   let maxYl=Math.max(maxY*1.1, minY*2 +0.1)
   let minYl=Math.min(minY*0.9, 0)
   function xTo(v){ let lv=Math.log10(Math.max(1e-5,v)); let t=(lv-logMinX)/(logMaxX-logMinX); return 40 + t*(W-50)}
   function yTo(v){ let t=(v-minYl)/(maxYl-minYl); return H-20 - t*(H-40)}
-  // draw grid log ticks
   ctx.fillStyle="#8aa0c8"; ctx.font="9px monospace"
   for(let e=Math.floor(logMinX); e<=Math.ceil(logMaxX); e++){ let v=Math.pow(10,e); let x=xTo(v); ctx.setLineDash([2,4]); ctx.strokeStyle="#1c2a44"; ctx.beginPath();ctx.moveTo(x,14);ctx.lineTo(x,H-20);ctx.stroke(); ctx.setLineDash([]); ctx.fillText(v.toExponential(0), x-14, H-6)}
-  // points
   for(let i=0;i<hall.length;i++){
-    let h=hall[i]; let xv=hall[i].n_total ?? hall[i].metrics?.n_total ?? minX; if(!xv) continue
+    let h=hall[i]; let xv=hall[i].n_total ?? minX; if(!xv) continue
     let col=islandColor(String(h.island)[0]||"S")
     let x=xTo(xv), yP=yTo(ysPos[i]), yD=yTo(ysDist[i])
-    // pos error dot
     ctx.fillStyle=col; ctx.globalAlpha=0.9
     ctx.beginPath(); ctx.arc(x,yP,4,0,Math.PI*2); ctx.fill(); ctx.strokeStyle="#0f141c"; ctx.lineWidth=1; ctx.stroke()
-    // distortion square
     ctx.fillStyle=col; ctx.globalAlpha=0.55
     ctx.fillRect(x-4, yD-4, 8, 8)
     ctx.globalAlpha=1
     ctx.fillStyle="#e6efff"; ctx.font="9px monospace"; ctx.fillText(i, x+6, yP-6)
   }
-  // legend
   let leg=document.getElementById('paretoLegend')
   leg.innerHTML=`<span style="display:inline-flex;align-items:center;gap:6px"><i style="width:10px;height:10px;border-radius:50%;background:#5ac8ff"></i> pos error</span><span style="margin-left:12px;display:inline-flex;align-items:center;gap:6px"><i style="width:10px;height:10px;background:#c58aff;border-radius:2px"></i> distortion</span><span style="margin-left:12px;color:var(--muted)">log-x n_total; label = hall rank</span>`
 }
-
 function drawTrajectories(state){
   const c=document.getElementById('cTraj'); if(!c) return;
   const ctx=c.getContext('2d'), W=c.width, H=c.height;
   const notice=document.getElementById('trajNotice');
   const stats=document.getElementById('trajStats');
-  // helper for axes
   function clear(msg){
     ctx.clearRect(0,0,W,H); ctx.fillStyle="#121c2e"; ctx.fillRect(0,0,W,H);
     ctx.fillStyle="#8aa0c8"; ctx.font="12px sans-serif"; ctx.fillText(msg, W/2-120, H/2);
   }
   let bundle = state?.trajectory;
-  // fallback: hall trajectory
   if(!bundle || !bundle.trajectory){
     if(state?.hall_of_fame?.[0]?.trajectory){
       bundle = {trajectory: state.hall_of_fame[0].trajectory, classical_trajectory: state.hall_of_fame[0].classical_trajectory, start_m: state.trajectory?.start_m, target_m: state.trajectory?.target_m, direction: state.trajectory?.direction}
@@ -443,17 +443,14 @@ function drawTrajectories(state){
   if(notice) notice.style.display="none";
   let traj = bundle.trajectory;
   let classical = bundle.classical_trajectory;
-  // times and positions
   let tW = traj.well_times_s || traj.times_s;
   let wCenters = traj.well_centers_m;
   let qTimes = traj.times_s;
   let qMeans = traj.mean_positions_m;
-  // direction projection: use x if direction ~ [1,0,0], else project onto direction
   let dir = bundle.direction || [1,0,0];
   let dirNorm = Math.sqrt(dir[0]*dir[0]+dir[1]*dir[1]+dir[2]*dir[2]) || 1;
   dir = dir.map(v=>v/dirNorm);
   function proj(pos){ return pos[0]*dir[0]+pos[1]*dir[1]+pos[2]*dir[2]; }
-  // build arrays in microns
   let wellX = wCenters ? wCenters.map(p=>proj(p)*1e6) : null;
   let wellT = tW ? tW.map(v=>v*1e6) : null;
   let qX = qMeans ? qMeans.map(p=>proj(p)*1e6) : null;
@@ -468,19 +465,15 @@ function drawTrajectories(state){
     targetX = proj(bundle.target_m)*1e6;
   } else if(wellX){ targetX = wellX[wellX.length-1]; }
   let startX = bundle.start_m ? proj(bundle.start_m)*1e6 : (wellX? wellX[0]:0);
-  // time bounds: use wellT or qT
   let allT = (wellT||[]).concat(qT||[]).concat(cT||[]);
   let tMin = Math.min(...allT), tMax = Math.max(...allT);
-  // y bounds
   let allY = [];
   if(wellX) allY = allY.concat(wellX);
   if(qX) allY = allY.concat(qX);
   if(cX) allY = allY.concat(cX);
   if(targetX!==null) allY.push(targetX);
-  // also user route (linear) for reference
   let userRoute = null;
   if(tMin!==undefined && bundle.distance_m!==undefined){
-    // linear interpolation from start to target over duration
     userRoute = {t:[tMin, tMax], x:[startX, targetX]};
     allY.push(startX, targetX);
   }
@@ -491,71 +484,51 @@ function drawTrajectories(state){
   if(zoom==='tight' && targetX!==null){
     yMin = targetX -5; yMax = targetX+5;
   } else if(zoom==='error'){
-    // focus on error around well
-    // compute error = q - well (interpolated)
-    // for simplicity, set y around 0 error magnified
-    // we keep yMin/yMax as error*10
-    // fallback to tight
     if(wellX && qX){
       let errs = qX.map((v,i)=> (v - (wellX[Math.min(i, wellX.length-1)]||v))*10 );
       yMin = Math.min(...errs)-1; yMax = Math.max(...errs)+1;
-      // will draw error instead of absolute, handle separately
     }
   }
-  // draw axes
   ctx.clearRect(0,0,W,H);
   ctx.fillStyle="#121c2e"; ctx.fillRect(0,0,W,H);
-  // grid
   ctx.strokeStyle="#1e2e4e"; ctx.lineWidth=1; ctx.setLineDash([3,4]);
   for(let i=0;i<4;i++){ let y=20+i*(H-40)/3; ctx.beginPath(); ctx.moveTo(60,y); ctx.lineTo(W-10,y); ctx.stroke(); }
   for(let i=0;i<4;i++){ let x=60+i*(W-70)/4; ctx.beginPath(); ctx.moveTo(x,20); ctx.lineTo(x,H-20); ctx.stroke(); }
   ctx.setLineDash([]); ctx.strokeStyle="#243556"; ctx.strokeRect(0.5,0.5,W-1,H-1);
-  // helpers
   function xTo(t){ return 60 + (t - tMin)/(tMax - tMin || 1)*(W-70); }
   function yTo(y){ return H-20 - (y - yMin)/(yMax - yMin || 1)*(H-40); }
-  // labels
   ctx.fillStyle="#8aa0c8"; ctx.font="10px sans-serif";
   ctx.fillText("t, мкс", W/2-20, H-4);
   ctx.save(); ctx.translate(14, H/2); ctx.rotate(-Math.PI/2); ctx.fillText("x вдоль шаттла, мкм", -50,0); ctx.restore();
-  // target line
   if(document.getElementById('chkTarget')?.checked && targetX!==null){
     ctx.strokeStyle="#7af0a0"; ctx.setLineDash([6,4]); ctx.lineWidth=1.2; ctx.beginPath();
     ctx.moveTo(xTo(tMin), yTo(targetX)); ctx.lineTo(xTo(tMax), yTo(targetX)); ctx.stroke(); ctx.setLineDash([]);
     ctx.fillStyle="#7af0a0"; ctx.font="10px monospace"; ctx.fillText("target "+targetX.toFixed(1)+" мкм", W-150, yTo(targetX)-4);
   }
-  // user route (dashed white)
   if(userRoute){
     ctx.strokeStyle="#ffffff"; ctx.lineWidth=1; ctx.setLineDash([2,4]); ctx.beginPath();
     ctx.moveTo(xTo(userRoute.t[0]), yTo(userRoute.x[0])); ctx.lineTo(xTo(userRoute.t[1]), yTo(userRoute.x[1])); ctx.stroke(); ctx.setLineDash([]);
   }
-  // well (синий)
   if(document.getElementById('chkWell')?.checked && wellX && wellT){
     ctx.strokeStyle="#5ac8ff"; ctx.lineWidth=2; ctx.beginPath();
     wellX.forEach((y,i)=>{ let x=xTo(wellT[i]); if(i===0) ctx.moveTo(x,yTo(y)); else ctx.lineTo(x,yTo(y));}); ctx.stroke();
   }
-  // quantum (зелёный)
   if(document.getElementById('chkQuantum')?.checked && qX && qT){
     ctx.strokeStyle="#7af0a0"; ctx.lineWidth=2; ctx.beginPath();
     qX.forEach((y,i)=>{ let x=xTo(qT[i]); if(i===0) ctx.moveTo(x,yTo(y)); else ctx.lineTo(x,yTo(y));}); ctx.stroke();
-    // dots for quantum at sparse?
   }
-  // classical (оранжевый пунктир)
   if(document.getElementById('chkClassical')?.checked && cX && cT){
     ctx.strokeStyle="#ffbe55"; ctx.lineWidth=1.8; ctx.setLineDash([7,3]); ctx.beginPath();
     cX.forEach((y,i)=>{ let x=xTo(cT[i]); if(i===0) ctx.moveTo(x,yTo(y)); else ctx.lineTo(x,yTo(y));}); ctx.stroke(); ctx.setLineDash([]);
   }
-  // error mode: if zoom error, draw error
   if(zoom==='error' && wellX && qX){
-    // overlay error*10 as red
     ctx.strokeStyle="#ff6b7a"; ctx.lineWidth=1.4; ctx.beginPath();
     qX.forEach((y,i)=>{ let wi = wellX[Math.min(i, wellX.length-1)]; let err = (y - wi)*10; let x=xTo(qT[i]); if(i===0) ctx.moveTo(x,yTo(err)); else ctx.lineTo(x,yTo(err));}); ctx.stroke();
     ctx.fillStyle="#ff6b7a"; ctx.font="9px sans-serif"; ctx.fillText("ошибка ×10 (квант−яма)", 70, 30);
   }
-  // axis ticks
   ctx.fillStyle="#8aa0c8"; ctx.font="9px monospace";
   ctx.fillText(tMin.toFixed(1), 62, H-7); ctx.fillText(tMax.toFixed(1), W-40, H-7);
   ctx.fillText(yMin.toFixed(1), 4, H-22); ctx.fillText(yMax.toFixed(1), 4, 26);
-  // legend
   let leg = document.getElementById('trajLegend');
   leg.innerHTML = `
     <span style="display:inline-flex;align-items:center;gap:6px"><i style="width:14px;height:3px;background:#5ac8ff;display:inline-block;border-radius:99px"></i> яма (реализ. well)</span>
@@ -563,7 +536,6 @@ function drawTrajectories(state){
     <span style="display:inline-flex;align-items:center;gap:6px;margin-left:12px"><i style="width:14px;height:3px;background:#ffbe55;display:inline-block;border-radius:2px;border:1px dashed #ffbe55"></i> классический</span>
     <span style="display:inline-flex;align-items:center;gap:6px;margin-left:12px"><i style="width:14px;height:2px;background:#7af0a0;display:inline-block"></i> target</span>
     <span style="color:var(--muted);margin-left:12px">разница ион−яма ≈0.001 мкм → видна только в zoom error</span>`;
-  // stats
   if(stats){
     let lastWell = wellX? wellX[wellX.length-1]:null;
     let lastQ = qX? qX[qX.length-1]:null;
@@ -573,7 +545,6 @@ function drawTrajectories(state){
     stats.textContent = `well ${lastWell?.toFixed(3)} мкм | квант ${lastQ?.toFixed(3)} мкм | ошибка яма-ион ${err!==null?err.toFixed(4):"—"} мкм | pos→target ${posErr!==null?posErr.toFixed(4):"—"} мкм | n=${n!=null?n.toExponential(2):"—"}`;
   }
 }
-
 function drawIslands(state){
   const tbl=document.getElementById('islandTable'), log=document.getElementById('migrLog')
   if(!state){ tbl.innerHTML=""; return}
@@ -584,7 +555,6 @@ function drawIslands(state){
     html+=`<tr><td><span class="status-dot" style="background:${islandColor(String(strat)[0].toUpperCase())}"></span> ${idTxt}</td><td>${strat}</td><td class="mono">${isl.pop_size??isl.pop??"—"}</td><td class="mono">${isl.generation??state.global_generation??"—"}</td><td class="mono" style="color:#fff">${fmtFit(isl.best_fitness)}</td><td class="mono">${fmtFit(isl.mean_fitness)}</td><td class="mono">${fmtFit(isl.worst_fitness??isl.mean_fitness)}</td><td class="mono">${isl.diversity!=null? isl.diversity.toFixed(2):"—"}</td><td class="mono" style="max-width:220px;overflow:hidden;text-overflow:ellipsis">${isl.params? JSON.stringify(isl.params): ""}</td></tr>`
   }
   tbl.innerHTML=html
-  // migration log
   if(state.migration_history){
     let rows=state.migration_history.slice(-8)
     log.innerHTML = "migration log (ring S→A→V→R→H):<br>" + rows.map(m=>`gen ${m.generation}: ${JSON.stringify(m.migrant_ids||m)}`).join("<br>") + (state.migration_history.length===0? "none yet — first at gen 5":"")
@@ -592,7 +562,6 @@ function drawIslands(state){
     log.textContent = "migration rings every 5 gens (see docs/ga_architecture.md)"
   }
 }
-
 function updateKVs(state){
   if(!state) return
   document.getElementById('kvGen').textContent = `${state.global_generation??0}/${state.total_generations??20}`
@@ -603,17 +572,406 @@ function updateKVs(state){
   document.getElementById('kvIslands').textContent = state.islands?.length ?? "—"
   let prog = state.total_generations? (state.global_generation/state.total_generations*100):0
   document.getElementById('prog').style.width = prog.toFixed(1)+"%"
-  // badges
   let cuda=state.cuda||{}
   let cudaTxt = cuda.has_cupy? `CUDA cupy ${cuda.cupy_version||""} ${cuda.has_numba? "· numba ✓":""}` : (cuda.has_numba? `numba ${cuda.numba_version||""} ${cuda.numba_cuda_available?"cuda✓":""}` : "CPU numpy")
   document.getElementById('cudaBadge').textContent = cudaTxt
   let migr = state.migration_history?.length? `migrations ${state.migration_history.length}` : "no migration yet"
   document.getElementById('migrBadge').textContent = migr
-  let freq = state.config?.task?.frequency_mode || state.islands?.some(i=> String(i.strategy).startsWith("V"))? "V islands variable":"fixed"
-  // actually hall freq
   let vf = state.hall_of_fame?.some(h=>h.theta?.length===10)
   document.getElementById('freqBadge').textContent = vf? "freq variable active (10 genes)" : "freq fixed (8 genes) + V island 10"
   document.getElementById('stateTime').textContent = new Date((state.timestamp||Date.now()/1000)*1000).toLocaleTimeString() + " · global_generation " + (state.global_generation??"—")
+  // trap badges
+  if(state.trap){
+    let t = state.trap
+    document.getElementById('trapBadge').textContent = `Trap ${t.kind} ${t.electrodes?.length||0} electrodes`
+    document.getElementById('trapDistance').textContent = t.distance_m? (t.distance_m*1e6).toFixed(0)+" µm" : "—"
+    document.getElementById('trapHeight').textContent = t.height_m? (t.height_m*1e6).toFixed(0)+" µm" : "90 µm"
+    let rf = state.config?.trap?.rf_frequency_hz || null
+    if(rf) document.getElementById('trapRF').textContent = (rf/1e6).toFixed(0)+" MHz"
+    document.getElementById('trapCandidatesBadge').textContent = state.island_trajectories? (state.island_trajectories.reduce((s,isl)=>s+ (isl.candidates?.length||0),0) + " cands 3%") : "—"
+  }
+}
+
+// === Trap tab ===
+function interpolatePos(time, times, positions){
+  if(!times || !positions || times.length===0) return null
+  if(time <= times[0]) return positions[0]
+  if(time >= times[times.length-1]) return positions[positions.length-1]
+  // binary search
+  let lo=0, hi=times.length-1
+  while(hi-lo>1){
+    let mid=(lo+hi>>1)
+    if(times[mid] <= time) lo=mid; else hi=mid
+  }
+  let t0=times[lo], t1=times[hi]
+  let a=(time-t0)/(t1-t0||1)
+  let p0=positions[lo], p1=positions[hi]
+  return [p0[0]*(1-a)+p1[0]*a, p0[1]*(1-a)+p1[1]*a, p0[2]*(1-a)+p1[2]*a]
+}
+
+function buildTrapFilters(state){
+  const cont=document.getElementById('trapIslandFilters')
+  const list=document.getElementById('trapCandidateList')
+  if(!state || !state.island_trajectories){ cont.innerHTML='<span class="kv">waiting for island trajectories — will appear after gen 0</span>'; list.innerHTML=''; return}
+  // build filter chips
+  cont.innerHTML=""
+  for(let isl of state.island_trajectories){
+    let id=isl.strategy, color=islandColor(id)
+    let checked = trapAnim.islandVisibility[id]!==false
+    let label=document.createElement('label')
+    label.className="kv"
+    label.style.cssText="display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:999px;background:var(--chip);border:1px solid var(--border);cursor:pointer"
+    label.innerHTML=`<input type="checkbox" data-isl="${id}" ${checked?"checked":""}> <span style="width:10px;height:10px;border-radius:50%;background:${color};display:inline-block"></span> ${id} ×${isl.candidates.length} <span style="opacity:0.6">best ${isl.candidates[0]? fmtFit(isl.candidates[0].fitness):"—"}</span>`
+    cont.appendChild(label)
+  }
+  // attach listeners
+  cont.querySelectorAll('input[data-isl]').forEach(inp=>{
+    inp.addEventListener('change', (e)=>{
+      let id=e.target.getAttribute('data-isl')
+      trapAnim.islandVisibility[id]=e.target.checked
+      if(lastState) drawTrap(lastState)
+    })
+  })
+  // candidate list grid
+  list.innerHTML=""
+  for(let isl of state.island_trajectories){
+    for(let cand of isl.candidates){
+      let div=document.createElement('div')
+      div.style.cssText=`padding:8px;border-radius:8px;background:var(--panel2);border:1px solid var(--border);cursor:pointer`
+      let col=islandColor(isl.strategy)
+      let n = cand.trajectory? (cand.trajectory._n_total!=null? cand.trajectory._n_total.toExponential(2) : (cand.trajectory.times_s? "traj "+cand.trajectory.times_s.length+" pts":"—")) : "no traj"
+      let err = cand.trajectory && cand.trajectory.error? `<span style="color:var(--bad)">${cand.trajectory.error.slice(0,80)}</span>` : ""
+      div.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center"><b style="color:${col}">${isl.strategy} #${cand.rank}</b> <span class="mono">${fmtFit(cand.fitness)}</span></div><div class="mono" style="color:var(--muted)">n=${n} ${cand.status||""}</div><div class="mono" style="font-size:10px;opacity:0.6">θ:[${cand.theta.slice(0,4).map(v=>v.toFixed(2)).join(", ")}...] dim${cand.dim}</div>${err}`
+      div.onclick=()=>{
+        // isolate this island
+        Object.keys(trapAnim.islandVisibility).forEach(k=> trapAnim.islandVisibility[k]=false)
+        trapAnim.islandVisibility[isl.strategy]=true
+        // update checkboxes
+        cont.querySelectorAll('input[data-isl]').forEach(inp=>{ inp.checked = inp.getAttribute('data-isl')===isl.strategy; if(inp.getAttribute('data-isl')===isl.strategy) trapAnim.islandVisibility[isl.strategy]=true; else trapAnim.islandVisibility[inp.getAttribute('data-isl')]=false})
+        drawTrap(lastState)
+        // set trap progress to start
+        trapAnim.progress=0; document.getElementById('sliderTrapTime').value=0
+      }
+      list.appendChild(div)
+    }
+  }
+}
+
+function drawTrap(state){
+  const cTop=document.getElementById('cTrapTop'), cSide=document.getElementById('cTrapSide')
+  if(!cTop || !state) return
+  const ctx=cTop.getContext('2d'), W=cTop.width, H=cTop.height
+  const notice=document.getElementById('trapNotice')
+  const sideCard=document.getElementById('cardTrapSide')
+  const showSide=document.getElementById('chkTrapSide')?.checked
+  if(sideCard) sideCard.style.display= showSide? "block":"none"
+  // handle waiting
+  if(!state.trap){
+    ctx.clearRect(0,0,W,H); ctx.fillStyle="#0f1930"; ctx.fillRect(0,0,W,H)
+    ctx.fillStyle="#8aa0c8"; ctx.font="13px sans-serif"; ctx.fillText("waiting for trap geometry — Runner hasn't prepared yet", W/2-180, H/2)
+    if(notice){ notice.style.display="block"; notice.textContent="Trap geometry will appear after GA prepares Runner (start/target available). This view polls state.json every 500ms, never blocks training."}
+    return
+  }
+  if(notice) notice.style.display="none"
+  // prepare trap data
+  let trap=state.trap
+  let islandTrajs = state.island_trajectories || []
+  // raw trap text
+  try{ document.getElementById('trapRaw').textContent = JSON.stringify(trap,null,2).slice(0,6000); document.getElementById('trapTimeState').textContent=new Date().toLocaleTimeString()}catch(e){}
+  // compute world bounds for view mode
+  let viewMode=document.getElementById('selTrapView')?.value || "shuttle"
+  let startX = trap.start_m? trap.start_m[0]*1e6 : 0
+  let targetX = trap.target_m? trap.target_m[0]*1e6 : startX + (trap.distance_m*1e6 || 30)
+  let minTX, maxTX
+  // if round_trip, target==start but shuttle goes and returns — still distance
+  // derive from trajectory if available to be precise
+  let allWellXs=[]
+  for(let isl of islandTrajs) for(let cand of isl.candidates) if(cand.trajectory && cand.trajectory.well_centers_m){
+    for(let p of cand.trajectory.well_centers_m) allWellXs.push(p[0]*1e6)
+  }
+  if(allWellXs.length){
+    minTX=Math.min(...allWellXs); maxTX=Math.max(...allWellXs)
+  } else {
+    minTX=Math.min(startX,targetX); maxTX=Math.max(startX,targetX)
+  }
+  let xMin, xMax, yMin, yMax, zMin, zMax
+  if(viewMode==="full"){
+    let b=trap.bbox||{xmin:-10000,xmax:10000,ymin:-8000,ymax:8000}
+    xMin=b.xmin-500; xMax=b.xmax+500; yMin=b.ymin-500; yMax=b.ymax+500
+    zMin=0; zMax=(trap.height_m*1e6||90)+60
+  } else if(viewMode==="zoom"){
+    // ultra zoom ±90 around corridor center
+    let cx=(minTX+maxTX)/2
+    xMin=cx-90; xMax=cx+90; yMin=-120; yMax=120; zMin=80; zMax=100
+  } else { // shuttle
+    let cx=(minTX+maxTX)/2; let half = Math.max(350, (maxTX-minTX)/2 + 200)
+    xMin=cx-half; xMax=cx+half; yMin=-350; yMax=350; zMin=75; zMax=105
+  }
+  // helpers to map world µm -> canvas
+  function xToCanvas(x){ return 40 + (x - xMin)/(xMax - xMin ||1)*(W-60) }
+  function yToCanvas(y){ return H-28 - (y - yMin)/(yMax - yMin ||1)*(H-56) }
+  // side view helpers
+  let sideCtx=cSide? cSide.getContext('2d'):null, sW=cSide?cSide.width:0, sH=cSide?cSide.height:0
+  function xToSide(x){ return 40 + (x - xMin)/(xMax - xMin ||1)*(sW-60) }
+  function zToSide(z){ return sH-24 - (z - zMin)/(zMax - zMin ||1)*(sH-48) }
+
+  // clear top
+  ctx.clearRect(0,0,W,H)
+  ctx.fillStyle="#0a1226"; ctx.fillRect(0,0,W,H)
+  // subtle grid
+  ctx.strokeStyle="#162a4a"; ctx.lineWidth=1; ctx.setLineDash([3,4])
+  for(let i=0;i<4;i++){ let y=28+i*(H-56)/3; ctx.beginPath(); ctx.moveTo(40,y); ctx.lineTo(W-20,y); ctx.stroke()}
+  for(let i=0;i<6;i++){ let x=40+i*(W-60)/5; ctx.beginPath(); ctx.moveTo(x,28); ctx.lineTo(x,H-28); ctx.stroke()}
+  ctx.setLineDash([])
+  ctx.strokeStyle="#24365c"; ctx.strokeRect(0.5,0.5,W-1,H-1)
+
+  // draw electrodes
+  if(trap.electrodes){
+    for(let e of trap.electrodes){
+      let isRF = e.type==="rf"
+      ctx.fillStyle = isRF? "rgba(255,183,77,0.85)" : (e.name.includes("dc[0]")? "rgba(120,130,150,0.45)" : "rgba(90,200,255,0.28)")
+      ctx.strokeStyle = isRF? "#ffbe55" : "rgba(90,200,255,0.6)"
+      ctx.lineWidth = isRF?1.2:0.9
+      for(let poly of e.paths){
+        if(!poly || poly.length<3) continue
+        ctx.beginPath()
+        for(let i=0;i<poly.length;i++){
+          let [x,y]=poly[i]
+          // poly y is chip Y, x is shuttle axis
+          let cx=xToCanvas(x), cy=yToCanvas(y)
+          if(i===0) ctx.moveTo(cx,cy); else ctx.lineTo(cx,cy)
+        }
+        ctx.closePath()
+        ctx.fill()
+        ctx.stroke()
+      }
+      // label for visible RF near center
+      if(isRF && viewMode!=="full"){
+        // find centroid
+        try{
+          let poly=e.paths[0]; if(poly){
+            let xs=poly.map(p=>p[0]), ys=poly.map(p=>p[1])
+            let mx=xs.reduce((a,b)=>a+b,0)/xs.length, my=ys.reduce((a,b)=>a+b,0)/ys.length
+            if(mx>=xMin && mx<=xMax && my>=yMin && my<=yMax){
+              ctx.fillStyle="#ffbe55"; ctx.font="9px monospace"; ctx.fillText(e.name, xToCanvas(mx)-12, yToCanvas(my))
+            }
+          }
+        }catch{}
+      }
+    }
+  }
+  // draw shuttle corridor highlight (thin rect around y=0 line)
+  ctx.fillStyle="rgba(122,240,160,0.07)"; ctx.fillRect(xToCanvas(xMin), yToCanvas(8), xToCanvas(xMax)-xToCanvas(xMin), yToCanvas(-8)-yToCanvas(8))
+  ctx.strokeStyle="rgba(122,240,160,0.35)"; ctx.setLineDash([5,4]); ctx.strokeRect(xToCanvas(xMin), yToCanvas(8), xToCanvas(xMax)-xToCanvas(xMin), yToCanvas(-8)-yToCanvas(8)); ctx.setLineDash([])
+  ctx.fillStyle="rgba(122,240,160,0.9)"; ctx.font="10px sans-serif"; ctx.fillText("shuttle corridor  y≈0", xToCanvas((xMin+xMax)/2)-40, yToCanvas(0)-10)
+
+  // also draw start/target markers static
+  ctx.fillStyle="#7af0a0"
+  let sx=xToCanvas(startX), tx=xToCanvas(targetX), sy=yToCanvas(0)
+  ctx.beginPath(); ctx.arc(sx, sy, 4,0,Math.PI*2); ctx.fill(); ctx.strokeStyle="#0a1226"; ctx.lineWidth=1; ctx.stroke()
+  ctx.fillStyle="#7af0a0"; ctx.font="10px monospace"; ctx.fillText("start", sx-12, sy+14)
+  ctx.fillStyle="#ff6b7a"
+  ctx.beginPath(); ctx.arc(tx, sy, 4,0,Math.PI*2); ctx.fill(); ctx.strokeStyle="#0a1226"; ctx.stroke()
+  ctx.fillText("target", tx-16, sy+14)
+
+  // draw trajectories: per island top 3% candidates
+  // we need to compute global time for animation progress
+  // progress 0..1 maps to time t = tMinGlobal + progress*(tMaxGlobal - tMinGlobal)
+  // find global min/max time across all candidates
+  let allTimes=[]
+  for(let isl of islandTrajs) for(let cand of isl.candidates) if(cand.trajectory && cand.trajectory.times_s){
+    for(let t of cand.trajectory.times_s) allTimes.push(t)
+  }
+  let gTmin = allTimes.length? Math.min(...allTimes):0
+  let gTmax = allTimes.length? Math.max(...allTimes): (trap.duration_s||16e-6)
+  // anim progress from slider or auto
+  let prog = trapAnim.progress // 0..1
+  let curT = gTmin + prog*(gTmax - gTmin)
+  // also update time slider label
+  let curTus = curT*1e6
+  // helper to find cur well/ion position via interpolation
+  let activeCount=0, totalCount=0
+  let showWell=document.getElementById('chkTrapWell')?.checked
+  let showIon=document.getElementById('chkTrapIon')?.checked
+
+  for(let isl of islandTrajs){
+    let vis = trapAnim.islandVisibility[isl.strategy]!==false
+    if(!vis) continue
+    let col=islandColor(isl.strategy)
+    for(let cand of isl.candidates){
+      totalCount++
+      if(cand.trajectory && cand.trajectory.error) continue
+      let traj=cand.trajectory
+      if(!traj || !traj.times_s || !traj.mean_positions_m) continue
+      // intermittent alpha for candidate trails within island (rank 0 most opaque)
+      let baseAlpha = 0.78 - cand.rank*0.16
+      if(baseAlpha<0.22) baseAlpha=0.22
+
+      // draw trail up to curT (top view: x vs y)
+      let times=traj.times_s, means=traj.mean_positions_m, wells=traj.well_centers_m
+      let wTimes=traj.well_times_s||times
+
+      // interpolate current positions
+      let curMean = interpolatePos(curT, times, means)
+      let curWell = wells? interpolatePos(curT, wTimes, wells) : null
+
+      // top trails
+      if(showWell && wells){
+        ctx.strokeStyle=col; ctx.globalAlpha=baseAlpha*0.55; ctx.lineWidth=1.6; ctx.beginPath()
+        let started=false
+        for(let i=0;i<wTimes.length;i++){
+          let t=wTimes[i]; if(t>curT) break
+          let p=wells[i]; let x=p[0]*1e6, y=p[1]*1e6
+          let cx=xToCanvas(x), cy=yToCanvas(y)
+          if(!started){ ctx.moveTo(cx,cy); started=true} else ctx.lineTo(cx,cy)
+        }
+        ctx.stroke(); ctx.globalAlpha=1
+      }
+      if(showIon && means){
+        ctx.strokeStyle=col; ctx.globalAlpha=baseAlpha; ctx.lineWidth=2.2; ctx.beginPath()
+        let started=false
+        for(let i=0;i<times.length;i++){
+          let t=times[i]; if(t>curT) break
+          let p=means[i]; let x=p[0]*1e6, y=p[1]*1e6
+          let cx=xToCanvas(x), cy=yToCanvas(y)
+          if(!started){ ctx.moveTo(cx,cy); started=true} else ctx.lineTo(cx,cy)
+        }
+        ctx.stroke(); ctx.globalAlpha=1
+        // current dot glow
+        if(curMean){
+          let x=curMean[0]*1e6, y=curMean[1]*1e6
+          let cx=xToCanvas(x), cy=yToCanvas(y)
+          // glow
+          let grd=ctx.createRadialGradient(cx,cy,0,cx,cy,9)
+          grd.addColorStop(0, col); grd.addColorStop(1, "rgba(0,0,0,0)")
+          ctx.fillStyle=grd; ctx.beginPath(); ctx.arc(cx,cy,9,0,Math.PI*2); ctx.fill()
+          ctx.fillStyle=col; ctx.beginPath(); ctx.arc(cx,cy,3.8,0,Math.PI*2); ctx.fill(); ctx.strokeStyle="#0a1226"; ctx.lineWidth=1; ctx.stroke()
+          // small ring for well
+          if(curWell){
+            let wx=curWell[0]*1e6, wy=curWell[1]*1e6
+            let wcx=xToCanvas(wx), wcy=yToCanvas(wy)
+            ctx.strokeStyle=col; ctx.globalAlpha=0.65; ctx.lineWidth=1; ctx.setLineDash([2,3]); ctx.beginPath(); ctx.arc(wcx,wcy,5,0,Math.PI*2); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha=1
+          }
+          activeCount++
+        }
+      }
+    }
+  }
+  // axis labels top
+  ctx.fillStyle="#8aa0c8"; ctx.font="9px monospace"
+  ctx.fillText("x, µm", W/2-10, H-8)
+  ctx.save(); ctx.translate(12, H/2); ctx.rotate(-Math.PI/2); ctx.fillText("y, µm", -16,0); ctx.restore()
+  ctx.fillText(xMin.toFixed(0), 42, H-10); ctx.fillText(xMax.toFixed(0), W-46, H-10)
+  ctx.fillText(yMin.toFixed(0), 4, H-30); ctx.fillText(yMax.toFixed(0), 4, 34)
+  // legend top
+  let leg=document.getElementById('trapTopLegend')
+  leg.innerHTML=`<span style="display:inline-flex;align-items:center;gap:6px"><i style="width:14px;height:3px;background:#ffbe55;display:inline-block;border-radius:99px"></i> RF rail</span><span style="display:inline-flex;align-items:center;gap:6px;margin-left:12px"><i style="width:14px;height:3px;background:#5ac8ff;display:inline-block"></i> DC segments</span><span style="display:inline-flex;align-items:center;gap:6px;margin-left:12px"><i style="width:10px;height:10px;border-radius:50%;background:#7af0a0;display:inline-block"></i> start</span><span style="display:inline-flex;align-items:center;gap:6px;margin-left:12px"><i style="width:10px;height:10px;border-radius:50%;background:#ff6b7a;display:inline-block"></i> target</span><span style="color:var(--muted);margin-left:12px">showing top 3% per island (ceil(pop·0.03) ≥1) — ${totalCount} tracks, ${activeCount} active, t=${curTus.toFixed(1)} µs</span>`
+  // side view
+  if(sideCtx && showSide){
+    sideCtx.clearRect(0,0,sW,sH)
+    sideCtx.fillStyle="#121c2e"; sideCtx.fillRect(0,0,sW,sH)
+    sideCtx.strokeStyle="#1e2e4e"; sideCtx.setLineDash([3,4])
+    for(let i=0;i<4;i++){ let y=24+i*(sH-48)/3; sideCtx.beginPath(); sideCtx.moveTo(40,y); sideCtx.lineTo(sW-20,y); sideCtx.stroke()}
+    sideCtx.setLineDash([]); sideCtx.strokeStyle="#243556"; sideCtx.strokeRect(0.5,0.5,sW-1,sH-1)
+    // chip surface line at z=0
+    let z0 = zToSide(0)
+    sideCtx.strokeStyle="#2a3a5c"; sideCtx.lineWidth=1.2; sideCtx.beginPath(); sideCtx.moveTo(40,z0); sideCtx.lineTo(sW-20,z0); sideCtx.stroke()
+    sideCtx.fillStyle="#556080"; sideCtx.font="9px sans-serif"; sideCtx.fillText("chip surface z=0", 44, z0-4)
+    // height marker
+    if(trap.height_m){
+      let zh=zToSide(trap.height_m*1e6)
+      sideCtx.strokeStyle="rgba(90,200,255,0.4)"; sideCtx.setLineDash([4,4]); sideCtx.beginPath(); sideCtx.moveTo(40,zh); sideCtx.lineTo(sW-20,zh); sideCtx.stroke(); sideCtx.setLineDash([])
+      sideCtx.fillStyle="#5ac8ff"; sideCtx.fillText("nominal 90 µm", sW-120, zh-4)
+    }
+    // draw side trajectories (x vs z) up to curT
+    for(let isl of islandTrajs){
+      if(trapAnim.islandVisibility[isl.strategy]===false) continue
+      let col=islandColor(isl.strategy)
+      for(let cand of isl.candidates){
+        let traj=cand.trajectory
+        if(!traj || !traj.times_s || !traj.mean_positions_m) continue
+        let times=traj.times_s, means=traj.mean_positions_m
+        let baseAlpha=0.75 - cand.rank*0.15
+        if(showIon){
+          sideCtx.strokeStyle=col; sideCtx.globalAlpha=baseAlpha; sideCtx.lineWidth=2; sideCtx.beginPath()
+          let started=false
+          for(let i=0;i<times.length;i++){
+            if(times[i]>curT) break
+            let p=means[i]; let x=p[0]*1e6, z=p[2]*1e6
+            let cx=xToSide(x), cz=zToSide(z)
+            if(!started){ sideCtx.moveTo(cx,cz); started=true} else sideCtx.lineTo(cx,cz)
+          }
+          sideCtx.stroke(); sideCtx.globalAlpha=1
+          let curMean=interpolatePos(curT, times, means)
+          if(curMean){
+            let x=curMean[0]*1e6, z=curMean[2]*1e6
+            let cx=xToSide(x), cz=zToSide(z)
+            let grd=sideCtx.createRadialGradient(cx,cz,0,cx,cz,8)
+            grd.addColorStop(0,col); grd.addColorStop(1,"rgba(0,0,0,0)")
+            sideCtx.fillStyle=grd; sideCtx.beginPath(); sideCtx.arc(cx,cz,8,0,Math.PI*2); sideCtx.fill()
+            sideCtx.fillStyle=col; sideCtx.beginPath(); sideCtx.arc(cx,cz,3.2,0,Math.PI*2); sideCtx.fill()
+          }
+        }
+        if(showWell && traj.well_centers_m){
+          let wTimes=traj.well_times_s||times, wells=traj.well_centers_m
+          sideCtx.strokeStyle=col; sideCtx.globalAlpha=0.35; sideCtx.lineWidth=1.2; sideCtx.setLineDash([3,3]); sideCtx.beginPath()
+          let started=false
+          for(let i=0;i<wTimes.length;i++){
+            if(wTimes[i]>curT) break
+            let p=wells[i]; let x=p[0]*1e6, z=p[2]*1e6
+            let cx=xToSide(x), cz=zToSide(z)
+            if(!started){ sideCtx.moveTo(cx,cz); started=true} else sideCtx.lineTo(cx,cz)
+          }
+          sideCtx.stroke(); sideCtx.setLineDash([]); sideCtx.globalAlpha=1
+        }
+      }
+    }
+    sideCtx.fillStyle="#8aa0c8"; sideCtx.font="10px sans-serif"; sideCtx.fillText("x, µm", sW/2-10, sH-4)
+    sideCtx.save(); sideCtx.translate(12, sH/2); sideCtx.rotate(-Math.PI/2); sideCtx.fillText("z height, µm", -38,0); sideCtx.restore()
+    sideCtx.fillStyle="#8aa0c8"; sideCtx.font="9px monospace"; sideCtx.fillText(xMin.toFixed(0), 42, sH-8); sideCtx.fillText(xMax.toFixed(0), sW-46, sH-8)
+    sideCtx.fillText(zMin.toFixed(0), 4, sH-26); sideCtx.fillText(zMax.toFixed(0), 4, 28)
+    let sleg=document.getElementById('trapSideLegend')
+    sleg.innerHTML=`<span style="display:inline-flex;align-items:center;gap:6px"><i style="width:14px;height:3px;background:#5ac8ff;display:inline-block"></i> well (dashed)</span><span style="margin-left:12px;display:inline-flex;align-items:center;gap:6px"><i style="width:14px;height:3px;background:#ffbe55;display:inline-block"></i> ion &lt;r&gt;</span><span style="margin-left:12px;color:var(--muted)">ion height ~90 µm, motion mostly along x</span>`
+  }
+  // update time label
+  let lbl=document.getElementById('trapTimeLabel')
+  if(lbl) lbl.textContent=`t=${curTus.toFixed(2)} µs  x~${(startX + prog*((targetX-startX)||30)).toFixed(1)} µm  progress ${(prog*100).toFixed(0)}%`
+  // sync slider without triggering input loop (if not dragging)
+  let slider=document.getElementById('sliderTrapTime')
+  if(slider && document.activeElement!==slider){
+    slider.value=Math.round(prog*1000)
+  }
+}
+
+function trapLoop(ts){
+  if(!trapAnim.playing) return
+  if(!trapAnim.lastTs) trapAnim.lastTs=ts
+  let dt=(ts - trapAnim.lastTs)/1000
+  trapAnim.lastTs=ts
+  // speed is in units of real shuttling time scale: full shuttle is duration ~15us mapped to e.g. 2 sec wall time at 1x?
+  // We'll map progress 0..1 to shuttle duration: wall speed = speed * (1 / 2 seconds per shuttle)
+  // So dtWall * speed / 2 => progress increment
+  let wallPerShuttle = 2.0 // seconds for one full animation loop at 1x
+  trapAnim.progress += (dt * trapAnim.speed) / wallPerShuttle
+  if(trapAnim.progress>1){
+    trapAnim.progress=0
+  }
+  if(lastState) drawTrap(lastState)
+  trapAnim.raf=requestAnimationFrame(trapLoop)
+}
+function setTrapPlaying(play){
+  if(play===trapAnim.playing) return
+  trapAnim.playing=play
+  let btn=document.getElementById('btnTrapPlay')
+  btn.textContent = play? "❚❚ pause" : "▶ play"
+  btn.classList.toggle('active', play)
+  if(play){
+    trapAnim.lastTs=0
+    trapAnim.raf=requestAnimationFrame(trapLoop)
+  } else {
+    if(trapAnim.raf) cancelAnimationFrame(trapAnim.raf)
+    trapAnim.raf=null
+  }
 }
 
 async function poll(){
@@ -632,31 +990,60 @@ async function poll(){
     document.getElementById('raw').textContent=JSON.stringify(j, null, 2).slice(0,8000)
     updateKVs(j)
     drawFitness(j); drawDivers(j); drawHist(j); drawHall(j); drawHeat(j); drawPareto(j); drawTrajectories(j); drawIslands(j)
+    buildTrapFilters(j); drawTrap(j)
   }catch(e){
     document.getElementById('liveText').textContent="poll error: "+e.message.slice(0,60)
     document.getElementById('liveDot').style.background="#ff6b7a"
   }
 }
-
 function init(){
-  // preview url
   let host=location.host
   document.getElementById('previewUrl').textContent = host
   document.getElementById('btnSave').onclick = ()=>{
     let c=document.getElementById('cFitness')
     let a=document.createElement('a'); a.download="fitness.png"; a.href=c.toDataURL(); a.click()
   }
-  // trajectory controls live redraw
-  ['chkWell','chkQuantum','chkClassical','chkTarget','selTrajZoom'].forEach(id=>{
-    let el=document.getElementById(id); if(el) el.addEventListener('change',()=>{ if(lastState) drawTrajectories(lastState); });
-  });
-  poll(); setInterval(poll, 1500)
-  // also try to keep sparkHist across reloads via localStorage
+  ;['chkWell','chkQuantum','chkClassical','chkTarget','selTrajZoom'].forEach(id=>{
+    let el=document.getElementById(id); if(el) el.addEventListener('change',()=>{ if(lastState) drawTrajectories(lastState); })
+  })
+  // tabs
+  document.querySelectorAll('.tab-btn').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'))
+      btn.classList.add('active')
+      let tab=btn.getAttribute('data-tab')
+      document.querySelectorAll('.tab-pane').forEach(p=>p.classList.remove('active'))
+      document.getElementById('pane-'+tab).classList.add('active')
+      // redraw trap when entering
+      if(tab==='trap' && lastState) drawTrap(lastState)
+      else if(tab==='overview'){
+        // force redraw overview canvases that were hidden (canvas size might need redraw)
+        if(lastState){ drawFitness(lastState); drawDivers(lastState); drawHist(lastState); drawHall(lastState); drawHeat(lastState); drawPareto(lastState); drawTrajectories(lastState)}
+      }
+    })
+  })
+  // trap controls
+  document.getElementById('btnTrapPlay').onclick=()=> setTrapPlaying(!trapAnim.playing)
+  document.getElementById('btnTrapStop').onclick=()=>{
+    setTrapPlaying(false); trapAnim.progress=0; document.getElementById('sliderTrapTime').value=0; if(lastState) drawTrap(lastState)
+  }
+  document.getElementById('selTrapSpeed').onchange=(e)=>{ trapAnim.speed=parseFloat(e.target.value)}
+  document.getElementById('sliderTrapTime').oninput=(e)=>{
+    trapAnim.progress=parseInt(e.target.value)/1000
+    setTrapPlaying(false)
+    if(lastState) drawTrap(lastState)
+  }
+  document.getElementById('selTrapView').onchange=()=>{ if(lastState) drawTrap(lastState)}
+  document.getElementById('chkTrapWell').onchange=()=>{ if(lastState) drawTrap(lastState)}
+  document.getElementById('chkTrapIon').onchange=()=>{ if(lastState) drawTrap(lastState)}
+  document.getElementById('chkTrapSide').onchange=()=>{ if(lastState) drawTrap(lastState)}
+  poll(); setInterval(poll, 900)
   try{
     let saved=localStorage.getItem("ga_fit_series")
     if(saved){ window.__fitSeries=JSON.parse(saved)}
     window.addEventListener("beforeunload",()=>{ try{ localStorage.setItem("ga_fit_series", JSON.stringify(window.__fitSeries))}catch(e){}})
   }catch(e){}
+  // auto play trap when entering trap tab? not now, user clicks
 }
 init()
 </script>

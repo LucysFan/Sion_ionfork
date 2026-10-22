@@ -185,6 +185,10 @@
     "n_migrants": 2,
     "hall_size": 10,
     "seed": 42,
+    "island_top_percent": 0.03,
+    "trap_traj_decimate": 80,
+    "trap_traj_interval": 2,
+    "trap_traj_max_per_island": 3,
     "islands": [
       {
         "strategy": "S",
