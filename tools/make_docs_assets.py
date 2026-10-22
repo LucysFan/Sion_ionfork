@@ -153,17 +153,17 @@ def fig_waveforms():
         ax.plot(t_us, ideal[key] - ideal[key][0], color=color, lw=2.1, label=f"команда {key}")
     _style(
         ax,
-        "Команда на электроды: изменение напряжения относительно старта ΔV(t)  "
-        "(15 каналов, 4 несущих выделены)",
+        "Изменение команды ΔV(t) относительно начального значения  "
+        "(15 каналов, 4 основных выделены)",
         "время, мкс",
         "ΔV, В",
     )
-    ax.legend(ncol=4, fontsize=8.8, loc="lower center", framealpha=0.0)
+    ax.legend(ncol=4, fontsize=8.6, loc="upper center", bbox_to_anchor=(0.5, -0.19), framealpha=0.0)
     ax.axhline(0, color=GRID, lw=0.8)
     turn = t_us[np.argmax(np.abs(ideal[picked[0]] - ideal[picked[0]][0]))]
     ax.axvline(turn, color=WARN, lw=1.0, ls=":", alpha=0.85)
     ax.annotate(
-        "разворот: V перекидывается, ион останавливается",
+        "реверс: смена знака команды на развороте",
         xy=(turn, ax.get_ylim()[1] * 0.80),
         xytext=(6, 0),
         textcoords="offset points",
@@ -188,8 +188,8 @@ def fig_waveforms():
     )
     _style(
         ax2,
-        f"Сколько съедает железо: |ΔV| max {dist['max_deviation_V']*1e3:.0f} мВ, "
-        f"LSB {dist['lsb_V']*1e6:.0f} мкВ, клиппингов {dist['clipping_events']} (изменение масштаба ×1000)",
+        f"Отклонение доставленного сигнала от команды: max {dist['max_deviation_V']*1e3:.0f} мВ, "
+        f"LSB {dist['lsb_V']*1e6:.0f} мкВ, случаев клиппинга {dist['clipping_events']} (шкала в мВ)",
         "канал DC",
         "|ΔV|, мВ",
     )
@@ -226,7 +226,7 @@ def fig_trajectory():
 
     ax = fig.add_subplot(gs[0, :])
     ax.fill_between(t_us, 0, x_um, color=ACCENT, alpha=0.13, lw=0)
-    ax.plot(t_us, x_um, color=ACCENT, lw=2.4, label="реализованный путь иона")
+    ax.plot(t_us, x_um, color=ACCENT, lw=2.4, label="реализованная траектория")
     ax.plot(
         t_d,
         r_del_x,
@@ -244,8 +244,8 @@ def fig_trajectory():
     ax.set_xlim(0, t_us.max())
     _style(
         ax,
-        f"Реализованный маршрут: {task['protocol']}, {dist_um:.0f} мкм за "
-        f"{task['duration_s']*1e6:.0f} мкс на плечо",
+        f"Реализованная траектория: {dist_um:.0f} мкм за "
+        f"{task['duration_s']*1e6:.0f} мкс на плечо ({task['protocol']})",
         "время, мкс",
         "x, мкм",
     )
@@ -259,9 +259,9 @@ def fig_trajectory():
         color=ACCENT2,
         va="top",
     )
-    ax.legend(loc="upper right", bbox_to_anchor=(1.0, 0.90), ncol=1, fontsize=9.0)
+    ax.legend(loc="upper left", bbox_to_anchor=(0.0, 0.87), ncol=1, fontsize=8.8)
     ax.annotate(
-        "разворот",
+        "точка реверса",
         xy=(t_us[np.argmax(x_um)], dist_um),
         xytext=(0, -34),
         textcoords="offset points",
@@ -275,7 +275,7 @@ def fig_trajectory():
     ax2.plot(t_us, v_mm_s, color=WARN, lw=1.8)
     _style(
         ax2,
-        f"Скорость иона: пик {np.abs(v_mm_s).max()/1e3:.2f} м/с",
+        f"Скорость иона: максимум {np.abs(v_mm_s).max()/1e3:.2f} м/с",
         "время, мкс",
         "v, мм/с",
     )
@@ -284,11 +284,11 @@ def fig_trajectory():
     ax3 = fig.add_subplot(gs[1, 1])
     ax3.plot(t_d, f_min, color=ACCENT2, lw=1.9)
     ax3.axhline(400, color=BAD, ls="--", lw=1.2)
-    ax3.text(t_d.max(), 400 + 12, "порог 400 кГц", color=BAD, ha="right", fontsize=9)
+    ax3.text(t_d.max(), 408, "порог 400 кГц", color=BAD, ha="right", fontsize=8.6)
     ax3.set_ylim(350, max(f_min.max() * 1.18, 780))
     _style(
         ax3,
-        f"Конфайнмент: минимум {f_min.min():.0f} кГц > порога",
+        f"Секулярная частота: минимум {f_min.min():.0f} кГц",
         "время, мкс",
         "ω₁/2π, кГц",
     )
@@ -304,7 +304,7 @@ def fig_trajectory():
     ax.text(s_route[0], freqs[:, 0].min() + 45, f"минимум по маршруту {freqs[:, 0].min():.0f} кГц", color=BAD, fontsize=9)
     _style(
         ax,
-        "Секулярные частоты вдоль маршрута — ROM-диагностика по 41 опорной точке",
+        "Секулярные частоты вдоль маршрута (ROM-диагностика, 41 опорная точка)",
         "s (доля маршрута)",
         "частота, кГц",
     )
@@ -416,8 +416,8 @@ def fig_robust():
     ax.set_ylim(0, max(budget, n.max()) * 1.12)
     _style(
         ax,
-        f"Робастность: {len(n)} сценариев шума, принято {rob['pass_fraction']*100:.0f}%",
-        "сценарий (sorted по n) и масштаб ω",
+        f"Робастность: {len(n)} сценариев возмущений, принято {rob['pass_fraction']*100:.0f} %",
+        "сценарий (сортировка по n) и масштаб ω",
         "n_total, фононы",
     )
 
@@ -456,7 +456,7 @@ def fig_ga():
     for si, strat in enumerate(strategies):
         best = [f["islands"][si]["best_fitness"] for f in frames]
         ax.semilogy(gens, best, marker="o", ms=3.5, lw=1.9, color=ISLAND_COLORS.get(strat, ACCENT), label=f"остров {strat}")
-    _style(ax, "Лучший fitness по поколениям", "поколение", "fitness (лог)")
+    _style(ax, "Минимальный фитнес по поколениям", "поколение", "fitness (лог)")
     ax.legend(ncol=3, fontsize=8.6, loc="upper right")
 
     ax2 = fig.add_subplot(gs[0, 1])
@@ -481,7 +481,7 @@ def fig_ga():
             label=strat,
             zorder=3,
         )
-    _style(ax3, "Зал славы: чем левее и ниже, тем лучше", "n_total, фононы", "fitness")
+    _style(ax3, "Зал славы: n_total и фитнес (Парето-фронт)", "n_total, фононы", "fitness")
     # Pareto frontier (non-dominated points)
     pts_sorted = sorted(pts, key=lambda p: p[0])
     frontier, best_f = [], np.inf
@@ -533,7 +533,7 @@ def fig_ga():
         )
     ax4.set_xlim(-0.2, n)
     ax4.set_ylim(-0.35, 1.45)
-    ax4.text(0, 1.30, "Геном θ* (10 чисел вместо 200 отсчётов V)", fontsize=12.5, fontweight="bold", color=TEXT)
+    ax4.text(0, 1.30, "Геном θ* (10 параметров)", fontsize=12.5, fontweight="bold", color=TEXT)
     ax4.text(
         0,
         1.05,
@@ -561,7 +561,7 @@ def fig_dashboard():
     )
 
     # --- header ------------------------------------------------------------
-    fig.text(0.06, 0.945, "Island GA — живой дашборд шаттлинга", fontsize=19, fontweight="bold", color=TEXT)
+    fig.text(0.06, 0.945, "Island GA — дашборд в реальном времени", fontsize=19, fontweight="bold", color=TEXT)
     fig.text(
         0.06,
         0.905,
@@ -576,7 +576,7 @@ def fig_dashboard():
     fig.patches.append(
         plt.Rectangle((0.86, 0.926), 0.125, 0.043, transform=fig.transFigure, facecolor=PANEL2, edgecolor=GRID, lw=1)
     )
-    fig.text(0.868, 0.940, "●  polling 500 мс", fontsize=9, color=ACCENT2, va="center")
+    fig.text(0.868, 0.940, "●  опрос 500 мс", fontsize=9, color=ACCENT2, va="center")
 
     # --- fitness -----------------------------------------------------------
     ax = fig.add_subplot(gs[0, :2])
@@ -590,7 +590,7 @@ def fig_dashboard():
             color=ISLAND_COLORS.get(strat, ACCENT),
             label=f"остров {strat}",
         )
-    _style(ax, "fitness лучшей особи (меньше — лучше)", "поколение", "fitness (лог)")
+    _style(ax, "Минимальный фитнес по поколениям", "поколение", "fitness (лог)")
     ax.legend(ncol=5, fontsize=8.4, loc="upper right")
 
     # --- per-island bar ----------------------------------------------------
@@ -603,7 +603,7 @@ def fig_dashboard():
     ax2.set_xticklabels(labels, fontsize=10)
     ax2.set_yticks([1e-2, 1e-1])
     ax2.set_yticklabels(["0.01", "0.1"])
-    _style(ax2, "лучший fitness / остров", "", "")
+    _style(ax2, "Минимальный фитнес по островам", "", "")
 
     # --- diversity ---------------------------------------------------------
     ax3 = fig.add_subplot(gs[1, 0])
@@ -614,7 +614,7 @@ def fig_dashboard():
             lw=1.8,
             color=ISLAND_COLORS.get(strat, ACCENT),
         )
-    _style(ax3, "разнообразие (θ-расстояние)", "поколение", "")
+    _style(ax3, "Разнообразие популяции (θ-расстояние)", "поколение", "")
 
     # --- Pareto ------------------------------------------------------------
     ax4 = fig.add_subplot(gs[1, 1])
@@ -639,7 +639,7 @@ def fig_dashboard():
     ax4.set_xticklabels(["0.001", "0.002", "0.005", "0.01"], fontsize=8.5)
     ax4.set_yticks([2e-3, 1e-2, 1e-1])
     ax4.set_yticklabels(["0.002", "0.01", "0.1"], fontsize=8.5)
-    _style(ax4, "Парето: n_total vs fitness", "n_total, фононы", "fitness")
+    _style(ax4, "Парето-фронт: n_total и фитнес", "n_total, фононы", "fitness")
 
     # --- genome ------------------------------------------------------------
     ax5 = fig.add_subplot(gs[1, 2])
@@ -650,7 +650,7 @@ def fig_dashboard():
     ax5.set_yticklabels([f"θ{i}" for i in range(len(theta))], fontsize=8)
     ax5.invert_yaxis()
     ax5.axvline(0, color=MUTED, lw=0.8)
-    _style(ax5, "геном θ* (зал славы)", "", "")
+    _style(ax5, "Геном θ* (зал славы)", "", "")
 
     _save(fig, "fig-dashboard.png", dpi=145)
 
@@ -699,7 +699,7 @@ def fig_animation(n_frames=80, fps=13):
     axT.set_ylim(-26, 26)
     axT.set_aspect("equal", adjustable="datalim")
     axT.axis("off")
-    axT.set_title("Вид сверху: ион в яме (схема)", loc="left")
+    axT.set_title("Вид сверху: положение иона (схема)", loc="left")
 
     axT.add_patch(plt.Rectangle((-16, 13), 62, 11, facecolor=PANEL2, edgecolor=GRID, lw=1))
     axT.add_patch(plt.Rectangle((-16, -24), 62, 11, facecolor=PANEL2, edgecolor=GRID, lw=1))
@@ -729,7 +729,7 @@ def fig_animation(n_frames=80, fps=13):
         axV.plot(t_us_d, deliv[key] - deliv[key][0], color=color, lw=1.2, alpha=0.55)
     cursor = axV.axvline(0, color=ACCENT, lw=0.9, ls="--", alpha=0.9)
     dots = [axV.plot([], [], "o", ms=5.5, color=c, zorder=5)[0] for c in colors]
-    _style(axV, "ΔV доставленных напряжений (4 несущих канала)", "время, мкс", "ΔV, В")
+    _style(axV, "ΔV доставленных напряжений (4 основных канала)", "время, мкс", "ΔV, В")
     axV.set_xlim(0, t_max_us)
 
     # ---------- x(t) ----------
@@ -737,7 +737,7 @@ def fig_animation(n_frames=80, fps=13):
     axP.plot(t * 1e6, x, color=GRID, lw=1.3)
     prog, = axP.plot([], [], color=ACCENT, lw=2.4)
     posdot, = axP.plot([], [], "o", ms=7, color="#ffffff", markeredgecolor=ACCENT, markeredgewidth=2, zorder=5)
-    _style(axP, "x(t) иона", "время, мкс", "x, мкм")
+    _style(axP, "Координата x(t)", "время, мкс", "x, мкм")
     axP.set_xlim(0, t_max_us)
     axP.set_ylim(-4, dist + 5)
     info = axP.text(0.975, 0.06, "", transform=axP.transAxes, fontsize=9.6, color=ACCENT2, va="bottom", ha="right")
@@ -774,9 +774,9 @@ def fig_scorecard():
     order = [
         ("shuttle_reference", "reference\nround-trip 30 мкм"),
         ("shuttle_oneway", "one_way\n30 мкм"),
-        ("shuttle_repeated", "repeated ×2\nфильтр не сбрасывается"),
+        ("shuttle_repeated", "repeated ×2\nсостояние фильтра сохраняется"),
         ("shuttle_gds", "GDS-геометрия\n17 каналов"),
-        ("shuttle_variable_freq", "variable ω\n±15%"),
+        ("shuttle_variable_freq", "переменная ω\n±15 %"),
     ]
     cards = []
     for name, label in order:
@@ -802,7 +802,7 @@ def fig_scorecard():
         ax.text(
             0.07,
             0.10,
-            f"позиция {m['position_error_m']*1e9:.2f} нм  ·  {'принят' if ok else 'отказ'}",
+            f"ошибка {m['position_error_m']*1e9:.2f} нм  ·  {'принято' if ok else 'отказ'}",
             fontsize=8.2,
             color=ACCENT2 if ok else BAD,
             transform=ax.transAxes,
@@ -818,14 +818,14 @@ def fig_architecture():
     import matplotlib.patches as mpatches
 
     layers = [
-        ("1 · Поле", "field.py", "SionTrap, Local\nпсевдопотенциал + DC", "trap_snapshot.json", ACCENT),
-        ("2 · Управление", "control.py", "θ ∈ ℝ⁸: warp + SVD\nfixed / variable ω", "config.json", "#6ee7d5"),
-        ("3 · Инверсия", "voltage.py", "3 силы + 1 кривизна\nSLSQP, bounds", "route_diagnostics.json", ACCENT2),
-        ("4 · Железо", "hardware.py", "DAC, ZOH, RC, gain,\ndelay, slew", "delivered_waveform.csv", WARN),
-        ("5 · Динамика", "dynamics.py", "3D гаусс, exact/DOP853\nковариация", "delivered_path.csv", "#ffa94d"),
+        ("1 · Поле", "field.py", "псевдопотенциал RF + DC,\nпоиск минимума", "trap_snapshot.json", ACCENT),
+        ("2 · Управление", "control.py", "θ ∈ ℝ⁸: time-warp + SVD,\nфиксированная или переменная ω", "config.json", "#6ee7d5"),
+        ("3 · Инверсия", "voltage.py", "баланс сил и кривизны,\nSLSQP с ограничениями", "route_diagnostics.json", ACCENT2),
+        ("4 · Аппаратный тракт", "hardware.py", "ЦАП, ZOH, RC-каскад,\nусиление, задержка, slew", "delivered_waveform.csv", WARN),
+        ("5 · Динамика", "dynamics.py", "3D гауссов пакет, точный\nпропагатор или DOP853", "delivered_path.csv", "#ffa94d"),
         ("6 · Робастность", "pipeline.robust", "ансамбль сценариев\nmean/worst/CVaR", "robust.json", BAD),
-        ("7 · Калибровка", "calibration.py", "gain/offset/фильтр\n→ update_model", "calibration_*.json", "#f783ac"),
-        ("8 · Closed-loop", "closed_loop.py", "8 параметров,\nSafetyLayer, бюджет", "closed_loop_*.json", "#c79bff"),
+        ("7 · Калибровка", "calibration.py", "идентификация gain/offset\nи фильтра → update_model", "calibration_*.json", "#f783ac"),
+        ("8 · Closed-loop", "closed_loop.py", "8 параметров, SafetyLayer,\nфиксированный бюджет", "closed_loop_*.json", "#c79bff"),
     ]
 
     fig = plt.figure(figsize=(13.0, 6.4))
@@ -835,11 +835,11 @@ def fig_architecture():
     ax.axis("off")
     ax.set_facecolor(BG)
 
-    ax.text(0.35, 5.95, "Восемь слоёв пайплайна: у каждого свой модуль, вход и артефакт", fontsize=15, fontweight="bold", color=TEXT)
+    ax.text(0.35, 5.95, "Восемь слоёв конвейера: модуль, назначение и артефакт", fontsize=15, fontweight="bold", color=TEXT)
     ax.text(
         0.35,
         5.55,
-        "ни один слой не спрятан в ноутбуке: всё, что влияет на результат, лежит в отдельном файле с явным API",
+        "каждый слой реализован отдельным модулем с явным программным интерфейсом и собственным артефактом",
         fontsize=10,
         color=MUTED,
     )
@@ -888,14 +888,14 @@ def fig_architecture():
     ax.text(
         0.35,
         0.72,
-        "сквозные слои:  safety.py (коды отказа, fallback θ=0)   ·   observables.py (n → sideband → loss)",
+        "сквозные слои:  safety.py (коды отказа, fallback θ = 0)   ·   observables.py (n → sideband → loss)",
         fontsize=9.2,
         color=MUTED,
     )
     ax.text(
         0.35,
         0.40,
-        "всё в СИ: метры, секунды, герцы, вольты, кг  ·  ни одного «виртуального score» — только V(t) на электродах",
+        "все величины в СИ: метры, секунды, герцы, вольты, килограммы  ·  результат — напряжения на электродах, а не агрегированная оценка",
         fontsize=9.2,
         color=MUTED,
     )
@@ -939,17 +939,32 @@ def fig_gds():
         xs = [x for x, _ in p.xy_um]
         ys = [y for _, y in p.xy_um]
         w_, h_ = max(xs) - min(xs), max(ys) - min(ys)
-        ax.text(
-            (min(xs) + max(xs)) / 2,
-            (min(ys) + max(ys)) / 2,
-            name,
-            ha="center",
-            va="center",
-            fontsize=6.8,
-            color="#06121c" if is_rf else TEXT,
-            fontweight="bold",
-            rotation=90 if h_ > w_ else 0,
-        )
+        if is_rf:
+            # the RF strips are ~0.3 units tall: label them outside the layout
+            y_mid = (min(ys) + max(ys)) / 2
+            y_lab = y_mid + (0.58 if name.endswith("0") else -0.58)
+            ax.annotate(
+                name,
+                xy=(-9.7, y_mid),
+                xytext=(-9.9, y_lab),
+                fontsize=7.0,
+                color=WARN,
+                fontweight="bold",
+                ha="right",
+                va="center",
+                arrowprops=dict(arrowstyle="-", color=WARN, lw=0.7, shrinkA=0, shrinkB=0),
+            )
+        else:
+            ax.text(
+                (min(xs) + max(xs)) / 2,
+                (min(ys) + max(ys)) / 2,
+                name,
+                ha="center",
+                va="center",
+                fontsize=6.6,
+                color=TEXT,
+                rotation=90 if h_ > w_ else 0,
+            )
     ax.set_aspect("equal")
     ax.set_xlim(-11.2, 11.2)
     ax.set_ylim(-8.9, 8.9)
@@ -958,7 +973,7 @@ def fig_gds():
     ax.text(
         0.015,
         0.035,
-        "жёлтые — RF (160 В), синие — DC; имя канала задаёт electrode_map, а не порядок полигонов",
+        "жёлтый — RF (160 В), синий — DC; принадлежность канала определяется electrode_map, а не порядком полигонов",
         transform=ax.transAxes,
         fontsize=8.0,
         color=MUTED,
@@ -976,18 +991,18 @@ def fig_gds():
         ("каналы DC", f"{sum(1 for m in cfg['electrode_map'] if m['name'] not in rf_names)}"),
         ("RF", ", ".join(f"{k} = {v:g} В" for k, v in cfg["rf_electrodes"].items())),
     ]
-    ax2.text(0, 0.98, "Что берётся из GDS", fontsize=12.5, fontweight="bold", color=TEXT, va="top")
+    ax2.text(0, 0.98, "Параметры сопоставления", fontsize=12.5, fontweight="bold", color=TEXT, va="top")
     for i, (k, v) in enumerate(rows):
-        y = 0.855 - i * 0.095
+        y = 0.845 - i * 0.082
         ax2.text(0.0, y, k, fontsize=9.2, color=MUTED, va="top")
         ax2.text(0.33, y, v, fontsize=8.8, color=TEXT, va="top", family="DejaVu Sans Mono")
     ax2.text(
         0,
-        0.10,
-        "Нет скрытого порядка: каждый канал — явная пара (layer, datatype).\n"
-        "Масштаб этого файла-примера условный (запись UNITS — заглушка),\n"
-        "он показывает маппинг слоёв, а не размеры реального чипа.",
-        fontsize=8.2,
+        0.06,
+        "Без скрытого порядка: каждый канал — явная пара (layer, datatype).\n"
+        "Файл-пример содержит условную запись UNITS, поэтому показано\n"
+        "соответствие слоёв, а не размеры реального устройства.",
+        fontsize=8.0,
         color=MUTED,
         va="bottom",
         linespacing=1.6,
