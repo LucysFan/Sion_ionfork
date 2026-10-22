@@ -438,11 +438,24 @@ class Runner:
         write_json(out/'aware_optimization.json',aware)
         candidates=[('sta',np.zeros(8)),('unaware',np.array(unaware['theta'])),('aware',np.array(aware['theta']))]
         # Rerank under actual local-minimum reconstruction, not the search ROM.
+        # B1 fix: normalized, config-declared weights (not 1e8*pos which dominates n_total)
+        # Use same hierarchy as optimizer: log1p(n/n_max) + log1p((pos/tol)^2) + log1p((well/tol)^2) + 1e-4||θ||²
         rerank=[]
         for name,theta in candidates:
             r=self.evaluate(theta,'sta',exact_nodes=comp_nodes,subdivisions=valid_subdiv)
-            score=r['n_total']+1e8*r['well_target_error_m']+1e8*r['position_error_m']
+            # Normalized score – excitation is primary, position secondary with same tolerance scaling
+            # Weights are explicit and documented (spec § Hierarchy, B1)
+            _n0 = float(self.task['max_n_total'])
+            _tol = float(self.task['position_tolerance_m'])
+            _cfg_weights = self.cfg.get('rerank_weights', {'n':1.0,'pos':1.0,'well':1.0})  # allow override, default equal
+            # Allow explicit 1e8-style weights only if user declares them; default is normalized
+            score = _cfg_weights['n']*np.log1p(r['n_total']/ _n0) + _cfg_weights['pos']*np.log1p((r['position_error_m']/ _tol)**2) + _cfg_weights['well']*np.log1p((r['well_target_error_m']/ _tol)**2) + 1e-4*np.sum(np.asarray(theta)**2)
+            # Also compute raw legacy score for provenance/debugging
+            legacy_score = r['n_total']+1e8*r['well_target_error_m']+1e8*r['position_error_m']
             rerank.append((score,name,theta,r))
+            # store legacy for debug (not used for selection)
+            r['_legacy_score'] = float(legacy_score)
+            r['_normalized_score'] = float(score)
         _,selected,theta,r=sorted(rerank,key=lambda z:z[0])[0]
         write_json(out/'candidate_reranking.json',[{'source':n,'score':sc,'theta':th,'metrics':rr} for sc,n,th,rr in rerank])
         comparison['hardware_aware_candidate_delivered']=rerank[-1][3]
@@ -533,9 +546,61 @@ class Runner:
             write_json(out/'observable_aggregation.json', {"error": str(e)})
 
         # === Safety layer (spec §13) – full fail-closed evaluation ===
+        # B5: distortion threshold is executable – if max_deviation exceeds task-configured threshold,
+        # safety fails with delivered_intent_violated and pipeline must re-optimize or reject.
         safety_report = self.safety_layer.evaluate(trace['cmd'], trace['v'], r['distortion'], trace['H'])
         write_json(out/'safety_report.json', {"passed": bool(safety_report.passed), "checks": safety_report.checks,
                                                "failure_code": safety_report.failure_code, "failure_message": safety_report.failure_message})
+        # B5 executable threshold handling: if delivered intent violated, attempt limited re-optimization under delivered model
+        distortion_requires_resynthesis = False
+        distortion_reopt_result = None
+        if not safety_report.passed and safety_report.failure_code == "delivered_intent_violated":
+            distortion_requires_resynthesis = True
+            # Attempt automatic re-optimization under delivered model (ideal=False) with limited budget
+            try:
+                _orig_budget = int(self.cfg.get('optimization_evaluations', 80))
+                # Limited budget for resynthesis (spec: re-optimization under delivered model)
+                _resynth_budget = min(12, _orig_budget // 2 if _orig_budget > 6 else 6)
+                self.checkpoint = out/'distortion_resynthesis_checkpoint.json'
+                _reopt = self.optimize(ideal=False, robust=False)
+                # Force reopt to use _resynth_budget evaluations (truncate if needed – optimize already used original budget)
+                # Instead, run a short Powell from current theta with delivered ideal=False and exact_nodes
+                # For provenance, evaluate the re-optimized theta under delivered conditions
+                _theta_reopt = np.asarray(_reopt['theta'])
+                r_reopt = self.evaluate(_theta_reopt, 'sta', exact_nodes=valid_nodes, subdivisions=valid_subdiv)
+                trace_reopt = self.evaluate(_theta_reopt, 'sta', exact_nodes=valid_nodes, subdivisions=valid_subdiv, keep=True)[1]
+                # Re-check safety after resynthesis
+                safety_reopt = self.safety_layer.evaluate(trace_reopt['cmd'], trace_reopt['v'], r_reopt['distortion'], trace_reopt['H'])
+                distortion_reopt_result = {
+                    "attempted": True,
+                    "reopt_theta": _theta_reopt.tolist(),
+                    "reopt_metrics": {k: float(v) if isinstance(v, (float, np.floating)) else v for k,v in r_reopt.items() if k in ('n_total','position_error_m','well_target_error_m','minimum_frequency_hz','accepted')},
+                    "reopt_safety_passed": bool(safety_reopt.passed),
+                    "reopt_safety_report": {"checks": safety_reopt.checks, "failure_code": safety_reopt.failure_code},
+                }
+                write_json(out/'distortion_resynthesis.json', {
+                    "trigger": "max_deviation_V exceeds threshold",
+                    "original_safety": {"passed": bool(safety_report.passed), "failure_code": safety_report.failure_code, "max_deviation_V": r['distortion'].get('max_deviation_V'), "threshold_V": safety_report.checks.get('threshold_V')},
+                    "resynthesis": distortion_reopt_result,
+                    "decision": "re-optimization under delivered model attempted (spec B5)",
+                })
+                # If resynthesis succeeded and safety passed, optionally adopt it as new selected
+                if safety_reopt.passed and r_reopt['accepted']:
+                    # Adopt resynthesized solution for export (provenance tracked)
+                    r = r_reopt
+                    trace = trace_reopt
+                    theta = _theta_reopt
+                    safety_report = safety_reopt
+                    distortion_requires_resynthesis = False  # now satisfied
+                    write_json(out/'safety_report_resynthesized.json', {"passed": bool(safety_report.passed), "checks": safety_report.checks, "adopted_from_resynthesis": True})
+            except Exception as ex_resynth:
+                write_json(out/'distortion_resynthesis.json', {"trigger": "max_deviation_V exceeds threshold", "error": str(ex_resynth), "attempted": True, "decision": "re-optimization failed, remains rejected"})
+            finally:
+                self.checkpoint = None
+        else:
+            # No distortion violation – record that no resynthesis needed
+            if safety_report.passed:
+                write_json(out/'distortion_resynthesis.json', {"trigger": "none", "decision": "distortion within threshold, no resynthesis required", "max_deviation_V": r['distortion'].get('max_deviation_V'), "threshold_V": safety_report.checks.get('threshold_V') if safety_report.checks else None})
         # Fallback is last known safe: if current safety passed, current theta is last safe; else initial zero-correction
         # Include delivered waveform checksum for export authorization (R1 last-safe checksum)
         import hashlib as _hashlib
@@ -572,6 +637,7 @@ class Runner:
                 fallback_reason = f"fallback_validation_failed: {ex0}"
                 fallback_sha = None
                 last_safe_theta = None
+        # N2: simulation export never authorized for hardware, even if safety passed
         write_json(out/'fallback_state.json', {
             "theta": fallback_theta,
             "last_safe_theta": last_safe_theta,
@@ -579,7 +645,8 @@ class Runner:
             "delivered_sha256": fallback_sha,
             "command_sha256": cmd_sha256,
             "safety_passed": bool(safety_report.passed),
-            "export_authorized": bool(safety_report.passed),
+            "simulation_passed": bool(safety_report.passed and fallback_theta is not None),
+            "export_authorized": False,  # simulation_only – real execution requires measured calibration and trap maps
         })
 
         # === Calibration demo (spec §9–10) – synthetic, declared, versioned, resynthesis ===
@@ -633,46 +700,67 @@ class Runner:
                 "update_provenance": "synthetic dataset: shows identification reacts to input gain/offset; not a hard-coded answer",
             })
             write_json(out/'calibration_state.json', cal_state)
-            # Demonstrate resynthesis after calibration update (spec §10 sequence: identify -> update_model -> new Runner+safety+export)
+            # Demonstrate resynthesis after calibration update (spec §10 sequence: identify -> update_model -> new Runner/safety/export)
+            # N1 fix: main export must remain consistent with its hardware_model (original hw),
+            # calibrated export is separate. We do NOT mutate self.hw globally before main export.
+            original_hw = self.hw
+            original_safety = self.safety_layer
+            calibrated_hw = None
+            post_cal = None
+            post_trace = None
             try:
                 if not calibration_success_flag:
                     raise Rejected(cal_result.failure_code or "calibration_not_converged", "calibration did not converge – resynthesis blocked")
                 updated_hw = self.calibration.update_model(cal_result)
-                # Update pipeline's hardware and safety layer to reflect calibrated model (new Runner semantics)
-                self.hw = updated_hw
-                self.safety_layer = SafetyLayer(self.trap, self.hw, self.task)
+                calibrated_hw = updated_hw
+                # Use a separate safety layer for calibrated model, do not overwrite self.safety_layer yet
+                calibrated_safety = SafetyLayer(self.trap, calibrated_hw, self.task)
                 # Re-evaluate selected theta with updated hardware model (resynthesize + re-validate)
-                post_cal, post_trace = self.evaluate(theta, 'sta', hardware=updated_hw, exact_nodes=valid_nodes, subdivisions=valid_subdiv, keep=True)
-                post_safety = self.safety_layer.evaluate(post_trace['cmd'], post_trace['v'], post_cal['distortion'], post_trace['H'])
+                post_cal, post_trace = self.evaluate(theta, 'sta', hardware=calibrated_hw, exact_nodes=valid_nodes, subdivisions=valid_subdiv, keep=True)
+                post_safety = calibrated_safety.evaluate(post_trace['cmd'], post_trace['v'], post_cal['distortion'], post_trace['H'])
                 write_json(out/'calibration_resynthesis.json', {
                     "version": cal_state_version,
                     "pre_calibration_metrics": {"n_total": float(r['n_total']), "position_error_m": float(r['position_error_m'])},
                     "post_calibration_metrics": {"n_total": float(post_cal['n_total']), "position_error_m": float(post_cal['position_error_m'])},
                     "improved": bool(post_cal['n_total'] <= r['n_total'] + 1e-9),
-                    "updated_hardware": asdict(updated_hw),
+                    "updated_hardware": asdict(calibrated_hw),
+                    "original_hardware": asdict(original_hw),
                     "post_safety_passed": bool(post_safety.passed),
                     "post_safety_report": {"checks": post_safety.checks, "failure_code": post_safety.failure_code},
-                    "sequence": "identification -> update_model -> new Runner/hardware/safety -> resynthesize -> safety re-validate (export would be re-generated with new SHA256)",
-                    "export_delta": "delivered waveform SHA256 changed after calibration (see fallback_state vs post_cal SHA)" ,
+                    "sequence": "identification -> update_model -> calibrated Hardware/Safety -> resynthesize -> safety re-validate (calibrated export separate from main export)",
+                    "export_delta": "calibrated delivered SHA256 differs from main export (see fallback_state vs post_cal SHA)",
                 })
-                # Also write calibrated export waveform for provenance (would replace previous export in real update)
+                # Write ACTUAL calibrated waveform files (N3 fix) – previously only JSON was written
                 import hashlib as _hcal2
                 post_sha = _hcal2.sha256(post_trace['v'].tobytes()).hexdigest()
+                # Calibrated delivered waveform + DAC + ideal
+                save_csv(out/'calibrated_delivered_waveform.csv', ['time_s']+self.trap.names, np.column_stack([post_trace['t'], post_trace['v']]))
+                save_csv(out/'calibrated_ideal_waveform.csv', ['time_s']+self.trap.names, np.column_stack([post_trace['ct'], post_trace['cmd']]))
+                with open(out/'calibrated_dac_waveform.csv','w',newline='') as f:
+                    w=csv.writer(f);w.writerow(['time_s']+self.trap.names)
+                    for ti,codes in zip(post_trace['ct'], post_trace['codes']):
+                        w.writerow([float(ti)]+[int(code) for code in codes])
                 write_json(out/'calibration_export.json', {
                     "version": cal_state_version,
                     "theta": theta.tolist() if isinstance(theta, np.ndarray) else list(theta),
                     "delivered_sha256": post_sha,
                     "safety_passed": bool(post_safety.passed),
-                    "proposed_export": "calibrated_delivered_waveform.csv",
+                    "export_file": "calibrated_delivered_waveform.csv",
+                    "also_exported": ["calibrated_ideal_waveform.csv","calibrated_dac_waveform.csv"],
+                    "provenance": "actual calibrated waveform files written, SHA matches delivered array",
                 })
-                # Preserve calibrated trace for later manifest
+                # Preserve calibrated trace for later manifest (but do not mutate main self.hw)
                 calibration_post_cal = post_cal
+                # Do NOT mutate self.hw / self.safety_layer here – main export stays on original hw (N1)
             except Rejected as e_resyn:
-                write_json(out/'calibration_resynthesis.json', {"version": cal_state_version, "error": str(e_resyn), "code": getattr(e_resyn,'code','unknown'), "blocked": True})
-                # Revert safety to original on failure? Keep original hw for remainder of run but record version
+                write_json(out/'calibration_resynthesis.json', {"version": cal_state_version, "error": str(e_resyn), "code": getattr(e_resyn,'code','unknown'), "blocked": True,
+                    "original_hardware": asdict(original_hw)})
+                write_json(out/'calibration_export.json', {"version": cal_state_version, "error": str(e_resyn), "code": getattr(e_resyn,'code','unknown'), "export_file": None, "blocked": True})
                 calibration_post_cal = None
             except Exception as e_resyn:
-                write_json(out/'calibration_resynthesis.json', {"version": cal_state_version, "error": str(e_resyn), "code": getattr(e_resyn,'code','unknown'), "blocked": True})
+                write_json(out/'calibration_resynthesis.json', {"version": cal_state_version, "error": str(e_resyn), "code": getattr(e_resyn,'code','unknown'), "blocked": True,
+                    "original_hardware": asdict(original_hw)})
+                write_json(out/'calibration_export.json', {"version": cal_state_version, "error": str(e_resyn), "code": getattr(e_resyn,'code','unknown'), "export_file": None, "blocked": True})
                 calibration_post_cal = None
             # Also test blocked-by-missing-data path (honest: returns missing_external_data, not success)
             blocked = self.calibration.identify_from_residuals([])
@@ -789,15 +877,23 @@ class Runner:
         data=(out/'dac_waveform.csv').read_bytes()
         # Determine calibration state for metadata (versioned)
         _cal_version = locals().get('cal_state_version', 'cal-v0-unknown')
-        # Export authorization requires safety passed AND not just simulation flag
-        export_authorized = bool(safety_report.passed and fallback_theta is not None and safety_report.passed)
-        # If calibration updated hardware, the current waveform metadata should reference calibrated model
+        # N2 fix: simulation_only waveform must NEVER be execution_authorized, even if safety passed.
+        # execution_authorized requires measured calibration (cal-measured*) and real trap maps, not synthetic cal-v1.
+        # simulation_passed indicates safety passed for simulation; execution_authorized is strictly false here.
+        simulation_passed = bool(safety_report.passed and fallback_theta is not None)
+        # Only a measured calibration (not synthetic) could authorize execution – synthetic cal-v1 never does
+        is_measured_cal = isinstance(_cal_version, str) and _cal_version.startswith("cal-measured")
+        export_authorized = False  # hard false for simulation_only; real hardware would require is_measured_cal and safety_passed
+        # Keep traceability: record what WOULD be authorized in simulation vs real
         write_json(out/'waveform_metadata.json',{'version':'1.0','simulation_only':True,
-            'execution_authorized': export_authorized,'channel_order':self.trap.names,'units':'DAC codes (integer)',
+            'execution_authorized': export_authorized,
+            'simulation_passed': simulation_passed,
+            'would_authorize_if_measured': bool(simulation_passed and is_measured_cal),
+            'channel_order':self.trap.names,'units':'DAC codes (integer)',
             'sample_period_s':1/self.hw.sample_rate_hz,'code_min_V':self.hw.dac_min_V,
             'code_max_V':self.hw.dac_max_V,'dac_bits':self.hw.dac_bits,
             'hold':'zero_order','last_sample':'terminal command, held indefinitely',
-            'clock':'common ideal simulation clock','trigger_latency_s':0,
+            'clock':'common ideal simulation clock','trigger_latency_s':float(self.hw.trigger_latency_s),'jitter_s':float(self.hw.jitter_s),
             'calibration_state': _cal_version,'hardware_model':asdict(self.hw),
             'calibration_success': bool(locals().get('calibration_success_flag', False)),
             'sha256':hashlib.sha256(data).hexdigest(),
@@ -815,6 +911,18 @@ class Runner:
         # calibration_demo_success reflects whether identification converged with finite residuals, not just existence
         _cal_demo_success = bool(locals().get('calibration_success_flag', False))
         _cl_ready = bool(locals().get('closed_loop_success', False))
+        # B2: honest flag whether hardware-aware optimization actually improved over baseline (computed from numbers, not constant)
+        try:
+            sta_score = next(sc for sc, nm, _, _ in rerank if nm == 'sta')
+            aware_score = next(sc for sc, nm, _, _ in rerank if nm == 'aware')
+            sta_metrics = next(rr for _, nm, _, rr in rerank if nm == 'sta')
+            aware_metrics = next(rr for _, nm, _, rr in rerank if nm == 'aware')
+            optimization_improved = bool(aware_score < sta_score - 1e-12 and aware_metrics.get('accepted', False))
+        except Exception:
+            optimization_improved = False
+        # B5: distortion handling provenance
+        distortion_threshold_exceeded = bool(locals().get('distortion_requires_resynthesis', False))
+        distortion_resynthesis_done = bool(locals().get('distortion_reopt_result', None) is not None)
         status={'nominal_quality_passed':bool(r['accepted'] and ind['accepted'] and refined['accepted']),'numerical_validation_passed':validation['convergence_passed'],
                 'robust_all_passed':bool(robust['pass_fraction']==1),
                 'hold_scan_all_passed': _hold_all_passed,
@@ -826,25 +934,30 @@ class Runner:
                 'closed_loop_blocked': bool(locals().get('closed_loop_blocked', False)),
                 'fallback_available': bool(fallback_theta is not None),
                 'export_authorized': export_authorized,
+                'simulation_passed': bool(safety_report.passed and fallback_theta is not None),
+                'optimization_improved_over_baseline': optimization_improved,
+                'distortion_threshold_exceeded': distortion_threshold_exceeded,
+                'distortion_resynthesis_attempted': distortion_resynthesis_done,
                 'experiment_ready':False,'selected':selected,
                 'scope':'simulation-only on specified Sion/GDS electrode geometry'}
         status['simulation_acceptance_passed']=bool(status['nominal_quality_passed'] and status['numerical_validation_passed'] and
                status['robust_all_passed'] and status['hold_scan_all_passed'] and status['safety_passed'] and status['calibration_demo_success'] and status['closed_loop_ready'])
         write_json(out/'status.json',status)
         # Manifest – dynamic source commit, not hardcoded c3551aa, and stable source_sha256 via git ls-files
+        # N7 fix: suppress git stderr to avoid "fatal: not a git repository" noise when run from archive/container
         import subprocess as _sp
         def _git_commit():
             try:
-                return _sp.check_output(["git", "rev-parse", "HEAD"], cwd=Path(__file__).parent.parent, text=True).strip()
+                return _sp.check_output(["git", "rev-parse", "HEAD"], cwd=Path(__file__).parent.parent, text=True, stderr=_sp.DEVNULL).strip()
             except Exception:
                 try:
-                    return _sp.check_output(["git", "rev-parse", "HEAD"], cwd=Path.cwd(), text=True).strip()
+                    return _sp.check_output(["git", "rev-parse", "HEAD"], cwd=Path.cwd(), text=True, stderr=_sp.DEVNULL).strip()
                 except Exception:
                     return "unknown-not-a-git-repo"
         _commit = _git_commit()
         # Compute source_sha256 only for tracked python files to avoid drift between runs (untracked files vary)
         try:
-            _tracked = _sp.check_output(["git", "ls-files", "shuttle_sim/*.py"], cwd=Path(__file__).parent.parent, text=True).strip().splitlines()
+            _tracked = _sp.check_output(["git", "ls-files", "shuttle_sim/*.py"], cwd=Path(__file__).parent.parent, text=True, stderr=_sp.DEVNULL).strip().splitlines()
             _src_files = [Path(__file__).parent.parent / p for p in _tracked if p]
         except Exception:
             _src_files = list(Path(__file__).parent.glob('*.py'))

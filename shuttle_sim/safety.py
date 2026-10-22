@@ -51,20 +51,35 @@ class SafetyLayer:
             raise Rejected("slew_limit", f"max jump {jumps:g} V exceeds {self.hw.max_jump_V:g}")
         return {"max_jump_V": jumps, "slew_proxy": "ok"}
 
-    def check_filter_consistency(self, distortion_report: dict, threshold_V=0.8):
-        # delivered vs intended deviation should not destroy intent; threshold is task-dependent
+    def check_filter_consistency(self, distortion_report: dict, threshold_V=None):
+        # Threshold is task-configurable and EXECUTABLE (B5): exceeding triggers rejection/re-optimization, not just warn.
+        # Spec: "If расхождение превышает допустимый порог, система обязана либо re-optimization under delivered model, либо отклонять"
+        if threshold_V is None:
+            # Priority: task.distortion_threshold_V > task.max_distortion_V > cfg distortion_threshold > default
+            # Default 0.25 V is honest for RC at 500kHz/1MHz; previous 0.8 was arbitrary and too permissive
+            if isinstance(self.task, dict):
+                threshold_V = float(self.task.get("distortion_threshold_V",
+                                    self.task.get("max_distortion_V",
+                                        self.task.get("distortion_threshold",
+                                            0.25))))
+            else:
+                threshold_V = float(getattr(self.task, "distortion_threshold_V", 0.25))
         # Fail-closed if distortion report contains non-finite
         max_dev = distortion_report.get("max_deviation_V", 0)
         if not np.isfinite(max_dev):
             raise Rejected("numerical_failure", "distortion max_deviation_V is non-finite")
-        # also check any other distortion values are finite
+        if not np.isfinite(threshold_V):
+            raise Rejected("numerical_failure", "distortion threshold is non-finite")
         for k, v in distortion_report.items():
             if isinstance(v, (float, int, np.floating)):
                 if not np.isfinite(v):
                     raise Rejected("numerical_failure", f"distortion field {k} is non-finite")
-        # we don't reject purely on filtering, but flag if > threshold
-        flag = "warn" if max_dev > threshold_V else "ok"
-        return {"max_deviation_V": float(max_dev), "filter_consistency": flag}
+        # Executable threshold: reject with delivered_intent_violated if intent destroyed (spec B5)
+        if max_dev > threshold_V:
+            raise Rejected("delivered_intent_violated",
+                           f"max_deviation {max_dev:.3f} V exceeds threshold {threshold_V:.3f} V – intent destroyed, requires re-optimization under delivered model or rejection")
+        flag = "ok"  # only ok remains; warn case now raises
+        return {"max_deviation_V": float(max_dev), "filter_consistency": flag, "threshold_V": float(threshold_V)}
 
     def check_confinement(self, hessians, min_freq_hz):
         if not np.isfinite(hessians).all():

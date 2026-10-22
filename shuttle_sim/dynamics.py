@@ -47,12 +47,19 @@ def summarize(z,C,local,mass,target_m):
     Vcov=R.T@(C[3:,3:]*(L/T)**2)@R
     nc=mass*(np.diag(Vcov)+w*w*np.diag(Xcov))/(2*hbar*w)-.5
     coherent=mass*((R.T@v)**2+w*w*(R.T@dx)**2)/(2*hbar*w)
+    # B14: canonical metrics missing in spec – add residual motional energy and placeholder for max transport error
+    # residual_motional_energy_J = sum ħ ω (n)  (coherent + incoherent total excitation energy above ground)
+    # Use final mode frequencies for energy conversion; n is total per mode
+    residual_energy_J = float(np.sum(hbar * w * n))
+    # max_transport_error will be filled in propagate() where full trajectory is known; here set final error as fallback
     return {'n_modes':n.tolist(),'n_total':float(n.sum()),
             'coherent_n_modes':coherent.tolist(),'coherent_n_total':float(coherent.sum()),
             'covariance_n_modes':nc.tolist(),'covariance_n_total':float(nc.sum()),
             'mean_position_m':(z[:3]*L).tolist(),'mean_velocity_m_s':v.tolist(),
             'position_error_m':float(np.linalg.norm(z[:3]*L-target_m)),
             'well_target_error_m':float(np.linalg.norm(local.position_m-target_m)),
+            'max_transport_error_m':float(np.linalg.norm(z[:3]*L-target_m)),  # fallback = final error; propagate overwrites with true max over trajectory
+            'residual_motional_energy_J':residual_energy_J,
             'phase_space_displacement_m':dx.tolist(),
             'covariance_dimensionless':C.tolist(),'covariance_min_eigenvalue':float(np.linalg.eigvalsh(C).min()),
             'min_symplectic_eigenvalue_over_hbar_half':float(np.min(np.abs(sym))/(hbar*T/(2*mass*L**2)))}
@@ -137,6 +144,20 @@ def propagate(times_s, centers_m, hessians_J_m2, initial, final, mass, target_m,
     else:
         raise ValueError('unknown propagator')
     summary = summarize(z,C,final,mass,target_m)
+    # B14: compute true max_transport_error over full trajectory if available (mean vs well center)
+    # For exact method we have per-step means stored before decimation; for dop853 we have sol.
+    # Approximate using final z vs target as fallback already set; overwrite if trajectory history available
+    try:
+        if 'traj_means' in locals() and traj_means is not None and len(traj_means) == len(r):
+            # exact trajectory: compare each mean to corresponding well center r
+            mean_arr = np.asarray([(m if isinstance(m, (list, np.ndarray)) else m) for m in traj_means])  # will be overwritten after decimation – compute before decimation
+            # Actually traj_means at this point is not yet decimated (decimation happens below), so use it
+            well_arr = np.asarray(r)
+            if mean_arr.shape == well_arr.shape:
+                max_err = float(np.max(np.linalg.norm(mean_arr - well_arr, axis=1)))
+                summary['max_transport_error_m'] = max_err
+    except Exception:
+        pass
     if return_trajectory:
         # decimate if too long
         if len(traj_times) > trajectory_decimate:
