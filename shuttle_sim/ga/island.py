@@ -4,11 +4,12 @@ from .genome import Genome
 from .fitness import evaluate_genome
 
 class Island:
-    def __init__(self, island_id, strategy, pop_size=20, rng=None, baseline='sta'):
+    def __init__(self, island_id, strategy, pop_size=20, rng=None, baseline='sta', isolated_until=0):
         self.id = island_id
-        self.strategy = strategy  # name S/A/V/R/H
+        self.strategy = strategy  # name S/A/V/R/H/Q...
         self.pop_size = pop_size
         self.baseline = baseline
+        self.isolated_until = int(isolated_until)
         self.rng = np.random.default_rng(rng)
         self.population = []
         self.generation = 0
@@ -17,18 +18,19 @@ class Island:
         self.params = self._strategy_params(strategy)
 
     def _strategy_params(self, s):
-        # tune per island
         base = dict(mutation_sigma=0.06, cx_rate=0.7, tour_k=3, elite=2)
         if s in ('S','smooth'):
-            return dict(mutation_sigma=0.04, cx_rate=0.7, tour_k=3, elite=2, desc="smooth explorer, low sigma")
+            return dict(mutation_sigma=0.04, cx_rate=0.7, tour_k=3, elite=2, desc="smooth explorer, low sigma (не STA)")
         if s in ('A','sta'):
             return dict(mutation_sigma=0.06, cx_rate=0.9, tour_k=5, elite=2, desc="STA explorer, high cx")
         if s in ('V','variable'):
-            return dict(mutation_sigma=0.08, cx_rate=0.9, tour_k=3, elite=2, desc="variable freq, 10 genes")
+            return dict(mutation_sigma=0.08, cx_rate=0.9, tour_k=3, elite=2, desc="variable freq 10 генов, проваливает ω")
         if s in ('R','robust'):
             return dict(mutation_sigma=0.06, cx_rate=0.7, tour_k=5, elite=3, desc="robust, larger elite")
         if s in ('H','hardware'):
-            return dict(mutation_sigma=0.05, cx_rate=0.7, tour_k=3, elite=2, desc="hardware penalty")
+            return dict(mutation_sigma=0.05, cx_rate=0.7, tour_k=3, elite=2, desc="hardware penalty lowpass")
+        if s in ('F','free'):
+            return dict(mutation_sigma=0.07, cx_rate=0.8, tour_k=3, elite=2, desc="free-form 10 генов, без привязки к STA/smooth")
         return base
 
     def initialize(self, seed_genome=None):
@@ -132,8 +134,11 @@ class Island:
 
     def snapshot(self):
         fits=[g.fitness for g in self.population if g.fitness is not None]
+        isolated = self.isolated_until > self.generation
         return dict(id=self.id, strategy=self.strategy, generation=self.generation,
                     pop_size=self.pop_size, best_fitness=float(min(fits)) if fits else None,
                     mean_fitness=float(np.mean(fits)) if fits else None,
                     diversity=self.history[-1]['diversity'] if self.history else 0,
+                    isolated_until=self.isolated_until,
+                    is_isolated=isolated,
                     params=self.params)
