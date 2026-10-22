@@ -111,18 +111,28 @@ class Calibration:
                         continue
                     if cmds.shape[1] != C or meas.shape[1] != C:
                         continue
-                    # Handle length mismatch (e.g., dense delivery vs sparse commands):
+                    # Handle length mismatch (dense delivery vs sparse commands):
+                    # B4 fix: use ZOH hold expansion (not linear interp by index) which matches Hardware.deliver's ZOH.
+                    # Measured is dense (subdiv * sparse) with RC filtering; sparse commands are held constant between samples.
                     if cmds.shape[0] != meas.shape[0]:
                         N_c, N_m = cmds.shape[0], meas.shape[0]
-                        x_idx = np.linspace(0, N_c-1, N_c)
-                        y_idx = np.linspace(0, N_c-1, N_m)
-                        cmds_resampled = np.column_stack([
-                            np.interp(y_idx, x_idx, cmds[:, ch]) for ch in range(C)
-                        ])
+                        if N_m > N_c and N_m % N_c == 0:
+                            # Exact subdiv factor: repeat each command
+                            factor = N_m // N_c
+                            cmds_resampled = np.repeat(cmds, factor, axis=0)
+                        else:
+                            # Fallback: ZOH-like hold via nearest index (not linear)
+                            # Use repeat+trim or nearest neighbor interp
+                            x_idx = np.linspace(0, N_c-1, N_c)
+                            y_idx = np.linspace(0, N_c-1, N_m)
+                            # Nearest neighbor (hold) – more physical than linear for ZOH
+                            y_idx_nearest = np.clip(np.round(y_idx).astype(int), 0, N_c-1)
+                            cmds_resampled = cmds[y_idx_nearest, :]
                         cmds = cmds_resampled
                     if cmds.shape != meas.shape:
                         continue
-                    # Fit per channel: meas = g*cmds + o (least squares ignoring filter/delay)
+                    # Fit per channel: meas = g*cmds + o, but B4: avoid filter transient bias by using stable hold regions
+                    # Gain/offset should be estimated where command is settled (derivative small), not during fast ramps where RC distorts.
                     entry_residual = 0.0
                     entry_identifiable = 0
                     for ch in range(C):
@@ -130,15 +140,29 @@ class Calibration:
                         y = meas[:, ch]
                         std_x = float(np.std(x))
                         if std_x < 1e-9:
-                            # constant channel – not identifiable (singular design matrix)
                             continue
-                        A = np.column_stack([x, np.ones_like(x)])
-                        coeff, res_arr, _, _ = np.linalg.lstsq(A, y, rcond=None)
+                        # B4: select stable points where command derivative is small (filter settled)
+                        # Use gradient threshold: stable where |dx| < 0.02 * std
+                        dx = np.abs(np.diff(x, prepend=x[0]))
+                        stable_thresh = max(0.005, 0.02 * std_x)  # at least 5mV
+                        stable_mask = dx < stable_thresh
+                        # Require at least 10% stable points, otherwise fall back to all points but warn
+                        if np.sum(stable_mask) < 0.1 * len(x):
+                            stable_mask = np.ones_like(x, dtype=bool)
+                        x_stable = x[stable_mask]
+                        y_stable = y[stable_mask]
+                        if np.std(x_stable) < 1e-9:
+                            continue
+                        A = np.column_stack([x_stable, np.ones_like(x_stable)])
+                        coeff, res_arr, _, _ = np.linalg.lstsq(A, y_stable, rcond=None)
                         g_ch = float(coeff[0])
                         o_ch = float(coeff[1])
-                        # compute per-channel residual (honest, not zero)
-                        y_pred = g_ch * x + o_ch
-                        resid = float(np.sum((y - y_pred) ** 2))
+                        # Residual over stable points (honest, filter-settled region)
+                        y_pred_stable = g_ch * x_stable + o_ch
+                        resid = float(np.sum((y_stable - y_pred_stable) ** 2))
+                        # Also compute full residual for provenance (includes transients)
+                        y_pred_full = g_ch * x + o_ch
+                        full_resid = float(np.sum((y - y_pred_full) ** 2))
                         entry_residual += resid
                         g_accum[ch].append(g_ch)
                         o_accum[ch].append(o_ch)

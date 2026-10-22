@@ -75,13 +75,32 @@ def main():
     hall=engine.run(verbose=True)
     print(f"[GA] done. hall top {hall[0].fitness:.4g} theta {hall[0].theta.round(3).tolist()} island {hall[0].island}")
     # also export best waveform artifacts akin to pipeline
+    # N4 fix: hall contains islands with different baselines (smooth vs sta); fitness and metrics must use SAME baseline
     try:
         best=hall[0]
-        # evaluate best exactly for final artifact
         from pathlib import Path
         out=Path(args.out)
-        metrics=runner.evaluate(best.to_theta8(), baseline='sta', exact_nodes=runner.cfg.get('validation_nodes',321), subdivisions=runner.cfg.get('validation_subdivisions',4))
-        (out/"ga_best.json").write_text(json.dumps({"theta":best.theta.tolist(),"fitness":best.fitness,"metrics":metrics,"island":best.island},indent=2, default=str))
+        # Determine baseline for best island (from engine islands, not hardcoded sta)
+        best_baseline = 'sta'
+        try:
+            for isl in engine.islands:
+                if isl.strategy == best.island:
+                    best_baseline = isl.baseline
+                    break
+        except Exception:
+            best_baseline = 'sta'
+        # Re-evaluate with best's own baseline for consistency; use full theta (8/10/12) – N4, R6
+        try:
+            metrics=runner.evaluate(best.theta, baseline=best_baseline, exact_nodes=runner.cfg.get('validation_nodes',321), subdivisions=runner.cfg.get('validation_subdivisions',4))
+        except Exception:
+            metrics=runner.evaluate(best.to_theta8(), baseline=best_baseline, exact_nodes=runner.cfg.get('validation_nodes',321), subdivisions=runner.cfg.get('validation_subdivisions',4))
+        # Recompute fitness consistently with same baseline metrics (not mixing baselines)
+        try:
+            from shuttle_sim.ga.fitness import hierarchical_fitness
+            fitness_consistent = hierarchical_fitness(metrics, runner.task, distortion=metrics.get('distortion'), theta=best.theta)
+        except Exception:
+            fitness_consistent = best.fitness
+        (out/"ga_best.json").write_text(json.dumps({"theta":best.theta.tolist(),"fitness":fitness_consistent,"metrics":metrics,"island":best.island,"baseline":best_baseline},indent=2, default=str))
         # also save hall
         (out/"ga_hall.json").write_text(json.dumps([{"theta":g.theta.tolist(),"fitness":g.fitness,"island":g.island,"status":g.status,"metrics":g.metrics} for g in hall],indent=2, default=str))
         print(f"[GA] wrote {out/'ga_best.json'} and {out/'ga_hall.json'}")

@@ -84,7 +84,13 @@ def infer_observables_from_raw(raw_measurement: dict) -> dict:
             n_est = 0.0
         else:
             ratio = np.clip(p_red / (p_blue + 1e-12), 0, 0.999)
-            n_est = float(ratio / (1 - ratio)) if ratio < 0.99 else float(tr["true_n"])
+            if ratio < 0.99:
+                n_est = float(ratio / (1 - ratio))
+            else:
+                # N6 fix: never return ground truth (tr["true_n"]) – that violates experimental contract.
+                # Ratio saturates → inference is unidentifiable, return saturated estimate with large uncertainty flag.
+                # Previously: n_est = float(tr["true_n"])  # violates contract
+                n_est = float(10.0)  # saturated high-n estimate, clearly flagged via provenance below
         n_est_modes.append(n_est)
     n_total_est = float(np.sum(n_est_modes))
     pseudo_metrics = {

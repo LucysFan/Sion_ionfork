@@ -36,9 +36,8 @@ class TrajectoryParameterization:
 
     @staticmethod
     def time_warp(s: np.ndarray, coeff: np.ndarray) -> np.ndarray:
-        env = PolynomialEnvelope.envelope(s) if False else 16*s**2*(1-s)**2
-        # Actually use 16 s^2 (1-s)^2? pipeline uses P([0,0,16,-32,16]) which is 16s^2 -32s^3 +16s^4
-        # Simpler: use same polynomial as pipeline for exact compatibility.
+        env = PolynomialEnvelope.envelope(s)
+        # pipeline uses P([0,0,16,-32,16]) which is 16s^2 -32s^3 +16s^4 == 16 s^2 (1-s)^2, same as envelope
         from numpy.polynomial import Polynomial as Poly
         env_poly = Poly([0,0,16,-32,16])
         base = Poly([0,1])

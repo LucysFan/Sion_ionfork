@@ -132,7 +132,8 @@ class SionTrap:
 
 
 def load_trap(cfg):
-    import sion
+    # B15: avoid importing full sion/pylion stack when not needed (shuttle_sim should run with GDS without h5py)
+    # Import lazily per kind, so gds path only needs sion.electrode, not sion.sion/pylion
     mass = cfg['mass_amu']*atomic_mass
     charge = cfg['charge_e']*elementary_charge
     L = cfg['length_scale_m']
@@ -141,6 +142,10 @@ def load_trap(cfg):
         raise ValueError('positive trap scales required')
     O = 2*np.pi*cfg['rf_frequency_hz']
     if cfg['kind'] == 'sion_five_wire':
+        try:
+            import sion  # only for five_wire, not for GDS (B15)
+        except ImportError as e:
+            raise ImportError(f"sion five_wire requires full sion stack (h5py/jinja2/termcolor): {e}")
         d = cfg['geometry']
         amp = cfg['rf_peak_V']*np.sqrt(charge/mass)/(2*L*O)
         sys = sion.five_wire_trap_design(amp,d['top_dc'],d['bottom_dc'],d['top_rf'],

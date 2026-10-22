@@ -15,11 +15,14 @@ class Hardware:
     gain: object = 1.
     offset_V: object = 0.
     delay_s: object = 0.
+    # B16: trigger latency and jitter model (per-channel delay covers skew, this covers global latency)
+    trigger_latency_s: float = 0.0
+    jitter_s: float = 0.0
     max_jump_V: float = 1.
     identifier: str = 'declared-simulation-chain-v1'
 
     def validate(self, channels):
-        finite([self.sample_rate_hz,self.dac_min_V,self.dac_max_V,self.max_jump_V], 'hardware')
+        finite([self.sample_rate_hz,self.dac_min_V,self.dac_max_V,self.max_jump_V,self.trigger_latency_s,self.jitter_s], 'hardware')
         if self.sample_rate_hz <= 0 or self.dac_min_V >= self.dac_max_V or self.max_jump_V <= 0:
             raise ValueError('invalid hardware scales')
         if not isinstance(self.dac_bits,int) or not 2 <= self.dac_bits <= 32:
@@ -28,8 +31,8 @@ class Hardware:
             raise ValueError('low-pass poles must be positive')
         for k in ['gain','offset_V','delay_s']:
             np.broadcast_to(finite(getattr(self,k),k),(channels,))
-        if np.any(np.asarray(self.delay_s)<0) or np.any(np.asarray(self.gain)<=0):
-            raise ValueError('positive gains and nonnegative delays required')
+        if np.any(np.asarray(self.delay_s)<0) or np.any(np.asarray(self.gain)<=0) or self.trigger_latency_s<0 or self.jitter_s<0:
+            raise ValueError('positive gains, nonnegative delays/latency/jitter required')
 
     def deliver(self, commands, subdivisions=4, ideal=False):
         """ZOH at k/fs, exact cascade propagation, DC steady-state prehistory."""
@@ -71,12 +74,32 @@ class Hardware:
                 y[k+1]=state[-1]
         if not ideal:
             delay=np.broadcast_to(self.delay_s,(C,))
-            y=np.column_stack([np.interp(t-delay[j],t,y[:,j],left=y[0,j]) for j in range(C)])
+            # B16: include trigger latency (common) and jitter (per-channel random)
+            trig = float(self.trigger_latency_s)
+            jit = float(self.jitter_s)
+            if jit > 0:
+                # deterministic pseudo-random per call based on command hash for reproducibility
+                # Use first sample sum as seed
+                seed = int(np.sum(c) * 1e6) % (2**31)
+                rng = np.random.default_rng(seed)
+                jit_per_ch = rng.uniform(-jit, jit, size=C)
+            else:
+                jit_per_ch = np.zeros(C)
+            total_delay = delay + trig + jit_per_ch
+            y=np.column_stack([np.interp(t-total_delay[j],t,y[:,j],left=y[0,j]) for j in range(C)])
+        else:
+            total_delay = np.zeros(C)
+            jit_per_ch = np.zeros(C)
+            trig = 0.0
         report={'max_command_jump_V':jumps,'clipping_events':0,'lsb_V':lsb,
                 'max_deviation_V':float(np.max(np.abs(y-held))),
                 'rms_deviation_V':float(np.sqrt(np.mean((y-held)**2))),
                 'channel_max_deviation_V':np.max(np.abs(y-held),axis=0).tolist(),
                 'delay_s':np.broadcast_to(self.delay_s,(C,)).tolist(),
+                'trigger_latency_s': float(trig),
+                'jitter_s': float(self.jitter_s),
+                'jitter_per_channel_s': jit_per_ch.tolist() if 'jit_per_ch' in locals() else [0.0]*C,
+                'total_delay_s': total_delay.tolist() if 'total_delay' in locals() else np.broadcast_to(self.delay_s,(C,)).tolist(),
                 'hold':'zero_order','filter':'exact continuous RC cascade on dense ZOH grid',
                 'hardware_identifier':self.identifier,'calibration_state':'unmeasured_simulation_assumptions'}
         return t,y,codes,report
