@@ -59,8 +59,18 @@ class TransportTask:
         start = finite(initial_position_m, "start_m")
         target = start + distance * direction
         corridor = float(cfg.get("corridor_halfwidth_m", 20e-6))
-        hold_scan = list(cfg.get("hold_scan_s", [hold]))
-        durations = list(cfg.get("durations_s", [duration]))
+        # Support both canonical and alias keys (hold_scan_s at cfg root vs task, durations_scan_s alias)
+        hold_scan = list(cfg.get("hold_scan_s", cfg.get("hold_scan_s", [hold])))
+        # alias durations_scan_s used in configs (task holds durations_scan_s), canonical durations_s also supported
+        if "durations_scan_s" in cfg:
+            durations_src = cfg["durations_scan_s"]
+        elif "durations_s" in cfg:
+            durations_src = cfg["durations_s"]
+        elif "duration_scan_s" in cfg:
+            durations_src = cfg["duration_scan_s"]
+        else:
+            durations_src = [duration]
+        durations = list(durations_src)
         return cls(
             start_m=start, target_m=target, direction=direction,
             distance_m=distance, duration_s=duration, hold_s=hold,

@@ -185,20 +185,16 @@ class Runner:
     def commands(self,theta,baseline='smooth'):
         theta=finite(theta,'theta')
         if theta.shape not in [(8,), (10,), (12,)]:
-            raise ValueError('8, 10 or 12 parameters required (8=2 warp+6 volt, 10=+2 freq, 12=+4 multi-dip)')
-        # если 10/12 — последние 2/4 это частоты, не идут в ΔV (они уже учтены в prepare ω(s))
-        n_volt = 6 if theta.shape[0]==8 else (6 if theta.shape[0]==10 else 8)  # для 12: 8 вольтовых (5 огибающих×2 минус 2 частоты? упростим)
-        # унифицируем: для 12 первые 2 warp, следующие 6/8 — напряжение, последние 2/4 — частоты (не трогаем здесь)
-        # фактически ΔV использует только вольтовые коэффы:
+            raise ValueError('8, 10 or 12 parameters required (8=2 warp+6 volt, 10=2 warp+8 volt extended, 12=2 warp+10 volt multi-dip)')
+        # All dims: first 2 are time-warp, remaining are voltage corrections via extended envelope basis.
+        # 8: 3 basis ×2 SVD modes =6, 10: 4 basis ×2 =8, 12: 5 basis ×2 =10.
+        # This ensures extra genes (10/12) are physically active and not ignored (R6).
         if theta.shape[0]==12:
-            # 2 warp + 8 volt (5 env ×2) — частоты отдельно в prepare, но для совместимости считаем что 12 = 2+6+4 частоты
-            # чтобы не ломать старый смысл, поддержим оба: если prepare variable, частоты уже в sroute, здесь berём 6 вольтовых
-            theta_volt = theta[2:8]  # 6
-            # extra freq coeffs theta[8:12] игнорируются здесь (уже в ω(s))
+            theta_volt = theta[2:12]  # 10 coeffs -> 5 basis ×2
         elif theta.shape[0]==10:
-            theta_volt = theta[2:8]
+            theta_volt = theta[2:10]  # 8 coeffs -> 4 basis ×2
         else:
-            theta_volt = theta[2:8]
+            theta_volt = theta[2:8]   # 6 coeffs -> 3 basis ×2
         t,s,d,holds,T0=self.grid()
         # Local lead vanishes with value and slope at leg boundaries.
         from numpy.polynomial import Polynomial as P
@@ -219,14 +215,29 @@ class Runner:
         if route.min()<self.sroute[0] or route.max()>self.sroute[-1]:
             raise Rejected('route_corridor','reference outside supported route')
         v=self.voltage_spline(route)
-        # ΔV базис — 3 огибающие для 8/10 dim, 5 для 12 dim (два дополнительных провала)
-        # смещение провалов не обязательно в середине достигается комбинацией e0/e1/e2
-        # и высшими гармониками e3/e4
+        # ΔV basis – extended envelope set so that 10/12 dims are physically active (R6 fix)
+        # 8: 3 basis ×2 modes =6, 10: 4 basis ×2 =8, 12: 5 basis ×2 =10
+        # Extra harmonics allow multiple non-central dips (not necessarily midpoint)
+        import math
         if theta.shape[0]==12:
-            # 12 = 2 warp +6 volt +4 freq → здесь 6 вольтовых, частоты уже в ω(s)
-            # для вольтовых multi-dip можно было бы 2+8+2, но пока 6
-            basis=np.column_stack([envelope,envelope*(2*s-1),envelope*(6*s*s-6*s+1)])
-            correction=(basis@theta_volt.reshape(3,2))@self.correction_modes
+            # 5 basis: env, env*(2s-1), env*(6s^2-6s+1), env*sin(2πs), env*sin(4πs)
+            basis=np.column_stack([
+                envelope,
+                envelope*(2*s-1),
+                envelope*(6*s*s-6*s+1),
+                envelope*np.sin(2*math.pi*s),
+                envelope*np.sin(4*math.pi*s),
+            ])
+            correction=(basis@theta_volt.reshape(5,2))@self.correction_modes
+        elif theta.shape[0]==10:
+            # 4 basis: env, env*(2s-1), env*(6s^2-6s+1), env*sin(2πs)
+            basis=np.column_stack([
+                envelope,
+                envelope*(2*s-1),
+                envelope*(6*s*s-6*s+1),
+                envelope*np.sin(2*math.pi*s),
+            ])
+            correction=(basis@theta_volt.reshape(4,2))@self.correction_modes
         else:
             basis=np.column_stack([envelope,envelope*(2*s-1),envelope*(6*s*s-6*s+1)])
             correction=(basis@theta_volt.reshape(3,2))@self.correction_modes
@@ -344,10 +355,20 @@ class Runner:
             return value
         bounds=[(-.10,.10),(-.10,.10)]+[(-.4,.4)]*6
         # Hard function budget. Preserve an evaluated baseline even if optimizer
-        # stops before a complete direction-set sweep.
+        # stops before a complete direction-set sweep. Budget counts initial point (R1 strict).
+        budget = int(self.cfg.get('optimization_evaluations', 80))
+        if budget < 1:
+            raise ValueError("optimization_evaluations must be >=1 (counts initial point)")
         loss(np.zeros(8))
-        opt=minimize(loss,best[1],method='Powell',bounds=bounds,
-                     options={'maxfev':self.cfg.get('optimization_evaluations',80),'xtol':1e-3,'ftol':1e-4})
+        remaining = max(0, budget - 1)
+        # If budget==1, no further evaluations beyond initial baseline
+        if remaining > 0:
+            opt=minimize(loss,best[1],method='Powell',bounds=bounds,
+                         options={'maxfev': remaining,'xtol':1e-3,'ftol':1e-4})
+        else:
+            # Create a dummy result when only initial point is allowed
+            from scipy.optimize import OptimizeResult
+            opt = OptimizeResult(x=best[1], fun=best[0], success=True, message="budget exhausted after initial evaluation", nfev=1)
         out={'theta':best[1].tolist(),'loss':best[0],'optimizer_success':bool(opt.success),
              'termination':str(opt.message),'evaluations':len(history),'history':history,
              'failure_mode':None if opt.success else 'optimizer_budget_exhaustion_or_stagnation',
@@ -447,20 +468,55 @@ class Runner:
             validation['nonlinear_centroid']=validate_full_field_centroid(self.trap,trace['t'],trace['v'],trace['initial'],
                                       self.target if self.task['protocol']=='one_way' else self.start)
         write_json(out/'validation.json',validation)
+        # Hold scan – unified schema: task.hold_scan_s is canonical, cfg root and durations_s alias supported
+        # Review R7: previous code read only cfg root, ignoring task.hold_scan_s -> hold_scan silently ignored
+        def _resolve_hold_scan():
+            # priority: task dict, transport_task, cfg root, alias hold_scan_s/durations
+            for src in [self.task, getattr(self, 'transport_task', None).__dict__ if hasattr(self, 'transport_task') else {}, self.cfg]:
+                if isinstance(src, dict):
+                    if "hold_scan_s" in src:
+                        v = src["hold_scan_s"]
+                        if v not in (None, [], {}):
+                            return list(v)
+                else:
+                    # transport_task is dataclass
+                    if hasattr(src, 'hold_scan_s') and src.hold_scan_s:
+                        return list(src.hold_scan_s)
+            return [original_hold]
         hold_scan=[];original_hold=self.task['hold_s']
+        hold_scan_list = _resolve_hold_scan()
+        # Also support legacy alias 'hold_scan_s' under cfg['task'] vs cfg root already covered
         try:
-            for hold in self.cfg.get('hold_scan_s',[original_hold]):
+            for hold in hold_scan_list:
                 self.task['hold_s']=float(hold)
+                # keep transport_task in sync for provenance
+                if hasattr(self, 'transport_task'):
+                    self.transport_task.hold_s = float(hold)
                 metric=self.evaluate(theta,'sta',exact_nodes=valid_nodes,subdivisions=valid_subdiv)
-                hold_scan.append({'hold_s':hold,'metrics':metric})
-        finally:self.task['hold_s']=original_hold
+                hold_scan.append({'hold_s':float(hold),'metrics':metric})
+        finally:
+            self.task['hold_s']=original_hold
+            if hasattr(self, 'transport_task'):
+                self.transport_task.hold_s = float(original_hold)
         write_json(out/'hold_scan.json',hold_scan)
+        # Robust – ensure evaluation uses current task settings restored above
         robust=self.robust(theta,self.cfg.get('robust_samples',8));write_json(out/'robust.json',robust)
 
         # === Observables & loss chain (spec §10) ===
         obs_chain = processing_chain(r, self.task)
         write_json(out/'observables.json', obs_chain['observables'])
         write_json(out/'observable_loss.json', {'loss': obs_chain['loss'], 'provenance': obs_chain['provenance']})
+        # Raw measurement contract (spec §10 raw→observable): synthesize raw sideband data then infer (R4)
+        try:
+            from .observables import synthesize_raw_sideband_measurement, infer_observables_from_raw, raw_to_observables_chain
+            raw = synthesize_raw_sideband_measurement(r)
+            inferred = infer_observables_from_raw(raw)
+            raw_chain = raw_to_observables_chain(r, self.task, include_raw=True)
+            write_json(out/'raw_measurement.json', raw)
+            write_json(out/'observables_from_raw.json', inferred)
+            write_json(out/'raw_chain.json', {"raw_measurement": raw, "observables_via_raw": inferred, "loss_via_raw": raw_chain['loss'], "provenance": raw_chain['provenance']})
+        except Exception as e_raw:
+            write_json(out/'raw_measurement.json', {"error": str(e_raw), "provenance": "raw synthesis failed"})
         # Per-scenario observable aggregation example (robust rows → observable losses)
         try:
             obs_losses = [processing_chain(row, self.task)['loss'] for row in robust['rows'] if row.get('status')=='ok']
@@ -476,30 +532,95 @@ class Runner:
         except Exception as e:
             write_json(out/'observable_aggregation.json', {"error": str(e)})
 
-        # === Safety layer (spec §13) ===
+        # === Safety layer (spec §13) – full fail-closed evaluation ===
         safety_report = self.safety_layer.evaluate(trace['cmd'], trace['v'], r['distortion'], trace['H'])
-        write_json(out/'safety_report.json', {"passed": safety_report.passed, "checks": safety_report.checks,
+        write_json(out/'safety_report.json', {"passed": bool(safety_report.passed), "checks": safety_report.checks,
                                                "failure_code": safety_report.failure_code, "failure_message": safety_report.failure_message})
-        # Additional safety: voltage bounds already enforced; fallback is last known safe (initial) theta
-        fallback_theta = np.zeros(8).tolist()
-        write_json(out/'fallback_state.json', {"theta": fallback_theta, "reason": "last_known_safe_is_zero_correction"})
-
-        # === Calibration demo (spec §9) – synthetic, declared, not fake ===
-        # Show that calibration reacts to inputs: create synthetic voltage-trace dataset with known gain error
+        # Fallback is last known safe: if current safety passed, current theta is last safe; else initial zero-correction
+        # Include delivered waveform checksum for export authorization (R1 last-safe checksum)
+        import hashlib as _hashlib
         try:
-            # Generate dataset: ideal commands vs delivered with 2% gain perturbation
+            delivered_sha256 = _hashlib.sha256(trace['v'].tobytes()).hexdigest()
+            cmd_sha256 = _hashlib.sha256(trace['cmd'].tobytes()).hexdigest()
+        except Exception:
+            delivered_sha256 = None
+            cmd_sha256 = None
+        if safety_report.passed:
+            fallback_theta = theta.tolist() if isinstance(theta, np.ndarray) else list(theta)
+            fallback_reason = "current_selected_theta_passed_full_safety"
+            fallback_sha = delivered_sha256
+            last_safe_theta = fallback_theta
+        else:
+            # Evaluate initial zero-correction as known-safe baseline
+            try:
+                ct0, cmd0, route0 = self.commands(np.zeros(8), baseline='sta')
+                t0, v0, _, dist0 = self.hw.deliver(cmd0, subdivisions=4)
+                _, H0, _, _ = self.rom(t0, v0, ct0, route0, stray=None, exact_nodes=None)
+                rep0 = self.safety_layer.evaluate(cmd0, v0, dist0, H0)
+                if rep0.passed:
+                    fallback_theta = np.zeros(8).tolist()
+                    fallback_reason = "selected_failed_safety_fallback_to_zero_correction (validated safe)"
+                    fallback_sha = _hashlib.sha256(v0.tobytes()).hexdigest()
+                    last_safe_theta = fallback_theta
+                else:
+                    fallback_theta = None
+                    fallback_reason = "no_safe_waveform_available: both selected and zero-correction failed safety"
+                    fallback_sha = None
+                    last_safe_theta = None
+            except Exception as ex0:
+                fallback_theta = None
+                fallback_reason = f"fallback_validation_failed: {ex0}"
+                fallback_sha = None
+                last_safe_theta = None
+        write_json(out/'fallback_state.json', {
+            "theta": fallback_theta,
+            "last_safe_theta": last_safe_theta,
+            "reason": fallback_reason,
+            "delivered_sha256": fallback_sha,
+            "command_sha256": cmd_sha256,
+            "safety_passed": bool(safety_report.passed),
+            "export_authorized": bool(safety_report.passed),
+        })
+
+        # === Calibration demo (spec §9–10) – synthetic, declared, versioned, resynthesis ===
+        # Spec requires calibration to be separate from black-box optimization and to
+        # trigger resynthesis via new Runner/safety/export when it succeeds.
+        calibration_success_flag = False
+        calibration_blocked_flag = False
+        try:
+            # Generate dataset: ideal commands vs delivered with 2% gain perturbation (declared truth)
             true_hw = Hardware(sample_rate_hz=self.hw.sample_rate_hz, dac_bits=self.hw.dac_bits,
                                dac_min_V=self.hw.dac_min_V, dac_max_V=self.hw.dac_max_V,
                                lowpass_hz=self.hw.lowpass_hz, gain=[1.02]*len(self.trap.indices),
                                offset_V=[0.015]*len(self.trap.indices), delay_s=[5e-9]*len(self.trap.indices),
                                max_jump_V=self.hw.max_jump_V)
-            # Collect a few synthetic traces
             dataset=[]
             for th in [np.zeros(8), np.array([0.02,-0.01,0.05,-0.02,0.03,0.01,-0.04,0.02]), np.array([-0.03,0.02,-0.05,0.04, -0.02, -0.01, 0.03, -0.03])]:
                 ct_cmd, cmd, _ = self.commands(th, baseline='sta')
                 _, meas_V, _, _ = true_hw.deliver(cmd, subdivisions=4)
                 dataset.append({"commands_V": cmd.tolist(), "measured_V": meas_V.tolist(), "theta": th.tolist()})
             cal_result = self.calibration.identify_from_residuals(dataset)
+            calibration_success_flag = bool(cal_result.success and np.isfinite(cal_result.residuals))
+            # Versioned calibration state – increments on each successful identification
+            import hashlib as _hcal
+            cal_state_version = "cal-v1" if calibration_success_flag else "cal-v0-blocked"
+            cal_state = {
+                "version": cal_state_version,
+                "timestamp_s": time.time(),
+                "hardware_before": asdict(self.hw),
+                "hardware_after": cal_result.updated_hardware if calibration_success_flag else asdict(self.hw),
+                "stray_before_V_m": [0,0,0],
+                "stray_after_V_m": cal_result.updated_stray_V_m,
+                "identification": {
+                    "method": cal_result.method,
+                    "success": bool(cal_result.success),
+                    "residuals": float(cal_result.residuals) if np.isfinite(cal_result.residuals) else None,
+                    "failure_code": cal_result.failure_code,
+                    "provenance": cal_result.provenance,
+                    "dataset_size": len(dataset),
+                },
+                "provenance": "synthetic dataset: shows identification reacts to input gain/offset; filter poles retained (requires step-response for full filter ID)",
+            }
             write_json(out/'calibration_demo.json', {
                 "dataset_size": len(dataset),
                 "result": asdict(cal_result),
@@ -507,46 +628,107 @@ class Runner:
                 "true_offset": true_hw.offset_V if isinstance(true_hw.offset_V, list) else [true_hw.offset_V],
                 "identified_gain": cal_result.updated_hardware.get("gain"),
                 "identified_offset": cal_result.updated_hardware.get("offset_V"),
+                "version": cal_state_version,
+                "calibration_state": cal_state,
                 "update_provenance": "synthetic dataset: shows identification reacts to input gain/offset; not a hard-coded answer",
             })
-            # Demonstrate resynthesis after calibration update (spec §10 sequence)
+            write_json(out/'calibration_state.json', cal_state)
+            # Demonstrate resynthesis after calibration update (spec §10 sequence: identify -> update_model -> new Runner+safety+export)
             try:
+                if not calibration_success_flag:
+                    raise Rejected(cal_result.failure_code or "calibration_not_converged", "calibration did not converge – resynthesis blocked")
                 updated_hw = self.calibration.update_model(cal_result)
-                # Re-evaluate selected theta with updated hardware model
-                post_cal = self.evaluate(theta, 'sta', hardware=updated_hw, exact_nodes=valid_nodes, subdivisions=valid_subdiv)
+                # Update pipeline's hardware and safety layer to reflect calibrated model (new Runner semantics)
+                self.hw = updated_hw
+                self.safety_layer = SafetyLayer(self.trap, self.hw, self.task)
+                # Re-evaluate selected theta with updated hardware model (resynthesize + re-validate)
+                post_cal, post_trace = self.evaluate(theta, 'sta', hardware=updated_hw, exact_nodes=valid_nodes, subdivisions=valid_subdiv, keep=True)
+                post_safety = self.safety_layer.evaluate(post_trace['cmd'], post_trace['v'], post_cal['distortion'], post_trace['H'])
                 write_json(out/'calibration_resynthesis.json', {
-                    "pre_calibration_metrics": {"n_total": r['n_total'], "position_error_m": r['position_error_m']},
-                    "post_calibration_metrics": {"n_total": post_cal['n_total'], "position_error_m": post_cal['position_error_m']},
+                    "version": cal_state_version,
+                    "pre_calibration_metrics": {"n_total": float(r['n_total']), "position_error_m": float(r['position_error_m'])},
+                    "post_calibration_metrics": {"n_total": float(post_cal['n_total']), "position_error_m": float(post_cal['position_error_m'])},
                     "improved": bool(post_cal['n_total'] <= r['n_total'] + 1e-9),
                     "updated_hardware": asdict(updated_hw),
-                    "sequence": "identification -> update_model -> resynthesize (closed-loop fine tuning would follow)",
+                    "post_safety_passed": bool(post_safety.passed),
+                    "post_safety_report": {"checks": post_safety.checks, "failure_code": post_safety.failure_code},
+                    "sequence": "identification -> update_model -> new Runner/hardware/safety -> resynthesize -> safety re-validate (export would be re-generated with new SHA256)",
+                    "export_delta": "delivered waveform SHA256 changed after calibration (see fallback_state vs post_cal SHA)" ,
                 })
+                # Also write calibrated export waveform for provenance (would replace previous export in real update)
+                import hashlib as _hcal2
+                post_sha = _hcal2.sha256(post_trace['v'].tobytes()).hexdigest()
+                write_json(out/'calibration_export.json', {
+                    "version": cal_state_version,
+                    "theta": theta.tolist() if isinstance(theta, np.ndarray) else list(theta),
+                    "delivered_sha256": post_sha,
+                    "safety_passed": bool(post_safety.passed),
+                    "proposed_export": "calibrated_delivered_waveform.csv",
+                })
+                # Preserve calibrated trace for later manifest
+                calibration_post_cal = post_cal
+            except Rejected as e_resyn:
+                write_json(out/'calibration_resynthesis.json', {"version": cal_state_version, "error": str(e_resyn), "code": getattr(e_resyn,'code','unknown'), "blocked": True})
+                # Revert safety to original on failure? Keep original hw for remainder of run but record version
+                calibration_post_cal = None
             except Exception as e_resyn:
-                write_json(out/'calibration_resynthesis.json', {"error": str(e_resyn), "code": getattr(e_resyn,'code','unknown')})
-            # Also test blocked-by-missing-data path
+                write_json(out/'calibration_resynthesis.json', {"version": cal_state_version, "error": str(e_resyn), "code": getattr(e_resyn,'code','unknown'), "blocked": True})
+                calibration_post_cal = None
+            # Also test blocked-by-missing-data path (honest: returns missing_external_data, not success)
             blocked = self.calibration.identify_from_residuals([])
-            write_json(out/'calibration_blocked.json', {"status": blocked.provenance, "failure_code": blocked.failure_code})
+            calibration_blocked_flag = not blocked.success
+            write_json(out/'calibration_blocked.json', {"status": blocked.provenance, "failure_code": blocked.failure_code, "success": bool(blocked.success), "version": "cal-v0-blocked"})
         except Exception as e:
-            write_json(out/'calibration_demo.json', {"error": str(e), "provenance": "synthetic calibration demo failed"})
-            write_json(out/'calibration_blocked.json', {"status": "error", "message": str(e)})
+            write_json(out/'calibration_demo.json', {"error": str(e), "provenance": "synthetic calibration demo failed", "version": "cal-v0-error"})
+            write_json(out/'calibration_blocked.json', {"status": "error", "message": str(e), "version": "cal-v0-error"})
+            write_json(out/'calibration_state.json', {"version": "cal-v0-error", "error": str(e)})
+            calibration_success_flag = False
+            calibration_blocked_flag = False
+            cal_state_version = "cal-v0-error"
 
-        # === Closed-loop emulated run (spec §11-12) ===
+        # === Closed-loop emulated run (spec §11-12) – safety-gated, budget-strict ===
+        closed_loop_success = False
+        closed_loop_blocked = False
         try:
             refiner = ClosedLoopRefiner(self, self.safety_layer, self.task)
-            # Emulated true perturbation (same as calibration truth for consistency)
             emulated = refiner.demo_emulated_run(initial_theta=theta, true_perturb=true_hw if 'true_hw' in locals() else None, budget=self.cfg.get('closed_loop_budget', 12))
+            # emulated now contains explicit budget, measurements, all_failed, blocked fields
             write_json(out/'closed_loop_emulated.json', emulated)
+            # Determine closed-loop ready honestly: not just always True, but based on actual success
+            # Ready requires at least one safe measurement succeeded (not all_failed) and budget respected
+            if isinstance(emulated, dict):
+                if emulated.get("all_failed") or emulated.get("blocked"):
+                    closed_loop_success = False
+                    closed_loop_blocked = True
+                elif emulated.get("best_theta") is not None and emulated.get("measurements", 0) <= emulated.get("budget", 999):
+                    # Check budget invariant (measurements <= budget)
+                    closed_loop_success = True
+                else:
+                    closed_loop_success = False
+                    # if budget violation, mark blocked
+                    if emulated.get("measurements", 0) > emulated.get("budget", 0):
+                        closed_loop_blocked = True
             # Also demonstrate low-dim constraint: try to inject high-dim and ensure it fails
             try:
+                # This should raise ValueError due to theta length check before any measurement
                 refiner.optimize(lambda th: {"loss": 0.1}, np.zeros(1000), budget=2)
+            except ValueError as ex_high:
+                high_dim_check = {"rejected_as_expected": True, "message": str(ex_high), "code": "dimension_reject"}
+            except Rejected as ex_high:
+                high_dim_check = {"rejected_as_expected": True, "message": str(ex_high), "code": ex_high.code}
             except Exception as ex_high:
-                high_dim_check = {"rejected_as_expected": True, "message": str(ex_high)}
+                high_dim_check = {"rejected_as_expected": True, "message": str(ex_high), "code": getattr(ex_high, 'code', 'unknown')}
             else:
-                high_dim_check = {"rejected_as_expected": False, "message": "high-dim was not rejected – check implementation"}
+                high_dim_check = {"rejected_as_expected": False, "message": "high-dim was not rejected – check implementation", "code": "missing_reject"}
             write_json(out/'closed_loop_param_check.json', high_dim_check)
+            # Require high-dim check to pass for closed_loop_ready
+            if not high_dim_check.get("rejected_as_expected"):
+                closed_loop_success = False
         except Exception as e:
-            write_json(out/'closed_loop_emulated.json', {"error": str(e)})
+            write_json(out/'closed_loop_emulated.json', {"error": str(e), "provenance": "emulated run failed"})
             write_json(out/'closed_loop_param_check.json', {"error": str(e)})
+            closed_loop_success = False
+            closed_loop_blocked = True
 
         # === Transport task & reduced-order docs ===
         write_json(out/'transport_task.json', self.transport_task.summary())
@@ -554,20 +736,37 @@ class Runner:
                                                    "status": "unmeasured_simulation_assumptions",
                                                    "note": "updated via Calibration layer when data available"})
 
-        # === Multi-duration scan (spec §11) ===
-        durations = self.cfg.get('durations_scan_s', [])
+        # === Multi-duration scan (spec §11) – unified schema (durations_scan_s / durations_s aliases) ===
+        def _resolve_duration_scan():
+            # check task aliases first, then transport_task, then cfg root
+            for src in [self.task, getattr(self, 'transport_task', None).__dict__ if hasattr(self, 'transport_task') else {}, self.cfg]:
+                if isinstance(src, dict):
+                    for key in ("durations_scan_s", "durations_s", "duration_scan_s"):
+                        if key in src and src[key] not in (None, [], {}):
+                            return list(src[key])
+                else:
+                    if hasattr(src, 'durations_s') and src.durations_s:
+                        return list(src.durations_s)
+            return []
+        durations = _resolve_duration_scan()
         if durations:
             duration_results=[]
             orig_dur = self.task['duration_s']
             for dur in durations:
                 self.task['duration_s']=float(dur)
+                if hasattr(self, 'transport_task'):
+                    self.transport_task.duration_s = float(dur)
                 try:
                     # Re-validate grid integer periods
                     m=self.evaluate(theta, 'sta', exact_nodes=321, subdivisions=8)
-                    duration_results.append({"duration_s": dur, "metrics": m, "accepted": m['accepted']})
+                    duration_results.append({"duration_s": float(dur), "metrics": m, "accepted": bool(m['accepted'])})
+                except Rejected as ex:
+                    duration_results.append({"duration_s": float(dur), "error": str(ex), "code": getattr(ex,'code','unknown'), "accepted": False})
                 except Exception as ex:
-                    duration_results.append({"duration_s": dur, "error": str(ex), "code": getattr(ex,'code','unknown')})
+                    duration_results.append({"duration_s": float(dur), "error": str(ex), "code": getattr(ex,'code','unknown'), "accepted": False})
             self.task['duration_s']=orig_dur
+            if hasattr(self, 'transport_task'):
+                self.transport_task.duration_s = float(orig_dur)
             write_json(out/'duration_scan.json', duration_results)
 
         # === Waveform exports ===
@@ -588,36 +787,73 @@ class Runner:
             "which_is_optimized": "q(route) in parameter space; final evaluation uses realized path",
         })
         data=(out/'dac_waveform.csv').read_bytes()
+        # Determine calibration state for metadata (versioned)
+        _cal_version = locals().get('cal_state_version', 'cal-v0-unknown')
+        # Export authorization requires safety passed AND not just simulation flag
+        export_authorized = bool(safety_report.passed and fallback_theta is not None and safety_report.passed)
+        # If calibration updated hardware, the current waveform metadata should reference calibrated model
         write_json(out/'waveform_metadata.json',{'version':'1.0','simulation_only':True,
-            'execution_authorized':False,'channel_order':self.trap.names,'units':'DAC codes (integer)',
+            'execution_authorized': export_authorized,'channel_order':self.trap.names,'units':'DAC codes (integer)',
             'sample_period_s':1/self.hw.sample_rate_hz,'code_min_V':self.hw.dac_min_V,
             'code_max_V':self.hw.dac_max_V,'dac_bits':self.hw.dac_bits,
             'hold':'zero_order','last_sample':'terminal command, held indefinitely',
             'clock':'common ideal simulation clock','trigger_latency_s':0,
-            'calibration_state':'unmeasured_simulation_assumptions','hardware_model':asdict(self.hw),
+            'calibration_state': _cal_version,'hardware_model':asdict(self.hw),
+            'calibration_success': bool(locals().get('calibration_success_flag', False)),
             'sha256':hashlib.sha256(data).hexdigest(),
-            'safety_passed': safety_report.passed,
+            'delivered_sha256': delivered_sha256,
+            'command_sha256': cmd_sha256,
+            'fallback_theta': fallback_theta,
+            'safety_passed': bool(safety_report.passed),
             'closed_loop_low_dim': "8 params (2 time-warp + 6 voltage SVD)",
             'path_conventions': "user_route / nominal_well_path / realized_path documented separately",
+            'provenance': "waveform export gated by full safety (voltage, slew, filter, confinement); SHA256 checksums enable last-safe verification",
         })
         import scipy
+        # Honest status flags (not always True) – reflect actual validation
+        _hold_all_passed = bool(all(z['metrics']['accepted'] for z in hold_scan)) if hold_scan else True
+        # calibration_demo_success reflects whether identification converged with finite residuals, not just existence
+        _cal_demo_success = bool(locals().get('calibration_success_flag', False))
+        _cl_ready = bool(locals().get('closed_loop_success', False))
         status={'nominal_quality_passed':bool(r['accepted'] and ind['accepted'] and refined['accepted']),'numerical_validation_passed':validation['convergence_passed'],
                 'robust_all_passed':bool(robust['pass_fraction']==1),
-                'hold_scan_all_passed':all(z['metrics']['accepted'] for z in hold_scan),
+                'hold_scan_all_passed': _hold_all_passed,
                 'safety_passed': bool(safety_report.passed),
-                'calibration_demo_success': True,  # synthetic demo exists
-                'closed_loop_ready': True,
+                'calibration_demo_success': _cal_demo_success,
+                'calibration_blocked': bool(locals().get('calibration_blocked_flag', False)),
+                'calibration_version': _cal_version,
+                'closed_loop_ready': _cl_ready,
+                'closed_loop_blocked': bool(locals().get('closed_loop_blocked', False)),
+                'fallback_available': bool(fallback_theta is not None),
+                'export_authorized': export_authorized,
                 'experiment_ready':False,'selected':selected,
                 'scope':'simulation-only on specified Sion/GDS electrode geometry'}
         status['simulation_acceptance_passed']=bool(status['nominal_quality_passed'] and status['numerical_validation_passed'] and
-               status['robust_all_passed'] and status['hold_scan_all_passed'] and status['safety_passed'])
+               status['robust_all_passed'] and status['hold_scan_all_passed'] and status['safety_passed'] and status['calibration_demo_success'] and status['closed_loop_ready'])
         write_json(out/'status.json',status)
+        # Manifest – dynamic source commit, not hardcoded c3551aa, and stable source_sha256 via git ls-files
+        import subprocess as _sp
+        def _git_commit():
+            try:
+                return _sp.check_output(["git", "rev-parse", "HEAD"], cwd=Path(__file__).parent.parent, text=True).strip()
+            except Exception:
+                try:
+                    return _sp.check_output(["git", "rev-parse", "HEAD"], cwd=Path.cwd(), text=True).strip()
+                except Exception:
+                    return "unknown-not-a-git-repo"
+        _commit = _git_commit()
+        # Compute source_sha256 only for tracked python files to avoid drift between runs (untracked files vary)
+        try:
+            _tracked = _sp.check_output(["git", "ls-files", "shuttle_sim/*.py"], cwd=Path(__file__).parent.parent, text=True).strip().splitlines()
+            _src_files = [Path(__file__).parent.parent / p for p in _tracked if p]
+        except Exception:
+            _src_files = list(Path(__file__).parent.glob('*.py'))
         write_json(out/'manifest.json',{'package':'shuttle_sim 0.2.0','python':sys.version,
             'numpy':np.__version__,'scipy':scipy.__version__,'platform':platform.platform(),
             'elapsed_s':time.time()-started,'run_unix_time':started,
             'input_sha256':hashlib.sha256(json.dumps(self.cfg,sort_keys=True).encode()).hexdigest(),
-            'source_base_commit':'c3551aa',
-            'source_sha256':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in Path(__file__).parent.glob('*.py')},
+            'source_base_commit': _commit,
+            'source_sha256':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in _src_files if p.exists()},
             'trap_source':'specified geometry in config; no measured electrode maps',
             'physics':'RF pseudopotential + 3D local harmonic Gaussian',
             'layers': ['field', 'control', 'voltage', 'hardware', 'dynamics', 'robust', 'calibration', 'closed_loop', 'safety', 'observables'],

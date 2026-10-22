@@ -44,7 +44,7 @@ email = "a.podlesnyy@rqc.ru"
 repository = "https://github.com/underforestaaa/Sion"
 
 [tool.setuptools]
-packages = ["sion", "sion.electrode", "sion.pylion"]
+packages = ["sion", "sion.electrode", "sion.pylion", "shuttle_sim", "shuttle_sim.ga", "shuttle_sim.dashboard"]
 include-package-data = true
 py-modules = []
 

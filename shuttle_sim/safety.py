@@ -41,24 +41,46 @@ class SafetyLayer:
         return {"voltage_bounds": "ok", "max_margin_V": float(np.min(np.minimum(hi - v, v - lo).max(axis=1).min())) if v.size else 0}
 
     def check_slew(self, commands_V):
-        jumps = float(np.max(np.abs(np.diff(commands_V, axis=0))))
+        # Fail-closed on non-finite inputs (NaN would otherwise bypass max check)
+        if not np.isfinite(commands_V).all():
+            raise Rejected("numerical_failure", "commands contain non-finite values (NaN/Inf) in slew check")
+        jumps = float(np.max(np.abs(np.diff(commands_V, axis=0)))) if commands_V.shape[0] > 1 else 0.0
+        if not np.isfinite(jumps):
+            raise Rejected("numerical_failure", "slew jump is non-finite")
         if jumps > self.hw.max_jump_V + 1e-12:
             raise Rejected("slew_limit", f"max jump {jumps:g} V exceeds {self.hw.max_jump_V:g}")
         return {"max_jump_V": jumps, "slew_proxy": "ok"}
 
     def check_filter_consistency(self, distortion_report: dict, threshold_V=0.8):
         # delivered vs intended deviation should not destroy intent; threshold is task-dependent
+        # Fail-closed if distortion report contains non-finite
         max_dev = distortion_report.get("max_deviation_V", 0)
+        if not np.isfinite(max_dev):
+            raise Rejected("numerical_failure", "distortion max_deviation_V is non-finite")
+        # also check any other distortion values are finite
+        for k, v in distortion_report.items():
+            if isinstance(v, (float, int, np.floating)):
+                if not np.isfinite(v):
+                    raise Rejected("numerical_failure", f"distortion field {k} is non-finite")
         # we don't reject purely on filtering, but flag if > threshold
         flag = "warn" if max_dev > threshold_V else "ok"
-        return {"max_deviation_V": max_dev, "filter_consistency": flag}
+        return {"max_deviation_V": float(max_dev), "filter_consistency": flag}
 
     def check_confinement(self, hessians, min_freq_hz):
+        if not np.isfinite(hessians).all():
+            raise Rejected("numerical_failure", "hessians contain non-finite values")
+        if not np.isfinite(min_freq_hz):
+            raise Rejected("numerical_failure", "min_frequency_hz is non-finite")
         eig = np.linalg.eigvalsh(hessians / self.trap.mass)
-        min_freq = float(np.sqrt(np.max(eig.min(axis=0) if eig.ndim==2 else eig.min()) )/(2*np.pi))
-        # actually compute properly per time; simplified:
-        freqs = np.sqrt(np.maximum(eig, 0)) / (2*np.pi)
-        fmin = freqs.min()
+        if not np.isfinite(eig).all():
+            raise Rejected("numerical_failure", "eigenvalues contain non-finite values")
+        # compute properly per time; simplified:
+        freqs = np.sqrt(np.maximum(eig, 0)) / (2 * np.pi)
+        if not np.isfinite(freqs).all():
+            raise Rejected("numerical_failure", "confinement frequencies are non-finite")
+        fmin = float(freqs.min())
+        if not np.isfinite(fmin):
+            raise Rejected("numerical_failure", "min frequency is non-finite")
         if fmin < min_freq_hz - 1e-9:
             raise Rejected("weak_confinement", f"min frequency {fmin/1e6:.3f} MHz below floor {min_freq_hz/1e6:.3f} MHz")
         return {"min_frequency_hz": float(fmin), "confinement": "ok"}
@@ -66,18 +88,29 @@ class SafetyLayer:
     def evaluate(self, commands_V, delivered_V, distortion, hessians):
         checks = {}
         try:
+            # Fail-closed on any non-finite array inputs before domain checks
+            for name, arr in [("commands_V", commands_V), ("delivered_V", delivered_V), ("hessians", hessians)]:
+                if not np.isfinite(np.asarray(arr)).all():
+                    raise Rejected("numerical_failure", f"{name} contains non-finite (NaN/Inf)")
+            if distortion is not None:
+                for kk, vv in distortion.items():
+                    if isinstance(vv, (float, int, np.floating, np.ndarray)):
+                        av = np.asarray(vv)
+                        if not np.isfinite(av).all():
+                            raise Rejected("numerical_failure", f"distortion[{kk}] is non-finite")
             checks.update(self.check_voltage_bounds(delivered_V))
             checks.update(self.check_slew(commands_V))
-            checks.update(self.check_filter_consistency(distortion))
+            checks.update(self.check_filter_consistency(distortion if isinstance(distortion, dict) else {}))
             checks.update(self.check_confinement(hessians, self.task["min_frequency_hz"] if isinstance(self.task, dict) else self.task.min_frequency_hz))
             # Additional: clipping already enforced in hardware.deliver (raises)
             # Numerical stability checked via finite() inside above
-            passed = True
             return SafetyReport(passed=True, checks=checks)
         except Rejected as ex:
             checks["failure"] = {"code": ex.code, "message": str(ex)}
             return SafetyReport(passed=False, checks=checks, failure_code=ex.code, failure_message=str(ex))
         except Exception as ex:
+            # Any unexpected exception is also fail-closed
+            checks["failure"] = {"code": "numerical_failure", "message": str(ex)}
             return SafetyReport(passed=False, checks=checks, failure_code="numerical_failure", failure_message=str(ex))
 
     def assert_safe(self, commands_V, delivered_V, distortion, hessians):
