@@ -36,7 +36,8 @@ class GAEngine:
             strat=icfg.get('strategy','S')
             pop=icfg.get('pop',20)
             base=icfg.get('baseline','sta')
-            isl=Island(i, strat, pop, rng=self.rng.integers(0,1<<31), baseline=base)
+            isolated_until=int(icfg.get('isolated_until', 0))
+            isl=Island(i, strat, pop, rng=self.rng.integers(0,1<<31), baseline=base, isolated_until=isolated_until)
             isl.initialize()
             self.islands.append(isl)
         if not self.islands:

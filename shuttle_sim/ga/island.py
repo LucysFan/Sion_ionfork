@@ -4,11 +4,12 @@ from .genome import Genome
 from .fitness import evaluate_genome
 
 class Island:
-    def __init__(self, island_id, strategy, pop_size=20, rng=None, baseline='sta'):
+    def __init__(self, island_id, strategy, pop_size=20, rng=None, baseline='sta', isolated_until=0):
         self.id = island_id
-        self.strategy = strategy  # name S/A/V/R/H
+        self.strategy = strategy  # name S/A/V/R/H/Q...
         self.pop_size = pop_size
         self.baseline = baseline
+        self.isolated_until = int(isolated_until)
         self.rng = np.random.default_rng(rng)
         self.population = []
         self.generation = 0
@@ -133,8 +134,11 @@ class Island:
 
     def snapshot(self):
         fits=[g.fitness for g in self.population if g.fitness is not None]
+        isolated = self.isolated_until > self.generation
         return dict(id=self.id, strategy=self.strategy, generation=self.generation,
                     pop_size=self.pop_size, best_fitness=float(min(fits)) if fits else None,
                     mean_fitness=float(np.mean(fits)) if fits else None,
                     diversity=self.history[-1]['diversity'] if self.history else 0,
+                    isolated_until=self.isolated_until,
+                    is_isolated=isolated,
                     params=self.params)

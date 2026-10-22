@@ -1,0 +1,85 @@
+{
+  "trap": {
+    "kind": "sion_five_wire",
+    "mass_amu": 40,
+    "charge_e": 1,
+    "length_scale_m": 1e-06,
+    "rf_frequency_hz": 30000000.0,
+    "rf_peak_V": 24.0,
+    "geometry": {
+      "top_dc": [[600, 7600], [600, 7600], [600, 7600], [600, 7600], [600, 7600], [600, 7600], [600, 7600]],
+      "bottom_dc": [[600, 7600], [600, 7600], [600, 7600], [600, 7600], [600, 7600], [600, 7600], [600, 7600]],
+      "top_rf": [20000, 90],
+      "bottom_rf": [20000, 90],
+      "central_dc": [20000, 110]
+    },
+    "dc_indices": [2,3,4,5,6,7,8,9,10,11,12,13,14,15,16],
+    "lower_V": -12.0,
+    "upper_V": 12.0,
+    "initial_dc_V": [-0.68, 0.02, 0.08, 1.0, -1.9, 1.0, 0.08, 0.02, 0.02, 0.08, 1.0, -1.9, 1.0, 0.08, 0.02],
+    "minimum_seed_m": [0.0, 0.0, 90e-06]
+  },
+  "hardware": {
+    "sample_rate_hz": 20000000.0,
+    "dac_bits": 16,
+    "dac_min_V": -12.0,
+    "dac_max_V": 12.0,
+    "lowpass_hz": [1000000.0, 500000.0],
+    "gain": 1.0,
+    "offset_V": 0.0,
+    "delay_s": 0.0,
+    "max_jump_V": 1.0,
+    "identifier": "declared-simulation-chain-v1"
+  },
+  "task": {
+    "direction": [1, 0, 0],
+    "distance_m": 30e-06,
+    "duration_s": 15e-06,
+    "hold_s": 2e-06,
+    "min_frequency_hz": 400000.0,
+    "max_n_total": 0.5,
+    "position_tolerance_m": 5e-06,
+    "protocol": "round_trip",
+    "cycles": 1,
+    "frequency_mode": "variable",
+    "frequency_coeffs": [0.02, -0.01],
+    "corridor_halfwidth_m": 20e-06,
+    "hold_scan_s": [2e-06, 5e-06],
+    "durations_scan_s": [12e-06, 15e-06, 20e-06]
+  },
+  "uncertainty": {
+    "gain_sigma": 0.008,
+    "offset_sigma_V": 0.008,
+    "additional_delay_max_s": 5e-09,
+    "log_filter_sigma": 0.07,
+    "stray_sigma_V_m": 0.15,
+    "log_frequency_sigma": 0.02,
+    "seed": 42
+  },
+  "route_nodes": 31,
+  "subdivisions": 4,
+  "optimization_evaluations": 25,
+  "robust_training_samples": 2,
+  "robust_samples": 6,
+  "closed_loop_budget": 10,
+  "validation_n_tolerance": 0.01,
+  "rom_max_shift_m": 30e-06,
+  "ga": {
+    "generations": 30,
+    "migration_interval": 5,
+    "n_migrants": 2,
+    "hall_size": 10,
+    "hall_diversity_min_distance": 0.12,
+    "seed": 42,
+    "islands": [
+      {"strategy": "S", "pop": 20, "baseline": "smooth"},
+      {"strategy": "A", "pop": 20, "baseline": "sta"},
+      {"strategy": "V", "pop": 12, "baseline": "sta"},
+      {"strategy": "R", "pop": 20, "baseline": "sta"},
+      {"strategy": "H", "pop": 18, "baseline": "smooth"},
+      {"strategy": "Q1", "pop": 20, "baseline": "smooth", "isolated_until": 12, "desc": "карантин 12 эпох, пустой поиск"},
+      {"strategy": "Q2", "pop": 20, "baseline": "sta", "isolated_until": 18, "desc": "карантин 18 эпох, пустой поиск"},
+      {"strategy": "F", "pop": 16, "baseline": "smooth", "isolated_until": 15, "desc": "free 12dim, 2 провала, карантин 15"}
+    ]
+  }
+}
