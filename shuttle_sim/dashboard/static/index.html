@@ -1430,21 +1430,27 @@ function init(){
   function drawLive(live){
     const c=document.getElementById('cLive'); if(!c) return;
     const ctx=c.getContext('2d'), W=c.width, H=c.height;
+    // handle "no live yet" (GA ещё инициализируется, GDS грузится) — показываем дружелюбно, без 0/0
+    let isNoLive = !live || live.status==="no live yet" || (!live.total_in_gen && !live.evaluated_in_gen && !live.live_generation);
     // header texts
     try{
       let genFloat=live.live_generation ?? live.global_generation ?? 0;
       let evalIn=live.evaluated_in_gen ?? 0, totIn=live.total_in_gen ?? 0;
-      let frac=live.gen_progress ?? 0, overall=live.overall_progress ?? 0;
-      document.getElementById('liveGenBadge').textContent = `gen ${live.global_generation ?? 0} · ${evalIn}/${totIn} внутри`;
-      document.getElementById('liveGenText').textContent = genFloat.toFixed(2)+` / ${live.total_generations ?? document.getElementById('inpGens').value}`;
-      document.getElementById('liveProg').style.width=(frac*100).toFixed(1)+"%";
-      document.getElementById('liveProgText').textContent=(frac*100).toFixed(1)+`% (${evalIn}/${totIn})`;
-      document.getElementById('liveElapsed').textContent=fmtSec(live.elapsed_s);
+      let frac=live.gen_progress ?? 0;
+      // if live not yet, fallback to inpGens and 0 progress, not 0/0
+      let totGens = live.total_generations ?? document.getElementById('inpGens').value ?? 12;
+      let totInDisp = totIn>0 ? totIn : (isNoLive ? "—" : totIn);
+      let evalDisp = isNoLive ? "—" : evalIn;
+      document.getElementById('liveGenBadge').textContent = isNoLive ? `инициализация…` : `gen ${live.global_generation ?? 0} · ${evalIn}/${totIn} внутри`;
+      document.getElementById('liveGenText').textContent = isNoLive ? `0.00 / ${totGens} (инициализация)` : genFloat.toFixed(2)+` / ${totGens}`;
+      document.getElementById('liveProg').style.width=isNoLive ? "6%" : (frac*100).toFixed(1)+"%";
+      document.getElementById('liveProg').style.opacity=isNoLive ? "0.5" : "1";
+      document.getElementById('liveProgText').textContent=isNoLive ? `ожидание…` : (frac*100).toFixed(1)+`% (${evalIn}/${totIn})`;
+      document.getElementById('liveElapsed').textContent=live.elapsed_s!=null ? fmtSec(live.elapsed_s) : "—";
       document.getElementById('liveBest').textContent= live.live_best!=null ? `live best ${fmtFit(live.live_best)}` : "live best —";
-      document.getElementById('liveIsland').textContent=live.current_island||"—";
-      document.getElementById('liveEval').textContent=`${evalIn}/${totIn}`;
-      document.getElementById('liveCurrentFit').textContent= live.current_fitness!=null ? `cur ${fmtFit(live.current_fitness)}` : "";
-      // overall in trainingBar already, but also sync live badge
+      document.getElementById('liveIsland').textContent=isNoLive ? "подготовка…" : (live.current_island||"—");
+      document.getElementById('liveEval').textContent=isNoLive ? `—/—` : `${evalIn}/${totIn}`;
+      document.getElementById('liveCurrentFit').textContent= live.current_fitness!=null ? `cur ${fmtFit(live.current_fitness)}` : (isNoLive ? "загрузка GDS…" : "");
     }catch(e){}
     // keep series for live scatter (x = live_generation float, y = fitness)
     if(live.recent && Array.isArray(live.recent)){
