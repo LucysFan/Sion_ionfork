@@ -171,7 +171,31 @@ input[type=range]{accent-color:var(--accent)}
 </div>
 <!-- Overview tab -->
 <div id="pane-overview" class="tab-pane">
-
+<!-- Live · внутри поколения — обновляется в реальном времени (каждые ~0.2с) -->
+<div style="padding:16px 20px 0 20px">
+  <div class="card" style="border:1.5px solid var(--accent); background:linear-gradient(180deg,#17202f,#1b2a45)">
+    <h3>🔴 Live · внутри поколения <small style="color:var(--accent)">реальное время — каждая оценка индивида · дробный прогресс, не только по поколениям</small>
+      <span class="badge" id="liveGenBadge" style="margin-left:auto">—</span>
+    </h3>
+    <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+      <span class="kv" style="min-width:160px">поколение <b id="liveGenText">—</b></span>
+      <div class="progress" style="flex:1;min-width:220px;height:14px;border:1px solid var(--accent)"><i id="liveProg" style="width:0%"></i></div>
+      <span class="kv mono" id="liveProgText" style="min-width:110px">—</span>
+      <span class="kv mono" id="liveElapsed" style="min-width:80px">—</span>
+      <span class="kv mono" id="liveBest" style="min-width:120px">best —</span>
+    </div>
+    <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+      <span class="kv">остров <b id="liveIsland">—</b> · индивидов <b id="liveEval">—/—</b></span>
+      <span class="kv mono" id="liveCurrentFit" style="color:var(--muted)"></span>
+      <span class="kv" style="margin-left:auto;font-size:11px;color:var(--muted)">каждая точка = одна оценка fitness · точки текущего поколения подсвечены</span>
+    </div>
+    <canvas id="cLive" width="900" height="160" style="height:160px;background:var(--panel2);border-radius:10px;display:block"></canvas>
+    <div class="legend" id="liveLegend" style="margin-top:6px"></div>
+    <div class="notice" style="margin-top:8px;font-size:11px">Live обновляется каждые ~0.2с внутри поколения (<code>live.json</code>), а графики ниже — строго раз в поколение (по <code>state.json</code>). Если видишь <code>1/2</code> но картинки пустые — дождись конца поколения 1: hall появится после первой записи <code>state.json</code> (~30-60с). Live показывает прогресс сразу.</div>
+  </div>
+</div>
+<!-- По поколениям — обновляется раз в поколение (state.json) -->
+<div style="padding:12px 20px 0 20px"><div class="badge" style="background:var(--panel);border:1px solid var(--border)">📊 По поколениям — обновляется раз в поколение (state.json) · стабильная история</div></div>
 <div class="grid">
   <div class="card">
     <h3>Fitness vs generation <small>best per island · global best (bold) · lower is better</small></h3>
@@ -1401,6 +1425,88 @@ function init(){
     setTimeout(pollJobs, 600);
   };
   pollJobs(); setInterval(pollJobs, 1200);
+  // === Live · внутри поколения — реальные оценки каждую 0.2с ===
+  let __liveSeries=[]; let __liveGen=0;
+  function drawLive(live){
+    const c=document.getElementById('cLive'); if(!c) return;
+    const ctx=c.getContext('2d'), W=c.width, H=c.height;
+    // header texts
+    try{
+      let genFloat=live.live_generation ?? live.global_generation ?? 0;
+      let evalIn=live.evaluated_in_gen ?? 0, totIn=live.total_in_gen ?? 0;
+      let frac=live.gen_progress ?? 0, overall=live.overall_progress ?? 0;
+      document.getElementById('liveGenBadge').textContent = `gen ${live.global_generation ?? 0} · ${evalIn}/${totIn} внутри`;
+      document.getElementById('liveGenText').textContent = genFloat.toFixed(2)+` / ${live.total_generations ?? document.getElementById('inpGens').value}`;
+      document.getElementById('liveProg').style.width=(frac*100).toFixed(1)+"%";
+      document.getElementById('liveProgText').textContent=(frac*100).toFixed(1)+`% (${evalIn}/${totIn})`;
+      document.getElementById('liveElapsed').textContent=fmtSec(live.elapsed_s);
+      document.getElementById('liveBest').textContent= live.live_best!=null ? `live best ${fmtFit(live.live_best)}` : "live best —";
+      document.getElementById('liveIsland').textContent=live.current_island||"—";
+      document.getElementById('liveEval').textContent=`${evalIn}/${totIn}`;
+      document.getElementById('liveCurrentFit').textContent= live.current_fitness!=null ? `cur ${fmtFit(live.current_fitness)}` : "";
+      // overall in trainingBar already, but also sync live badge
+    }catch(e){}
+    // keep series for live scatter (x = live_generation float, y = fitness)
+    if(live.recent && Array.isArray(live.recent)){
+      for(let r of live.recent){
+        // avoid dup: check last ts
+        if(__liveSeries.length && __liveSeries[__liveSeries.length-1].ts===r.ts) continue;
+        __liveSeries.push({x: (r.gen + (Math.random()*0.02)), y: r.fitness, island: r.island, ts:r.ts});
+        if(__liveSeries.length>200) __liveSeries.shift();
+      }
+      // if live.global_generation advanced, we keep series
+    } else if(live.current_fitness!=null){
+      __liveSeries.push({x: live.live_generation, y: live.current_fitness, island: live.current_island, ts: live.timestamp});
+      if(__liveSeries.length>200) __liveSeries.shift();
+    }
+    // draw canvas: y = fitness log, x = live_generation
+    ctx.clearRect(0,0,W,H); ctx.fillStyle="#121c2e"; ctx.fillRect(0,0,W,H);
+    ctx.strokeStyle="#1e2e4e"; ctx.setLineDash([3,4]); ctx.lineWidth=1;
+    for(let i=0;i<3;i++){ let y=20+i*(H-40)/3; ctx.beginPath();ctx.moveTo(40,y);ctx.lineTo(W-10,y);ctx.stroke()}
+    ctx.setLineDash([]); ctx.strokeStyle="#243556"; ctx.strokeRect(0.5,0.5,W-1,H-1);
+    if(__liveSeries.length<2){
+      ctx.fillStyle="#8aa0c8"; ctx.font="12px sans-serif"; ctx.fillText(live.status==="no live yet" ? "жду первых оценок — GA оценивает популяцию..." : "live точки появятся после первых 2-3 оценок (каждые ~0.3с)", W/2-160, H/2);
+      return;
+    }
+    let xs=__liveSeries.map(p=>p.x), ys=__liveSeries.map(p=>p.y).filter(v=>v<1e6);
+    if(ys.length===0) return;
+    let minX=Math.min(...xs), maxX=Math.max(...xs); if(maxX-minX<0.1){ maxX=minX+0.1; }
+    let minY=Math.min(...ys), maxY=Math.max(...ys); let lMin=Math.log10(Math.max(1e-3,minY+0.1)), lMax=Math.log10(Math.max(maxY+0.2, minY+1)); if(lMax-lMin<0.3) lMax=lMin+0.3;
+    function xTo(v){ return 40+(v-minX)/(maxX-minX||1)*(W-50); }
+    function yTo(v){ let lv=Math.log10(Math.max(1e-3,v+0.1)); let t=(lv-lMin)/(lMax-lMin); return H-20 - t*(H-40); }
+    // draw points: recent = bright, old = dim
+    for(let i=0;i<__liveSeries.length;i++){
+      let p=__liveSeries[i]; let col=islandColor(p.island); let alpha = i < __liveSeries.length-15 ? 0.35 : 0.95;
+      ctx.globalAlpha=alpha; ctx.fillStyle=col; ctx.beginPath(); ctx.arc(xTo(p.x), yTo(p.y), i===__liveSeries.length-1?4:2.5,0,Math.PI*2); ctx.fill();
+    }
+    ctx.globalAlpha=1;
+    // best line
+    if(live.live_best!=null){
+      let y=yTo(live.live_best);
+      ctx.strokeStyle="rgba(255,255,255,0.5)"; ctx.setLineDash([5,3]); ctx.beginPath(); ctx.moveTo(40,y); ctx.lineTo(W-10,y); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle="#fff"; ctx.font="10px monospace"; ctx.fillText("live best "+fmtFit(live.live_best), W-140, y-4);
+    }
+    ctx.fillStyle="#8aa0c8"; ctx.font="10px monospace";
+    ctx.fillText(minX.toFixed(2), 42, H-6); ctx.fillText(maxX.toFixed(2), W-50, H-6);
+    ctx.fillText(fmtFit(Math.min(...ys)), W-42, H-20); ctx.fillText(fmtFit(Math.max(...ys)), W-42, 14);
+    let leg=document.getElementById('liveLegend');
+    if(leg) leg.innerHTML=`<span style="display:inline-flex;align-items:center;gap:6px"><i style="width:12px;height:3px;background:#5ac8ff;display:inline-block"></i> каждая точка = оценка индивида (цвет острова) · последние ${__liveSeries.length}</span> <span style="margin-left:12px;color:var(--muted)">ось X — дробное поколение (3.0 → 3.99), Y — log fitness</span>`;
+  }
+  async function pollLive(){
+    try{
+      let run=localStorage.getItem('dashboard_run') || document.getElementById('inpOut').value || "output/live_run";
+      let r=await fetch('/api/live?run='+encodeURIComponent(run)+'&ts='+Date.now(),{cache:"no-store"});
+      let j=await r.json();
+      if(j.status==="no live yet"){
+        document.getElementById('liveGenBadge').textContent="ждёт live";
+        drawLive(j);
+        return;
+      }
+      // also catch case where live.json missing but state has gen 0
+      drawLive(j);
+    }catch(e){}
+  }
+  pollLive(); setInterval(pollLive, 300);
   try{
     let saved=localStorage.getItem("ga_fit_series")
     if(saved){ window.__fitSeries=JSON.parse(saved)}

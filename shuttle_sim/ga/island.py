@@ -46,10 +46,13 @@ class Island:
             self.population.append(Genome.random(self.strategy, self.rng))
         self.generation=0
 
-    def evaluate(self, runner):
+    def evaluate(self, runner, live_cb=None):
         for g in self.population:
             if g.fitness is None:
                 evaluate_genome(g, runner, baseline=self.baseline, exact_nodes=None)
+                if live_cb is not None:
+                    try: live_cb(island=self, genome=g)
+                    except: pass
 
     def tournament(self, k=3):
         k_eff = min(int(k), len(self.population))
@@ -58,9 +61,9 @@ class Island:
         cand=self.rng.choice(self.population, size=k_eff, replace=replace)
         return min(cand, key=lambda g: g.fitness if g.fitness is not None else 1e9)
 
-    def evolve_one_generation(self, runner):
-        # evaluate
-        self.evaluate(runner)
+    def evolve_one_generation(self, runner, live_cb=None):
+        # evaluate — live inside generation
+        self.evaluate(runner, live_cb=live_cb)
         # sort (handle None)
         self.population.sort(key=lambda g: g.fitness if g.fitness is not None else 1e9)
         best=self.population[0]
