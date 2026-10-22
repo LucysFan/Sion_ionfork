@@ -341,20 +341,30 @@ robust: 0.35·mean + 0.65·max по обучающим сценариям
 
 <a id="dashboard"></a>
 
-### 3.5 Мониторинг вычислений
+### 3.5 Мониторинг вычислений — дашборд всегда
+
+Дашборд висит всегда, не только во время GA. Запускается отдельно и не блокирует оптимизацию:
+
+```bash
+python -m shuttle_sim.dashboard.server --out output --port 8000 --host 0.0.0.0
+# или вместе с get_shuttle.py:  python get_shuttle.py --config configs/unified_live.json --out output/big --dashboard
+```
 
 Состояние расчёта записывается атомарно (`state.json.tmp → state.json`) после каждой генерации;
-сервер мониторинга работает в отдельном процессе и только читает файл, поэтому эволюция не зависит
-от частоты опроса.
+сервер только читает файл (`GET /api/state?run=output/...` каждые 500–900 мс), поэтому эволюция не зависит
+от частоты опроса. Даже когда ничего не считается — дашборд показывает предыдущие прогоны.
 
 ![Дашборд](assets/fig-dashboard.png)
 
-*Рис. 10.* Панели мониторинга на данных демонстрационного прогона.
+*Рис. 10.* Панели мониторинга на данных демонстрационного прогона — 4 вкладки.
 
-Панели отображают фитнес по поколениям и островам, разнообразие популяции, гистограмму `n_total`,
-элитный набор, Парето-фронт `n`–`worst`, 15 каналов `V(t)`, траекторию `r(t)`, вид ловушки сверху с
-анимацией кандидатов, граф миграций и состояние CUDA. При отсутствии `cupy` применяется
-numpy-реализация без изменения результатов.
+**Вкладки:**
+- **Setup** — единый вход: загрузка GDS (`configs/uploads/*.gds`), поля `distance_m`/`duration_s`/`hold_s`/`protocol`/`generations`, кнопки *Сохранить `configs/unified_live.json`* и *Запустить Pipeline/GA* (`POST /api/upload|config|launch`), выбор `output/*` прогона.
+- **Training** — красивые картинки обучения: фитнес по поколениям (per island + global best), разнообразие, гистограмма `n_total`, hall топ-10, `theta` heatmap, Парето `n–worst`, траектории `well` vs `ion <r>` vs классика.
+- **GA** — острова, миграции по кольцу `S→A→V→R→H`, журнал `history/gen_*.json`, `hall` per island.
+- **Trap** — ловушка + анимация: топ-вид `x–y` (RF золото, DC голубые) и side-вид `x–z` (высота 90 мкм), трейлы `well`/`ion` для 3% лучших каждого острова (`ceil(pop·0.03)`, `ROM decimate 80`, кэш по хешу `θ`, 60fps `requestAnimationFrame`).
+
+При отсутствии `cupy` применяется numpy-реализация без изменения результатов. `get_shuttle.py --dashboard` поднимает этот же дашборд автоматически.
 
 <a id="gds"></a>
 
@@ -435,7 +445,27 @@ pip install -r requirements-shuttle.txt      # numpy, scipy, jinja2, matplotlib,
 
 LAMMPS и MS-MPI требуются только для модуля `sion/sion.py`; для `shuttle_sim` они не нужны.
 
-Номинальный расчёт:
+#### Единый вход — `get_shuttle.py`: один JSON → куча хороших алгоритмов
+
+Новый тестовый сценарий (рекомендуется — заменяет все `python -m shuttle_sim --config ...` ниже одним файлом):
+
+*Общий файл* — `configs/unified_live.json` (один JSON на всё: кидаешь GDS, задаёшь расстояние/время). Создаётся из дашборда (`Setup → GDS upload + distance/time → Save`) или копированием любого `configs/shuttle_*.json`.
+
+```bash
+# вход — один JSON, выход — папка с кучей алгоритмов
+python get_shuttle.py --config configs/unified_live.json --out output/my_shuttles
+
+# для своей большой GDS робастно + с дашбордом всегда:
+python get_shuttle.py --config my_big_trap.json --out output/big --generations 30 --hall-size 20 --dashboard
+# → output/big/ga_hall.json (топ-20), algorithms/algo_000.json … algo_019.json, ga_best.json, summary.md, state.json
+
+# быстрый один робастный без GA (если нужна только проверка):
+python get_shuttle.py --config configs/unified_live.json --out output/quick --mode pipeline
+```
+
+`get_shuttle.py --dashboard` сразу поднимает `http://localhost:8000` с 4 вкладками **Setup** (твой общий файл) / **Training** / **GA** / **Trap** (анимация ямы+иона) — дашборд висит всегда, даже когда ничего не считается. Отдельно: `python -m shuttle_sim.dashboard.server --out output --port 8000`.
+
+Номинальный расчёт (старый способ — всё ещё работает, но теперь делается через `get_shuttle.py` выше):
 
 ```bash
 python -m shuttle_sim --config configs/shuttle_reference.json --out output/shuttle_reference
@@ -456,7 +486,7 @@ python -m shuttle_sim --config configs/shuttle_reference.json --out output/shutt
 }
 ```
 
-Остальные конфигурации запускаются аналогично:
+Остальные конфигурации запускаются аналогично (или одним `get_shuttle.py` с другим `distance_m/duration_s` в `Setup`):
 
 ```bash
 python -m shuttle_sim --config configs/shuttle_oneway.json        --out output/shuttle_oneway
@@ -464,6 +494,8 @@ python -m shuttle_sim --config configs/shuttle_repeated.json      --out output/s
 python -m shuttle_sim --config configs/shuttle_gds.json           --out output/shuttle_gds
 python -m shuttle_sim --config configs/shuttle_variable_freq.json --out output/shuttle_variable_freq
 python -m shuttle_sim --config configs/shuttle_reference.json     --out output/ref_full --full-field
+# то же через единый вход:
+python get_shuttle.py --config configs/shuttle_gds.json --out output/ga_gds --generations 12 --dashboard --port 8000
 ```
 
 ### 5.2 Программный интерфейс
