@@ -46,6 +46,7 @@ canvas.trap-side{height:200px;background:#121c2e}
 .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .btn{font-size:12px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text);cursor:pointer}
 .btn:hover{filter:brightness(1.1)}
+.btn:disabled{opacity:0.45;cursor:not-allowed;filter:grayscale(0.6)}
 .btn.active{background:var(--accent);color:#0b1220;border-color:var(--accent);font-weight:700}
 .status-dot{width:10px;height:10px;border-radius:50%;display:inline-block}
 .tabs{display:flex;gap:8px;padding:10px 20px 0 20px;border-bottom:1px solid var(--border)}
@@ -81,6 +82,16 @@ input[type=range]{accent-color:var(--accent)}
     <div class="badge" id="migrBadge">migration —</div>
     <div class="badge" id="freqBadge">freq —</div>
   </div>
+</div>
+
+<!-- Training progress bar on main page — single training at a time, stop is only interrupt -->
+<div id="trainingBar" style="padding:10px 20px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;background:var(--panel);border-bottom:1px solid var(--border);border-top:1px solid var(--border);margin-top:10px">
+  <span class="kv" style="min-width:160px"><b id="trainingStatusText">Обучение не запущено</b> <span id="trainingJobId" class="mono" style="opacity:0.7"></span></span>
+  <div class="progress" style="flex:1;min-width:200px;height:14px;border:1px solid var(--accent);background:#0b1220"><i id="trainingProg" style="width:0%"></i></div>
+  <span class="kv mono" id="trainingProgText" style="min-width:110px">0% (0/0)</span>
+  <span class="kv mono" id="trainingElapsed" style="min-width:80px">—</span>
+  <button class="btn" id="btnStopTraining" disabled style="background:var(--bad);color:#fff;border-color:var(--bad);opacity:0.6;min-width:90px">■ Стоп</button>
+  <span class="kv" style="font-size:11px;color:var(--muted)">одновременно — только одно обучение, прерывание только стопом</span>
 </div>
 
 <div class="tabs">
@@ -668,6 +679,13 @@ function updateKVs(state){
   document.getElementById('kvIslands').textContent = state.islands?.length ?? "—"
   let prog = state.total_generations? (state.global_generation/state.total_generations*100):0
   document.getElementById('prog').style.width = prog.toFixed(1)+"%"
+  // sync main training bar on Setup (always visible) — mirrors header progress, pollJobs will override when job running via dashboard
+  try{
+    let tBar=document.getElementById('trainingProg');
+    let tText=document.getElementById('trainingProgText');
+    if(tBar) tBar.style.width = prog.toFixed(1)+"%";
+    if(tText) tText.textContent = prog.toFixed(1)+"% ("+(state.global_generation||0)+"/"+(state.total_generations||"—")+")";
+  }catch(e){}
   let cuda=state.cuda||{}
   let cudaTxt = cuda.has_cupy? `CUDA cupy ${cuda.cupy_version||""} ${cuda.has_numba? "· numba ✓":""}` : (cuda.has_numba? `numba ${cuda.numba_version||""} ${cuda.numba_cuda_available?"cuda✓":""}` : "CPU numpy")
   document.getElementById('cudaBadge').textContent = cudaTxt
@@ -1197,17 +1215,28 @@ function init(){
     loadConfig();
   };
   document.getElementById('btnRunPipeline').onclick=async()=>{
+    if(trainingRunning){ document.getElementById('launchStatus').textContent="уже идёт обучение "+(currentJobId||"")+" — сначала Стоп"; return; }
     let distance=parseFloat(document.getElementById('inpDistance').value)*1e-6;
     let duration=parseFloat(document.getElementById('inpDuration').value)*1e-6;
     let gds=document.getElementById('inpGdsPath').value;
     let out=document.getElementById('inpOut').value||"output/live_run";
     let protocol=document.getElementById('selProtocol').value;
     document.getElementById('launchStatus').textContent="запускаю pipeline...";
+    document.getElementById('btnRunPipeline').disabled=true; document.getElementById('btnRunGA').disabled=true;
     let r=await fetch('/api/launch',{method:'POST',headers:{"Content-Type":"application/json"},body:JSON.stringify({mode:"pipeline",distance_m:distance,duration_s:duration,gds_path:gds,out:out,protocol:protocol})});
-    let j=await r.json(); document.getElementById('launchStatus').textContent= j.ok? "pipeline запущен "+j.job_id+" → "+j.out : "ошибка "+j.error;
-    refreshRuns();
+    let j=await r.json();
+    if(j.ok){
+      document.getElementById('launchStatus').textContent="pipeline запущен "+j.job_id+" → "+j.out;
+    } else {
+      document.getElementById('launchStatus').textContent="ошибка "+(j.error||"") + (j.running_job? " (занято "+j.running_job+")":"");
+      // re-enable if failed due to lock — pollJobs will also fix
+      if(j.error && j.error.includes("already") ) { /* keep disabled until poll */ }
+      else { document.getElementById('btnRunPipeline').disabled=false; document.getElementById('btnRunGA').disabled=false; }
+    }
+    refreshRuns(); pollJobs();
   };
   document.getElementById('btnRunGA').onclick=async()=>{
+    if(trainingRunning){ document.getElementById('launchStatus').textContent="уже идёт обучение "+(currentJobId||"")+" — сначала Стоп"; return; }
     let distance=parseFloat(document.getElementById('inpDistance').value)*1e-6;
     let duration=parseFloat(document.getElementById('inpDuration').value)*1e-6;
     let gds=document.getElementById('inpGdsPath').value;
@@ -1215,9 +1244,16 @@ function init(){
     let out=document.getElementById('inpOut').value||"output/live_run";
     let protocol=document.getElementById('selProtocol').value;
     document.getElementById('launchStatus').textContent="запускаю GA...";
+    document.getElementById('btnRunPipeline').disabled=true; document.getElementById('btnRunGA').disabled=true;
     let r=await fetch('/api/launch',{method:'POST',headers:{"Content-Type":"application/json"},body:JSON.stringify({mode:"ga",distance_m:distance,duration_s:duration,gds_path:gds,generations:gens,out:out,protocol:protocol})});
-    let j=await r.json(); document.getElementById('launchStatus').textContent= j.ok? "GA запущен "+j.job_id+" → "+j.out + " (смотри Training/GA/Trap)" : "ошибка "+j.error;
-    refreshRuns();
+    let j=await r.json();
+    if(j.ok){
+      document.getElementById('launchStatus').textContent="GA запущен "+j.job_id+" → "+j.out + " (смотри Training/GA/Trap)";
+    } else {
+      document.getElementById('launchStatus').textContent="ошибка "+(j.error||"") + (j.running_job? " (занято "+j.running_job+")":"");
+      if(!(j.error && j.error.includes("already"))){ document.getElementById('btnRunPipeline').disabled=false; document.getElementById('btnRunGA').disabled=false; }
+    }
+    refreshRuns(); pollJobs();
   };
   document.getElementById('btnRefreshRuns').onclick=refreshRuns;
   document.getElementById('btnSwitchRun').onclick=()=>{
@@ -1274,6 +1310,78 @@ function init(){
     }
   }
   poll(); setInterval(poll, 900)
+  // === training control: progress bar on main page, single run, stop only ===
+  let trainingRunning=false; let currentJobId=null;
+  function setTrainingUI(running, jobId, progInfo){
+    trainingRunning=running; currentJobId=jobId;
+    const btnPipe=document.getElementById('btnRunPipeline');
+    const btnGA=document.getElementById('btnRunGA');
+    const btnSave=document.getElementById('btnSaveConfig');
+    const btnStop=document.getElementById('btnStopTraining');
+    const statusText=document.getElementById('trainingStatusText');
+    const jobIdEl=document.getElementById('trainingJobId');
+    const progBar=document.getElementById('trainingProg');
+    const progText=document.getElementById('trainingProgText');
+    const elapsedEl=document.getElementById('trainingElapsed');
+    if(running){
+      if(btnPipe) btnPipe.disabled=true;
+      if(btnGA) btnGA.disabled=true;
+      if(btnSave) btnSave.disabled=true;
+      if(btnStop){ btnStop.disabled=false; btnStop.style.opacity="1"; }
+      if(statusText) statusText.textContent="Обучение идёт" + (progInfo.mode? " · "+progInfo.mode : (jobId? " · "+jobId : ""));
+      if(jobIdEl) jobIdEl.textContent= jobId? "("+jobId+")" : "";
+      let pct=progInfo.percent||0;
+      if(progBar) progBar.style.width=pct.toFixed(1)+"%";
+      if(progText) progText.textContent=pct.toFixed(1)+"% ("+(progInfo.global_generation||0)+"/"+(progInfo.total_generations||"—")+")";
+      if(elapsedEl) elapsedEl.textContent= progInfo.elapsed_s!=null ? fmtSec(progInfo.elapsed_s) : "—";
+    } else {
+      if(btnPipe) btnPipe.disabled=false;
+      if(btnGA) btnGA.disabled=false;
+      if(btnSave) btnSave.disabled=false;
+      if(btnStop){ btnStop.disabled=true; btnStop.style.opacity="0.6"; }
+      if(statusText) statusText.textContent="Обучение не запущено";
+      if(jobIdEl) jobIdEl.textContent="";
+      if(elapsedEl) elapsedEl.textContent="—";
+      // keep progress at last value if we have state, else 0 — don't reset abruptly while polling catches up
+      if(!progInfo.percent){
+        // no progress info → show 0
+        if(progBar && progBar.style.width==="") progBar.style.width="0%";
+      } else {
+        let pct=progInfo.percent||0;
+        if(progBar) progBar.style.width=pct.toFixed(1)+"%";
+        if(progText) progText.textContent=pct.toFixed(1)+"% ("+(progInfo.global_generation||0)+"/"+(progInfo.total_generations||"—")+")";
+      }
+    }
+  }
+  async function pollJobs(){
+    try{
+      let r=await fetch('/api/jobs?ts='+Date.now(),{cache:"no-store"});
+      let j=await r.json();
+      let running=!!j.running;
+      let jobId=j.running_job||null;
+      let prog=j.progress||{};
+      if(running && j.jobs && jobId && j.jobs[jobId]){
+        let cmd=j.jobs[jobId].cmd||[];
+        let cmdStr=Array.isArray(cmd)? cmd.join(" ") : "";
+        prog.mode = cmdStr.includes("shuttle_sim.ga") ? "GA" : (cmdStr.includes("shuttle_sim")? "pipeline":"");
+      }
+      setTrainingUI(running, jobId, prog);
+      let jl=document.getElementById('jobsList'); if(jl) jl.textContent=JSON.stringify(j,null,2);
+      let jc=document.getElementById('jobsCard'); if(jc) jc.textContent=JSON.stringify(j,null,2);
+    }catch(e){}
+  }
+  document.getElementById('btnStopTraining').onclick=async()=>{
+    if(!trainingRunning){ document.getElementById('launchStatus').textContent="нет активного обучения"; return; }
+    document.getElementById('launchStatus').textContent="останавливаю "+(currentJobId||"")+"...";
+    document.getElementById('btnStopTraining').disabled=true;
+    try{
+      let r=await fetch('/api/stop',{method:'POST',headers:{"Content-Type":"application/json"},body:JSON.stringify({job_id:currentJobId})});
+      let j=await r.json();
+      document.getElementById('launchStatus').textContent= j.ok? "остановлено "+(j.stopped||[]).join(",") : "ошибка стопа "+(j.error||"");
+    }catch(e){ document.getElementById('launchStatus').textContent="ошибка стопа "+e.message; }
+    setTimeout(pollJobs, 600);
+  };
+  pollJobs(); setInterval(pollJobs, 1200);
   try{
     let saved=localStorage.getItem("ga_fit_series")
     if(saved){ window.__fitSeries=JSON.parse(saved)}
