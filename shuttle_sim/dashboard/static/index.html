@@ -217,9 +217,9 @@ input[type=range]{accent-color:var(--accent)}
     <table class="table mono" id="hallTable" style="margin-top:10px"></table>
   </div>
   <div class="card">
-    <h3>Theta heatmap — hall leaders <small>genes g0..g9: warp (0-1) + SVD (2-7) + freq (8-9), clipped to bounds</small></h3>
+    <h3>Theta heatmap — hall leaders <small>g0–g1: time warp · g2+: voltage corrections · up to 12 coefficients</small></h3>
     <div id="heat"></div>
-    <div class="legend"><span style="background:linear-gradient(90deg,#0a2a6a,#5ac8ff)"></span> negative → positive <span style="background:linear-gradient(90deg,#4a1a2a,#ff7a7a);margin-left:12px"></span> freq genes</div>
+    <div class="legend"><span style="background:linear-gradient(90deg,#0a2a6a,#5ac8ff)"></span> base coefficients <span style="background:linear-gradient(90deg,#4a1a2a,#ff7a7a);margin-left:12px"></span> extended voltage-basis coefficients</div>
     <div id="thetaVals" class="mono" style="margin-top:8px;color:var(--muted)"></div>
   </div>
   <div class="card">
@@ -252,7 +252,7 @@ input[type=range]{accent-color:var(--accent)}
 <div id="pane-islands" class="tab-pane">
 <div class="grid" style="grid-template-columns:1fr">
   <div class="card" style="grid-column:1/-1">
-    <h3>Islands snapshot <small>migration ring S→A→V→R→H→S every N gens + shuffle every 3N · click row to see history</small></h3>
+    <h3>Islands snapshot <small>ring migration in configured island order; interval N + global shuffle every 3N · click row to see history</small></h3>
     <table class="table" id="islandTable"></table>
     <div id="migrLog" class="mono" style="margin-top:10px;color:var(--muted)"></div>
   </div>
@@ -289,7 +289,7 @@ input[type=range]{accent-color:var(--accent)}
 
   <div style="padding:0 20px 16px 20px;display:grid;grid-template-columns:1fr;gap:16px">
     <div class="card">
-      <h3>Trap top view + shuttling animation <small>electrodes (RF gold, DC blue, central grey) · ion path along x · <span style="color:var(--accent)">non-blocking: GA writes state.json atomically, dashboard polls 500ms, trajectory cheap decimated cache</span></small></h3>
+      <h3>Trap top view + shuttling animation <small>electrodes (RF gold, DC blue, central grey) · ion path along x · <span style="color:var(--accent)">state files are replaced atomically; trajectory diagnostics are assembled in the GA process</span></small></h3>
       <canvas id="cTrapTop" width="1200" height="360" class="trap-main"></canvas>
       <div class="legend" id="trapTopLegend" style="flex-wrap:wrap"></div>
       <div style="display:flex;gap:12px;margin-top:10px;flex-wrap:wrap;align-items:center">
@@ -323,12 +323,12 @@ input[type=range]{accent-color:var(--accent)}
   </div>
 </div>
 
-<div class="footer">GA writes <code>state.json</code> atomically — this dashboard polls <code>/api/state</code> every 0.5–1.5s (separate process, zero slowdown). Migration and per-island history are in <code>history/gen_*.json</code>. New trap tab animates per-island 3 % best cheap trajectories without blocking evolution (decimated 80, cached). Use <code>python -m shuttle_sim.ga --config configs/shuttle_ga_isolated.json --out output/ga_test --dashboard</code>.</div>
+<div class="footer">GA replaces <code>state.json</code> atomically; this separate dashboard process polls <code>/api/state</code> every 0.5–1.5s. State assembly can synchronously evaluate leader trajectories in the GA process, so it may add computation time. Migration and per-island history are in <code>history/gen_*.json</code>; trajectory decimation and caches limit repeated work. Use <code>python -m shuttle_sim.ga --config configs/shuttle_ga_isolated.json --out output/ga_test --dashboard</code>.</div>
 
 <script>
 const ISLANDS = ["S","A","V","R","H","Q1","Q2","F"]
 const COLORS = {S:"#5ac8ff", A:"#ffbe55", V:"#7af0a0", R:"#c58aff", H:"#ff7a7a", Q1:"#ff6b9e", Q2:"#5affda", F:"#ffd05a", smooth:"#5ac8ff", sta:"#ffbe55", variable:"#7af0a0", robust:"#c58aff", hardware:"#ff7a7a", free:"#ffd05a"}
-const NAMES = {S:"S smooth", A:"A STA", V:"V variable", R:"R robust", H:"H hardware", Q1:"Q1 quarantine", Q2:"Q2 quarantine", F:"F free 12-dim"}
+const NAMES = {S:"S smooth", A:"A STA", V:"V extended voltage", R:"R robust", H:"H hardware", Q1:"Q1 quarantine", Q2:"Q2 quarantine", F:"F free 12-dim"}
 let lastState=null
 let trapAnim={playing:false, raf:null, progress:0, speed:1, lastTs:0, islandVisibility:{}}
 function fmtSec(s){ if(s==null) return "—"; if(s<60) return s.toFixed(1)+"s"; const m=Math.floor(s/60), sec=(s%60).toFixed(0); return m+"m "+sec+"s"}
@@ -482,6 +482,7 @@ function drawHeat(state){
   const cont=document.getElementById('heat'), valsEl=document.getElementById('thetaVals')
   if(!state||!state.hall_of_fame){ cont.innerHTML=""; return}
   let hall=state.hall_of_fame.slice(0,5)
+  let maxGenes=Math.max(8,...hall.map(h=>(h.theta||[]).length))
   cont.innerHTML=""
   for(let idx=0; idx<hall.length; idx++){
     let h=hall[idx]
@@ -493,7 +494,7 @@ function drawHeat(state){
     for(let gi=0; gi<theta.length; gi++){
       let v=theta[gi]
       let lo,hi
-      if(gi<2){ lo=-0.10; hi=0.10}else if(gi<8){ lo=-0.4; hi=0.4}else{ lo=-0.15; hi=0.15}
+      if(gi<2){ lo=-0.10; hi=0.10}else if(gi<8){ lo=-0.4; hi=0.4}else if(gi<10){ lo=-0.15; hi=0.15}else{ lo=-0.12; hi=0.12}
       let norm=(v-lo)/(hi-lo)
       let cell=document.createElement('div'); cell.className="heat-cell"
       let hue, sat="78%", lit="56%"
@@ -511,7 +512,7 @@ function drawHeat(state){
       cell.title=`g${gi}=${v.toFixed(4)} [${lo},${hi}]`
       row.appendChild(cell)
     }
-    for(let gi=theta.length; gi<10; gi++){ let c=document.createElement('div'); c.className="heat-cell"; c.style.background="#1a2744"; row.appendChild(c)}
+    for(let gi=theta.length; gi<maxGenes; gi++){ let c=document.createElement('div'); c.className="heat-cell"; c.style.background="#1a2744"; row.appendChild(c)}
     cont.appendChild(row)
   }
   if(hall[0]&&hall[0].theta){
@@ -689,9 +690,11 @@ function drawIslands(state){
   tbl.innerHTML=html
   if(state.migration_history){
     let rows=state.migration_history.slice(-8)
-    log.innerHTML = "migration log (ring S→A→V→R→H):<br>" + rows.map(m=>`gen ${m.generation}: ${JSON.stringify(m.migrant_ids||m)}`).join("<br>") + (state.migration_history.length===0? "none yet — first at gen 5":"")
+    const migrationInterval=state.config?.migration_interval??5
+    log.innerHTML = "migration log (configured ring order):<br>" + rows.map(m=>`gen ${m.generation}: ${JSON.stringify(m.migrant_ids||m)}`).join("<br>") + (state.migration_history.length===0? `none yet — first at gen ${migrationInterval}`:"")
   } else {
-    log.textContent = "migration rings every 5 gens (see docs/ga_architecture.md)"
+    const migrationInterval=state.config?.migration_interval??5
+    log.textContent = `migration history unavailable; interval ${migrationInterval} gens (see docs/ga_architecture.md)`
   }
 }
 function updateKVs(state){
@@ -712,12 +715,15 @@ function updateKVs(state){
     if(tText) tText.textContent = prog.toFixed(1)+"% ("+(state.global_generation||0)+"/"+(state.total_generations||"—")+")";
   }catch(e){}
   let cuda=state.cuda||{}
-  let cudaTxt = cuda.has_cupy? `CUDA cupy ${cuda.cupy_version||""} ${cuda.has_numba? "· numba ✓":""}` : (cuda.has_numba? `numba ${cuda.numba_version||""} ${cuda.numba_cuda_available?"cuda✓":""}` : "CPU numpy")
+  let cudaTxt = cuda.has_cupy? `CuPy ${cuda.cupy_version||""} detected · GA CPU` : (cuda.has_numba? `Numba ${cuda.numba_version||""} detected · GA CPU` : "CPU NumPy · GA evaluation")
   document.getElementById('cudaBadge').textContent = cudaTxt
   let migr = state.migration_history?.length? `migrations ${state.migration_history.length}` : "no migration yet"
   document.getElementById('migrBadge').textContent = migr
-  let vf = state.hall_of_fame?.some(h=>h.theta?.length===10)
-  document.getElementById('freqBadge').textContent = vf? "freq variable active (10 genes)" : "freq fixed (8 genes) + V island 10"
+  let geneDims = (state.hall_of_fame||[]).map(h=>h.theta?.length||0).filter(n=>n>0)
+  let maxGeneDim = geneDims.length ? Math.max(...geneDims) : null
+  document.getElementById('freqBadge').textContent = maxGeneDim
+    ? `${maxGeneDim}-component genome · frequency profile configured separately`
+    : "frequency profile configured separately from genome"
   document.getElementById('stateTime').textContent = new Date((state.timestamp||Date.now()/1000)*1000).toLocaleTimeString() + " · global_generation " + (state.global_generation??"—")
   // trap badges
   if(state.trap){
@@ -808,7 +814,7 @@ function drawTrap(state){
   if(!state.trap){
     ctx.clearRect(0,0,W,H); ctx.fillStyle="#0f1930"; ctx.fillRect(0,0,W,H)
     ctx.fillStyle="#8aa0c8"; ctx.font="13px sans-serif"; ctx.fillText("waiting for trap geometry — Runner hasn't prepared yet", W/2-180, H/2)
-    if(notice){ notice.style.display="block"; notice.textContent="Trap geometry will appear after GA prepares Runner (start/target available). This view polls state.json every 500ms, never blocks training."}
+    if(notice){ notice.style.display="block"; notice.textContent="Trap geometry will appear after GA prepares Runner (start/target available). This view polls state.json every 500ms; trajectory diagnostics are prepared synchronously by the GA engine."}
     return
   }
   if(notice) notice.style.display="none"

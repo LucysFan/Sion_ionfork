@@ -1,4 +1,6 @@
-"""Live dashboard server — reads state.json, serves static + JSON API, never blocks GA.
+"""Live dashboard server for static assets and state files written by the GA engine.
+
+Trajectory preparation belongs to synchronous engine state assembly, not this server.
 
 Run: python -m shuttle_sim.dashboard.server --out output/ga_run --port 8000
 Preview in E2B: https://8000-<sandboxId>.e2b.app
