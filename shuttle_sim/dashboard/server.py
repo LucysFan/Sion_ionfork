@@ -767,6 +767,13 @@ class Handler(SimpleHTTPRequestHandler):
                             cfg["trap"]["electrode_map"] = data["electrode_map"]
                     if "generations" in data:
                         cfg.setdefault("ga", {})["generations"] = int(data["generations"])
+                    if "start_m" in data:
+                        try:
+                            sm = [float(x) for x in data["start_m"]]
+                            if len(sm) == 3:
+                                cfg["trap"]["minimum_seed_m"] = sm
+                        except:
+                            pass
                 dest = pathlib.Path("configs/unified_live.json")
                 dest.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
                 preview = None
@@ -848,10 +855,18 @@ class Handler(SimpleHTTPRequestHandler):
                     cfg["trap"]["path"] = str(resolved)
                 if protocol:
                     cfg["task"]["protocol"] = str(protocol)
+                if "start_m" in data:
+                    try:
+                        sm = [float(x) for x in data["start_m"]]
+                        if len(sm) == 3:
+                            cfg["trap"]["minimum_seed_m"] = sm
+                    except:
+                        pass
 
                 out_path = pathlib.Path(out_dir_str)
                 out_path.mkdir(parents=True, exist_ok=True)
-                for _p in (out_path / "state.json", out_path / "live.json"):
+                # clean stale state from previous run (otherwise dashboard shows old 2/2 100% immediately — stale after break/finish)
+                for _p in (out_path / "state.json", out_path / "live.json", out_path / "checkpoint.json", out_path / "final.json"):
                     try:
                         if _p.exists():
                             _p.unlink()
@@ -865,6 +880,10 @@ class Handler(SimpleHTTPRequestHandler):
                             pass
                 try:
                     (out_path / "run.log").write_text("", encoding="utf-8")
+                except Exception:
+                    pass
+                try:
+                    (out_path / "history").mkdir(parents=True, exist_ok=True)
                 except Exception:
                     pass
 
