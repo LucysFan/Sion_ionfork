@@ -25,6 +25,21 @@ def main():
     if "ga" in runner_cfg:
         runner_cfg=dict(runner_cfg)  # copy
         runner_cfg.pop("ga")
+    if runner_cfg.get("trap", {}).get("kind") == "gds" and runner_cfg["trap"].get("path"):
+        gp = pathlib.Path(runner_cfg["trap"]["path"])
+        if not gp.is_absolute():
+            for cand in (
+                cfg_path.resolve().parent / gp,
+                pathlib.Path.cwd() / gp,
+                pathlib.Path.cwd() / "configs" / gp.name,
+                pathlib.Path.cwd() / "configs" / "uploads" / gp.name,
+                pathlib.Path.cwd() / "examples" / "gds" / gp.name,
+            ):
+                if cand.exists():
+                    gp = cand.resolve()
+                    break
+            runner_cfg["trap"] = dict(runner_cfg["trap"])
+            runner_cfg["trap"]["path"] = str(gp)
     if args.generations is not None:
         ga_cfg["generations"]=args.generations
     # defaults
