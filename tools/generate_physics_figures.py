@@ -37,8 +37,8 @@ def draw_physical_flow():
         (2.55, 2.0, 1.85, 1.15, "$U_{\\mathrm{eff}}(r,t)$", "мгновенная яма $r_0(t)$"),
         (4.95, 2.0, 2.15, 1.15, "$\\mathcal{L}=T-U_{\\mathrm{eff}}$", "уравнение Эйлера—Лагранжа"),
         (7.65, 2.0, 2.1, 1.15, "Движение иона", "$\\bar{r}(t)$ и $\\Sigma(t)$"),
-        (10.3, 2.0, 1.6, 1.15, "Физические\nпоказатели", "$n$, конечные ошибки, $e_{\\max}$"),
-        (12.3, 2.0, 1.45, 1.15, "Безразмерная\nпотеря", "$\\ell_k$ и робастная оценка"),
+        (10.3, 2.0, 1.6, 1.15, "Физические\nпоказатели", "$n$, ошибки конца; лаг отдельно"),
+        (12.3, 2.0, 1.45, 1.15, "Безразмерная\nпотеря", "$n$ и ошибки в конце"),
     ]
     colors = ["#e8f1fb", "#e8f1fb", "#fff1d6", "#e4f4ea", "#e4f4ea", "#f2e8fb"]
     for (x, y, w, h, title, subtitle), color in zip(boxes, colors):
@@ -54,7 +54,7 @@ def draw_physical_flow():
             "Лагранжиан задаёт движение; его действие не является целевой функцией оптимизатора.",
             ha="center", va="center", fontsize=11, color="#7c2d12", weight="bold")
     ax.text(8.7, 0.65,
-            "Ион не прижимается к мгновенному минимуму: ускорение центра создаёт инерционное отставание.",
+            "Ион не прижат к центру; пик его смещения — диагностика, а не стандартный штраф.",
             ha="center", va="center", fontsize=9.5, color="#334155")
     fig.tight_layout()
     fig.savefig(FIGURES / "fizicheskaya_shema.png", bbox_inches="tight")
@@ -121,21 +121,22 @@ def draw_dimensionless_loss():
     fig, axes = plt.subplots(1, 3, figsize=(13, 4.0))
     panels = [
         (np.log1p(u), u, "конечное возбуждение", "$n/n_0$"),
-        (np.log1p(u**2), u, "конечная ошибка положения", "$\\epsilon/\\epsilon_0$"),
-        (np.log1p(u**2), u, "максимальное отставание", "$e_{\\max}/d$"),
+        (np.log1p(u**2), u, "конечная ошибка", "$\\epsilon/\\epsilon_0$"),
+        (np.log1p(u**2), u, "отставание: только\nпри явном весе", "$e_{\\max}/d$"),
     ]
-    for ax, (score, x, title, xlabel) in zip(axes, panels):
-        ax.plot(x, score, color="#2563eb", linewidth=2.2)
+    for index, (ax, (score, x, title, xlabel)) in enumerate(zip(axes, panels)):
+        ax.plot(x, score, color="#2563eb" if index < 2 else "#7c3aed",
+                linewidth=2.2, linestyle="-" if index < 2 else "--")
         ax.axvline(1, color="#dc2626", linestyle="--", linewidth=1.1)
         ax.axhline(np.log(2), color="#64748b", linestyle=":", linewidth=1.0)
         ax.scatter([1], [np.log(2)], color="#dc2626", zorder=3)
         ax.set_title(title)
         ax.set_xlabel(xlabel)
         ax.grid(alpha=0.25)
-    axes[0].set_ylabel("безразмерный вклад в потерю")
-    fig.suptitle("Логарифмическая цена нормированных отклонений", y=1.03, fontsize=14)
+    axes[0].set_ylabel("безразмерный вклад при единичном весе")
+    fig.suptitle("Формы безразмерной оценки и отдельной диагностики", y=1.03, fontsize=14)
     fig.text(0.5, -0.02,
-             "Красная отметка: соответствующее относительное отклонение равно единице; вклад тогда равен ln 2.",
+             "Синие кривые входят в стандартную оценку; фиолетовая пунктирная — лишь при задании ненулевого веса.",
              ha="center", fontsize=9, color="#475569")
     fig.tight_layout()
     fig.savefig(FIGURES / "obezrazmerivanie_i_poteri.png", bbox_inches="tight")
@@ -174,28 +175,50 @@ def draw_reference_breakdown(task, metrics):
         "конечное число квантов": np.log1p(metrics["n_total"] / n0),
         "ошибка иона в конце": np.log1p((metrics["position_error_m"] / tol)**2),
         "ошибка ямы в конце": np.log1p((metrics["well_target_error_m"] / tol)**2),
-        "пиковое отставание по пути": np.log1p((metrics["max_ion_well_lag_m"] / distance)**2),
     }
+    max_lag_m = float(metrics["max_ion_well_lag_m"])
+    lag_fraction = max_lag_m / distance
+    optional_lag_term = np.log1p(lag_fraction**2)
     names = list(components)
     values = np.array([components[k] for k in names])
-    fig, ax = plt.subplots(figsize=(9, 4.8))
+    fig, (ax, lag_ax) = plt.subplots(
+        1, 2, figsize=(11, 4.8), gridspec_kw={"width_ratios": [2.8, 1.2]})
     y = np.arange(len(names))
-    ax.barh(y, values, color=["#2563eb", "#16a34a", "#0f766e", "#7c3aed"])
+    ax.barh(y, values, color=["#2563eb", "#16a34a", "#0f766e"])
     ax.set_yticks(y, names)
     ax.invert_yaxis()
     ax.set_xscale("log")
-    ax.set_xlabel("безразмерный вклад, логарифмическая шкала")
-    ax.set_title("Разложение текущей функции потерь для опорной геометрии")
+    ax.set_xlabel("вклад в стандартную потерю")
+    ax.set_title("Учитывается в оценке")
     ax.grid(axis="x", alpha=0.25, which="both")
     for yi, value in enumerate(values):
         ax.text(value * 1.12, yi, f"{value:.2e}", va="center", fontsize=9)
-    fig.text(0.5, 0.01,
-             f"Проверочный расчёт: n={metrics['n_total']:.3g}; максимум отставания={metrics['max_ion_well_lag_m']*1e9:.2f} нм. Регуляризация управления показана отдельно в тексте.",
+
+    lag_nm = max_lag_m * 1e9
+    lag_ax.barh([0], [lag_nm], color="#7c3aed", alpha=0.8)
+    lag_ax.set_xlim(0, max(1.2 * lag_nm, 1.0))
+    lag_ax.set_yticks([0], ["пиковое смещение"])
+    lag_ax.invert_yaxis()
+    lag_ax.set_xlabel("нм")
+    lag_ax.set_title("Диагностика,\nне входит в оценку")
+    lag_ax.grid(axis="x", alpha=0.25)
+    lag_ax.text(max(lag_nm * 1.04, 0.5), 0,
+                f"{lag_nm:.2f} нм", va="center", fontsize=9)
+
+    fig.text(0.5, 0.015,
+             f"n={metrics['n_total']:.4g}; e_max/d={lag_fraction:.3g}; при условном весе 1 лаг дал бы {optional_lag_term:.2e}, но стандартный вес равен 0.",
              ha="center", fontsize=8, color="#475569")
-    fig.tight_layout(rect=(0, 0.05, 1, 1))
+    fig.tight_layout(rect=(0, 0.06, 1, 1))
     fig.savefig(FIGURES / "razlozhenie_poteri_opornyi.png", bbox_inches="tight")
     plt.close(fig)
-    return components
+    return {
+        "default_loss_components": components,
+        "lag_diagnostic": {
+            "max_lag_m": max_lag_m,
+            "lag_over_distance": lag_fraction,
+            "unit_weight_optional_term": optional_lag_term,
+        },
+    }
 
 
 def draw_reference_trajectory(metrics):

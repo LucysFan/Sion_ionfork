@@ -103,7 +103,7 @@ def propagate(times_s, centers_m, hessians_J_m2, initial, final, mass, target_m,
     if np.min(np.linalg.eigvalsh(K)) <= 0:
         raise Rejected('weak_confinement', 'ROM Hessian not positive')
 
-    # Store a dense path estimate for the transient lag cost and optional plots.
+    # Store a dense path estimate for the transient lag diagnostic and optional plots.
     path_times_s = [float(ts[0])]
     path_means_m = [(z[:3] * L).tolist()]
     path_centers_m = [centers[0].tolist()]

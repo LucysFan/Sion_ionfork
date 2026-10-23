@@ -8,10 +8,11 @@ from ..field import Rejected, finite
 from ..observables import scalar_loss_from_observables, dimensionless_control_penalty
 
 def scalar_fitness(metrics, task, distortion=None, theta=None, control_bounds=None,
-                         control_regularization_weight=1e-4):
+                   control_regularization_weight=1e-4, loss_weights=None):
     """Скалярная оценка из общей физической потери и дополнительных аппаратных цен."""
-    # The physical part is shared with the pipeline: terminal state + validated path lag.
-    val = scalar_loss_from_observables(metrics, task)
+    # The shared default scores final-state quality; path lag is diagnostic
+    # unless its weight is explicitly enabled in the task configuration.
+    val = scalar_loss_from_observables(metrics, task, weights=loss_weights)
     if distortion is not None:
         rms = float(distortion.get('rms_deviation_V', 0))
         # 0.1 V is the declared soft scale; the ratio is dimensionless.
@@ -45,8 +46,9 @@ def evaluate_genome(genome, runner, baseline='sta', exact_nodes=None, hardware=N
         metrics = runner.evaluate(theta, baseline=baseline, hardware=hardware, stray=stray,
                                   frequency_scale=freq_scale, exact_nodes=exact_nodes, subdivisions=runner.cfg.get('subdivisions',4))
         fit = scalar_fitness(metrics, runner.task, distortion=metrics.get('distortion'),
-                                   theta=theta, control_bounds=genome.bounds,
-                                   control_regularization_weight=runner.cfg.get('control_regularization_weight',1e-4))
+                             theta=theta, control_bounds=genome.bounds,
+                             control_regularization_weight=runner.cfg.get('control_regularization_weight',1e-4),
+                             loss_weights=runner.loss_weights)
         # robust aggregation if island R: evaluate on 2 train scenarios and take worst
         if genome.island in ('R','robust'):
             from ..hardware import Hardware
@@ -57,7 +59,8 @@ def evaluate_genome(genome, runner, baseline='sta', exact_nodes=None, hardware=N
                     m2=runner.evaluate(theta,'sta', hardware=Hardware(**sc['hardware']), stray=sc['stray_V_m'], frequency_scale=sc['frequency_scale'], exact_nodes=exact_nodes)
                     vals.append(scalar_fitness(
                         m2, runner.task, m2.get('distortion'), theta, genome.bounds,
-                        runner.cfg.get('control_regularization_weight',1e-4)))
+                        runner.cfg.get('control_regularization_weight',1e-4),
+                        loss_weights=runner.loss_weights))
                 except Exception:
                     vals.append(1e6)
             fit = float(0.35*np.mean(vals)+0.65*np.max(vals))

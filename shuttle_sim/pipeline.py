@@ -71,6 +71,10 @@ class Runner:
         self.hw=Hardware(**config['hardware'])
         self.hw.validate(len(self.trap.indices))
         self.task=config['task']
+        # One declared weighting scheme is shared by optimization, reranking,
+        # genetic search and reported observable losses. Preserve the former
+        # rerank_weights key only as a compatibility fallback.
+        self.loss_weights=config.get('loss_weights',config.get('rerank_weights'))
         if config.get('robust_samples',8)<1:raise ValueError('positive robust sample count required')
         finite([self.task['min_frequency_hz'],self.task['distance_m'],self.task['duration_s'],self.task['hold_s'],
                 self.task['max_n_total'],self.task['position_tolerance_m']], 'task')
@@ -370,7 +374,8 @@ class Runner:
                 for sc in training:
                     results.append(self.evaluate(x,'sta',hardware=Hardware(**sc['hardware']),stray=sc['stray_V_m'],
                                                  frequency_scale=sc['frequency_scale']))
-                vals=[scalar_loss_from_observables(r,self.task) for r in results]
+                vals=[scalar_loss_from_observables(r,self.task,weights=self.loss_weights)
+                      for r in results]
                 value=float(.35*np.mean(vals)+.65*np.max(vals)
                             +dimensionless_control_penalty(x,bounds,control_regularization_weight))
                 status='ok'
@@ -477,16 +482,15 @@ class Runner:
             # Add cross-baseline evaluations for provenance without changing selection budget
             pass
         # Rerank under actual local-minimum reconstruction, not the search ROM.
-        # B1 fix: normalized, config-declared weights (not 1e8*pos which dominates n_total)
-        # Use the shared dimensionless loss (including peak ion-well lag) and bound-normalized control penalty.
+        # Use the same configured weights as the optimizer; path lag is diagnostic
+        # unless its weight is explicitly made nonzero.
         # P3: lexicographic tie tolerance 1e-9 prefer sta (excitation primary) – if scores within eps, prefer sta baseline then shorter theta
         rerank=[]
         _eps = 1e-9
         for name,theta,baseline in candidates:
             r=self.evaluate(theta,baseline,exact_nodes=comp_nodes,subdivisions=valid_subdiv)
-            _cfg_weights = self.cfg.get('rerank_weights', {'n':1.0,'pos':1.0,'well':1.0,'lag':1.0})
             _control_bounds = [(-.10,.10),(-.10,.10)]+[(-.4,.4)]*6
-            score = (scalar_loss_from_observables(r,self.task,weights=_cfg_weights)
+            score = (scalar_loss_from_observables(r,self.task,weights=self.loss_weights)
                      + dimensionless_control_penalty(
                          theta,_control_bounds,
                          float(self.cfg.get('control_regularization_weight',1e-4))))
@@ -595,7 +599,7 @@ class Runner:
         write_json(out/'robust.json',robust)
 
         # === Observables & loss chain (spec §10) ===
-        obs_chain = processing_chain(r, self.task)
+        obs_chain = processing_chain(r, self.task, weights=self.loss_weights)
         write_json(out/'observables.json', obs_chain['observables'])
         write_json(out/'observable_loss.json', {'loss': obs_chain['loss'], 'provenance': obs_chain['provenance']})
         # Raw measurement contract (spec §10 raw→observable): synthesize raw sideband data then infer (R4)
@@ -603,15 +607,24 @@ class Runner:
             from .observables import synthesize_raw_sideband_measurement, infer_observables_from_raw, raw_to_observables_chain
             raw = synthesize_raw_sideband_measurement(r)
             inferred = infer_observables_from_raw(raw)
-            raw_chain = raw_to_observables_chain(r, self.task, include_raw=True)
+            raw_chain = raw_to_observables_chain(
+                r, self.task, include_raw=True, weights=self.loss_weights)
             write_json(out/'raw_measurement.json', raw)
             write_json(out/'observables_from_raw.json', inferred)
-            write_json(out/'raw_chain.json', {"raw_measurement": raw, "observables_via_raw": inferred, "loss_via_raw": raw_chain['loss'], "provenance": raw_chain['provenance']})
+            write_json(out/'raw_chain.json', {
+                "raw_measurement": raw,
+                "observables_via_raw": inferred,
+                "loss_via_raw": raw_chain['loss'],
+                "loss_without_lag": raw_chain.get('loss_without_lag'),
+                "loss_status": raw_chain.get('loss_status', 'complete_for_configured_weights'),
+                "provenance": raw_chain['provenance'],
+            })
         except Exception as e_raw:
             write_json(out/'raw_measurement.json', {"error": str(e_raw), "provenance": "raw synthesis failed"})
         # Per-scenario observable aggregation example (robust rows → observable losses)
         try:
-            obs_losses = [processing_chain(row, self.task)['loss'] for row in robust['rows'] if row.get('status')=='ok']
+            obs_losses = [processing_chain(row, self.task, weights=self.loss_weights)['loss']
+                          for row in robust['rows'] if row.get('status')=='ok']
             from .observables import aggregate_losses
             agg = {
                 "mean_loss": aggregate_losses(obs_losses, "mean") if obs_losses else None,

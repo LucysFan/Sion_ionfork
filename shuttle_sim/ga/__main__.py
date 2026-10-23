@@ -100,7 +100,8 @@ def main():
             fitness_consistent = scalar_fitness(
                 metrics, runner.task, distortion=metrics.get('distortion'), theta=best.theta,
                 control_bounds=best.bounds,
-                control_regularization_weight=runner.cfg.get('control_regularization_weight',1e-4))
+                control_regularization_weight=runner.cfg.get('control_regularization_weight',1e-4),
+                loss_weights=runner.loss_weights)
         except Exception:
             fitness_consistent = best.fitness
         (out/"ga_best.json").write_text(json.dumps({"theta":best.theta.tolist(),"fitness":fitness_consistent,"metrics":metrics,"island":best.island,"baseline":best_baseline},indent=2, default=str))

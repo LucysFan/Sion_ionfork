@@ -1,5 +1,6 @@
 import numpy as np
 import tempfile, json, pathlib
+import pytest
 from shuttle_sim.field import load_trap, Rejected, Local
 from shuttle_sim.dynamics import propagate
 from shuttle_sim.observables import scalar_loss_from_observables, dimensionless_control_penalty
@@ -327,20 +328,24 @@ def test_control_regularizer_is_invariant_to_voltage_units():
     assert np.isclose(value_volts, 0.25)
 
 
-def test_scalar_loss_includes_transient_lag_and_terminal_errors():
+def test_scalar_loss_keeps_transient_lag_diagnostic_unless_explicitly_weighted():
     task = {"max_n_total": 0.5, "position_tolerance_m": 5e-6,
             "distance_m": 30e-6}
     metrics = {"n_total": 0.0, "position_error_m": 0.0,
                "well_target_error_m": 0.0, "max_transport_error_m": 3e-6,
                "is_max_transport_error_fallback": False}
     expected_lag = np.log1p((3e-6/30e-6)**2)
-    assert np.isclose(scalar_loss_from_observables(metrics, task), expected_lag)
+    assert scalar_loss_from_observables(metrics, task) == 0.0
+    assert np.isclose(scalar_loss_from_observables(
+        metrics, task, weights={"lag": 1.0}), expected_lag)
 
     metrics["position_error_m"] = 1e-6
     metrics["well_target_error_m"] = 2e-6
-    expected = (expected_lag + np.log1p((1e-6/5e-6)**2)
-                + np.log1p((2e-6/5e-6)**2))
-    assert np.isclose(scalar_loss_from_observables(metrics, task), expected)
+    endpoint_loss = (np.log1p((1e-6/5e-6)**2)
+                     + np.log1p((2e-6/5e-6)**2))
+    assert np.isclose(scalar_loss_from_observables(metrics, task), endpoint_loss)
+    assert np.isclose(scalar_loss_from_observables(
+        metrics, task, weights={"lag": 1.0}), endpoint_loss + expected_lag)
 
 
 def test_unavailable_path_lag_is_not_fabricated_from_endpoint_error():
@@ -350,6 +355,25 @@ def test_unavailable_path_lag_is_not_fabricated_from_endpoint_error():
                "well_target_error_m": 0.0, "max_transport_error_m": 3e-6,
                "is_max_transport_error_fallback": True}
     assert scalar_loss_from_observables(metrics, task) == 0.0
+    with pytest.raises(ValueError, match="nonzero lag weight requires"):
+        scalar_loss_from_observables(metrics, task, weights={"lag": 1.0})
+
+
+def test_raw_chain_marks_requested_lag_as_unavailable_from_terminal_data():
+    from shuttle_sim.observables import raw_to_observables_chain
+
+    metrics = {
+        "n_total": 0.05,
+        "n_modes": [0.02, 0.03],
+        "position_error_m": 1e-6,
+        "well_target_error_m": 1e-6,
+    }
+    task = {"max_n_total": 0.5, "position_tolerance_m": 5e-6,
+            "distance_m": 30e-6}
+    chain = raw_to_observables_chain(metrics, task, weights={"lag": 1.0})
+    assert chain["loss"] is None
+    assert chain["loss_without_lag"] is not None
+    assert chain["loss_status"] == "incomplete_lag_unavailable_from_terminal_measurement"
 
 
 def test_genetic_scalar_fitness_uses_shared_loss_and_adds_penalties_once():
