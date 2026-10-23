@@ -512,14 +512,23 @@ class GAEngine:
                 self._write_live(live_evaluated, total_in_gen, island_strategy=island.strategy, current_fitness=genome.fitness)
             for isl in self.islands:
                 isl.evolve_one_generation(self.runner, live_cb=_live_cb)
+                # incremental per-island — чтобы “по поколениям” тоже шевелилось внутри поколения (раньше было пусто до конца gen)
+                try:
+                    self._update_hall()
+                    self._write_state()
+                except Exception as e:
+                    print(f"per-island state fail {e}")
+                # live уже пишется per-оценка, но добавим и per-остров маркер
+                self._write_live(live_evaluated, total_in_gen, island_strategy=isl.strategy, current_fitness=self._live_best)
             if self.migration.should_migrate(gen):
                 self.migration.migrate(gen)
                 # re-evaluate migrants with live
                 live_evaluated=0
                 for isl in self.islands:
                     isl.evaluate(self.runner, live_cb=_live_cb)
-            self._update_hall()
-            self._write_state()
+                try:
+                    self._update_hall(); self._write_state()
+                except: pass
             # ensure live shows gen completion
             self._write_live(total_in_gen, total_in_gen, island_strategy="gen_done", current_fitness=self._live_best)
             if gen%5==0:

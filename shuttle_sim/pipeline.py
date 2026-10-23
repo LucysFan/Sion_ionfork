@@ -154,7 +154,18 @@ class Runner:
                 else:
                     mod = 0.0
                 omega = base_omega * (1 + np.clip(mod, -0.18, 0.18))
-            v,loc=self.trap.invert(p,self.direction,omega,prev)
+            try:
+                v,loc=self.trap.invert(p,self.direction,omega,prev)
+            except Rejected as ex:
+                if s < 0 or s > 1:
+                    v, loc = prev.copy(), ls[-1] if ls else self.initial
+                    self.failures.append({'s': float(s), 'fallback': True, 'reason': str(ex), 'code': getattr(ex,'code','unknown')})
+                else:
+                    try:
+                        v, loc = self.trap.invert(p,self.direction,omega,prev, regularization=1e-3)
+                    except Rejected:
+                        v, loc = prev.copy(), self.trap.local(prev, p)
+                        self.failures.append({'s': float(s), 'fallback': True, 'reason': str(ex), 'code': getattr(ex,'code','unknown')})
             vs.append(v);ls.append(loc);prev=v
         self.frequency_mode = freq_mode
         self.frequency_coeffs = freq_coeffs.tolist() if hasattr(freq_coeffs, 'tolist') else list(freq_coeffs)
