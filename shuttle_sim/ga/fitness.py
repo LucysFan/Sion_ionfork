@@ -1,46 +1,30 @@
-"""Fitness — hierarchical, multi-objective, cheap ROM for GA.
+"""Единая скалярная оценка кандидата для островного поиска.
 
-Uses Runner.evaluate with cheap ROM (exact_nodes=None) for speed.
-Full exact evaluation only for hall of fame.
-
-Loss components are logged separately for dashboard.
+Быстрая оценка использует линейную модель отклика; точная проверка
+оставляется для итогового зала кандидатов. Компоненты сохраняются отдельно.
 """
 import numpy as np
 from ..field import Rejected, finite
-from ..observables import processing_chain
+from ..observables import scalar_loss_from_observables, dimensionless_control_penalty
 
-def hierarchical_fitness(metrics, task, distortion=None, theta=None):
-    """Scalar fitness + components for dashboard.
-
-    Returns dict with scalar 'fitness' and all sub-metrics.
-    """
-    # metrics is Runner.evaluate result (propagation summary)
-    n = float(metrics.get('n_total', 1e6))
-    pos = float(metrics.get('position_error_m', 1e-3))
-    well = float(metrics.get('well_target_error_m', 1e-3))
-    n0 = float(task.get('max_n_total', 0.5))
-    tol = float(task.get('position_tolerance_m', 5e-6))
-    val = np.log1p(n/n0) + np.log1p((pos/tol)**2) + np.log1p((well/tol)**2)
-    # hardware soft penalties
+def scalar_fitness(metrics, task, distortion=None, theta=None, control_bounds=None,
+                         control_regularization_weight=1e-4):
+    """Скалярная оценка из общей физической потери и дополнительных аппаратных цен."""
+    # The physical part is shared with the pipeline: terminal state + validated path lag.
+    val = scalar_loss_from_observables(metrics, task)
     if distortion is not None:
         rms = float(distortion.get('rms_deviation_V', 0))
-        # 0.1V rms is ok, >0.3V penalize
+        # 0.1 V is the declared soft scale; the ratio is dimensionless.
         val += 0.5*np.log1p(max(0, rms-0.1)/0.1)
-    if theta is not None:
-        val += 1e-4*np.sum(np.asarray(theta)**2)
-    # fmin penalty: if provided in metrics
+    if theta is not None and control_bounds is not None:
+        val += dimensionless_control_penalty(theta, control_bounds,
+                                             control_regularization_weight)
+    # This is a hard confinement gate in Runner; retain a soft term only for
+    # callers that supply an already-computed below-floor metric.
     fmin = float(metrics.get('minimum_frequency_hz', task.get('min_frequency_hz', 400e3)))
     f0 = float(task.get('min_frequency_hz', 400e3))
     if fmin < f0:
         val += 2*np.log1p((f0-fmin)/0.1e6)
-    # observable chain for dashboard
-    try:
-        chain = processing_chain(metrics, task)
-        obs_loss = chain['loss']
-        # blend observable loss lightly
-        val = 0.8*val + 0.2*obs_loss
-    except Exception:
-        pass
     return float(val)
 
 def evaluate_genome(genome, runner, baseline='sta', exact_nodes=None, hardware=None, stray=None, freq_scale=1.0):
@@ -60,8 +44,9 @@ def evaluate_genome(genome, runner, baseline='sta', exact_nodes=None, hardware=N
         # cheap: exact_nodes=None → ROM linear response; expensive: pass exact_nodes
         metrics = runner.evaluate(theta, baseline=baseline, hardware=hardware, stray=stray,
                                   frequency_scale=freq_scale, exact_nodes=exact_nodes, subdivisions=runner.cfg.get('subdivisions',4))
-        # hierarchical
-        fit = hierarchical_fitness(metrics, runner.task, distortion=metrics.get('distortion'), theta=theta)
+        fit = scalar_fitness(metrics, runner.task, distortion=metrics.get('distortion'),
+                                   theta=theta, control_bounds=genome.bounds,
+                                   control_regularization_weight=runner.cfg.get('control_regularization_weight',1e-4))
         # robust aggregation if island R: evaluate on 2 train scenarios and take worst
         if genome.island in ('R','robust'):
             from ..hardware import Hardware
@@ -70,7 +55,9 @@ def evaluate_genome(genome, runner, baseline='sta', exact_nodes=None, hardware=N
             for sc in train:
                 try:
                     m2=runner.evaluate(theta,'sta', hardware=Hardware(**sc['hardware']), stray=sc['stray_V_m'], frequency_scale=sc['frequency_scale'], exact_nodes=exact_nodes)
-                    vals.append(hierarchical_fitness(m2, runner.task, m2.get('distortion'), theta))
+                    vals.append(scalar_fitness(
+                        m2, runner.task, m2.get('distortion'), theta, genome.bounds,
+                        runner.cfg.get('control_regularization_weight',1e-4)))
                 except Exception:
                     vals.append(1e6)
             fit = float(0.35*np.mean(vals)+0.65*np.max(vals))

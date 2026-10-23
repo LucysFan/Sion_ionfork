@@ -184,27 +184,82 @@ def observables_from_simulation(sim_metrics: dict) -> dict:
         "coherent_fraction": float(coherent_frac),
         "position_error_m": float(sim_metrics.get("position_error_m", 0)),
         "well_target_error_m": float(sim_metrics.get("well_target_error_m", 0)),
+        # Simulated path metric; endpoint sideband data alone cannot identify it.
+        "max_ion_well_lag_m": (float(sim_metrics.get("max_ion_well_lag_m",
+                                                     sim_metrics.get("max_transport_error_m")))
+                                if sim_metrics.get("max_ion_well_lag_m",
+                                                  sim_metrics.get("max_transport_error_m")) is not None else None),
+        "max_transport_error_m": (float(sim_metrics["max_transport_error_m"])
+                                   if sim_metrics.get("max_transport_error_m") is not None else None),
+        "is_max_transport_error_fallback": bool(sim_metrics.get("is_max_transport_error_fallback", True)),
         "mapping": "raw simulation n_total → sideband asymmetry =1/(2n+1) (thermal proxy), recooling ∝n, displacement ∝sqrt(n_coh)",
         "provenance": "simulation proxies; experiment would fit actual sideband Rabi flops",
     }
 
-def scalar_loss_from_observables(obs: dict, task: dict) -> float:
-    """Scalar loss mirroring pipeline.optimize() but expressed via observables.
+def scalar_loss_from_observables(obs: dict, task: dict, weights=None) -> float:
+    """Безразмерная цена конечного качества и максимального отставания.
 
-    Hierarchy:
-      1. infeasible -> large penalty (handled upstream via Rejected)
-      2. excitation (log1p n/n0) + position errors
-      3. robust aggregation outside
+    Позиционные остатки относятся к конечному состоянию. Максимальное
+    отставание включается только при наличии достоверного расчёта по всей
+    траектории; синтетическое измерение на конце пути его не восстанавливает.
     """
     n = float(obs["n_total"])
     pos = float(obs["position_error_m"])
     well = float(obs["well_target_error_m"])
     n0 = float(task["max_n_total"])
     tol = float(task["position_tolerance_m"])
-    val = np.log1p(n / n0)
-    val += np.log1p((pos / tol) ** 2)
-    val += np.log1p((well / tol) ** 2)
+    if not np.isfinite([n, pos, well, n0, tol]).all() or n < 0 or pos < 0 or well < 0 or n0 <= 0 or tol <= 0:
+        raise ValueError("loss inputs and scales must be finite and physically valid")
+
+    w = {"n": 1.0, "pos": 1.0, "well": 1.0, "lag": 1.0}
+    if weights is not None:
+        unknown = set(weights) - set(w)
+        if unknown:
+            raise ValueError(f"unknown loss weights: {sorted(unknown)}")
+        w.update({k: float(v) for k, v in weights.items()})
+    if not np.isfinite(list(w.values())).all() or min(w.values()) < 0:
+        raise ValueError("loss weights must be finite and nonnegative")
+
+    val = w["n"] * np.log1p(n / n0)
+    val += w["pos"] * np.log1p((pos / tol) ** 2)
+    val += w["well"] * np.log1p((well / tol) ** 2)
+
+    lag = obs.get("max_ion_well_lag_m", obs.get("max_transport_error_m"))
+    distance = task.get("distance_m")
+    lag_is_valid = lag is not None and not bool(obs.get("is_max_transport_error_fallback", False))
+    if lag_is_valid and distance is not None:
+        lag = float(lag)
+        distance = float(distance)
+        if not np.isfinite([lag, distance]).all() or lag < 0 or distance <= 0:
+            raise ValueError("transient lag and transport distance must be finite and valid")
+        # Dimensionless running-path proxy: compare the largest lag with the
+        # commanded transport distance, not with the stricter endpoint tolerance.
+        val += w["lag"] * np.log1p((lag / distance) ** 2)
     return float(val)
+
+
+def dimensionless_control_penalty(theta, bounds, strength: float = 1e-4) -> float:
+    """Штраф за величину управления в координатах, нормированных границами.
+
+    Каждая компонента делится на половину собственного диапазона; поэтому
+    коэффициенты безразмерного изменения времени и напряжения в вольтах
+    сравниваются без смешения единиц. Усреднение делает штраф сопоставимым
+    при разном числе управляющих коэффициентов.
+    """
+    theta = np.asarray(theta, dtype=float)
+    bounds = np.asarray(bounds, dtype=float)
+    strength = float(strength)
+    if theta.ndim != 1 or bounds.shape != (theta.size, 2):
+        raise ValueError("one pair of finite bounds is required per control coefficient")
+    if not np.isfinite(theta).all() or not np.isfinite(bounds).all() or not np.isfinite(strength) or strength < 0:
+        raise ValueError("control coefficients, bounds, and penalty strength must be finite")
+    lower, upper = bounds[:, 0], bounds[:, 1]
+    scales = 0.5 * (upper - lower)
+    if np.any(scales <= 0):
+        raise ValueError("each control bound must have positive width")
+    centers = 0.5 * (upper + lower)
+    normalized = (theta - centers) / scales
+    return float(strength * np.mean(normalized ** 2))
 
 def processing_chain(sim_metrics: dict, task: dict) -> dict:
     """Full chain raw→observable→loss for one evaluation."""

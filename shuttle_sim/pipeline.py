@@ -27,7 +27,8 @@ from .dynamics import propagate, validate_full_field_centroid
 from .transport import TransportTask
 from .control import CorrectiveBasis
 from .safety import SafetyLayer
-from .observables import observables_from_simulation, scalar_loss_from_observables, processing_chain
+from .observables import (observables_from_simulation, scalar_loss_from_observables,
+                          dimensionless_control_penalty, processing_chain)
 from .calibration import Calibration
 from .closed_loop import ClosedLoopRefiner
 
@@ -273,10 +274,12 @@ class Runner:
         max_shift=float(np.max(np.linalg.norm(r-nominal,axis=1)))
         if max_shift>self.cfg.get('rom_max_shift_m',20e-6):
             raise Rejected('rom_trust_region','delivered minimum outside validated local corridor')
+        # r and H describe the instantaneous well only. The ion's mean state is
+        # propagated separately and is not set equal to this moving center.
         return r,H,final,diag
 
     def evaluate(self,theta,baseline='smooth',ideal=False,hardware=None,stray=None,
-                 exact_nodes=None,method='exact',subdivisions=None,keep=False,frequency_scale=1., return_trajectory=False, trajectory_decimate=400):
+                 exact_nodes=None,method='exact',subdivisions=None,keep=False,frequency_scale=1., return_trajectory=False, trajectory_decimate=400, path_samples_per_interval=None):
         ct,cmd,route=self.commands(theta,baseline)
         hw=hardware or self.hw
         t,v,codes,dist=hw.deliver(cmd,subdivisions or self.cfg.get('subdivisions',4),ideal)
@@ -299,7 +302,22 @@ class Runner:
             init=Local(init.position_m,init.hessian_J_m2*frequency_scale**2,init.omega_rad_s*frequency_scale,init.modes)
             final=Local(final.position_m,final.hessian_J_m2*frequency_scale**2,final.omega_rad_s*frequency_scale,final.modes)
         target=self.target if self.task['protocol']=='one_way' else self.start
-        result=propagate(t,r,H,init,final,self.trap.mass,target,method,hold='zero_order' if ideal else 'linear', return_trajectory=return_trajectory, trajectory_decimate=trajectory_decimate)
+        path_samples_value = (self.cfg.get('path_samples_per_interval',8)
+                              if path_samples_per_interval is None
+                              else path_samples_per_interval)
+        try:
+            path_samples_value = float(path_samples_value)
+        except (TypeError, ValueError):
+            raise ValueError('path_samples_per_interval must be a positive integer')
+        if (not np.isfinite(path_samples_value) or int(path_samples_value) != path_samples_value
+                or int(path_samples_value) < 1):
+            raise ValueError('path_samples_per_interval must be a positive integer')
+        path_samples_per_interval = int(path_samples_value)
+        result=propagate(t,r,H,init,final,self.trap.mass,target,method,
+                         hold='zero_order' if ideal else 'linear',
+                         return_trajectory=return_trajectory,
+                         trajectory_decimate=trajectory_decimate,
+                         path_samples_per_interval=path_samples_per_interval)
         result['distortion']=dist
         result['accepted']=bool(result['n_total']<=self.task['max_n_total'] and
              result['position_error_m']<=self.task['position_tolerance_m'] and
@@ -343,6 +361,8 @@ class Runner:
             start_for_loss = init
         else:
             start_for_loss = np.zeros(8)
+        bounds=[(-.10,.10),(-.10,.10)]+[(-.4,.4)]*6
+        control_regularization_weight=float(self.cfg.get('control_regularization_weight',1e-4))
         training=self.scenarios(self.cfg.get('robust_training_samples',3),self.cfg['uncertainty']['seed']+1) if robust else []
         def loss(x):
             try:
@@ -350,13 +370,9 @@ class Runner:
                 for sc in training:
                     results.append(self.evaluate(x,'sta',hardware=Hardware(**sc['hardware']),stray=sc['stray_V_m'],
                                                  frequency_scale=sc['frequency_scale']))
-                vals=[]
-                for r in results:
-                    val=np.log1p(r['n_total']/self.task['max_n_total'])
-                    val+=np.log1p((r['position_error_m']/self.task['position_tolerance_m'])**2)
-                    val+=np.log1p((r['well_target_error_m']/self.task['position_tolerance_m'])**2)
-                    vals.append(val)
-                value=float(.35*np.mean(vals)+.65*np.max(vals)+1e-4*np.sum(x*x))
+                vals=[scalar_loss_from_observables(r,self.task) for r in results]
+                value=float(.35*np.mean(vals)+.65*np.max(vals)
+                            +dimensionless_control_penalty(x,bounds,control_regularization_weight))
                 status='ok'
             except Rejected as ex:
                 value=1e6;status=ex.code
@@ -367,7 +383,6 @@ class Runner:
             if self.checkpoint is not None:
                 write_json(self.checkpoint,{'best_loss':best[0],'theta':best[1],'history':history,'complete':False})
             return value
-        bounds=[(-.10,.10),(-.10,.10)]+[(-.4,.4)]*6
         # Hard function budget. Preserve an evaluated baseline even if optimizer
         # stops before a complete direction-set sweep. Budget counts initial point (R1 strict).
         # P1: allow override for distortion resynthesis limited budget
@@ -463,16 +478,18 @@ class Runner:
             pass
         # Rerank under actual local-minimum reconstruction, not the search ROM.
         # B1 fix: normalized, config-declared weights (not 1e8*pos which dominates n_total)
-        # Use same hierarchy as optimizer: log1p(n/n_max) + log1p((pos/tol)^2) + log1p((well/tol)^2) + 1e-4||θ||²
+        # Use the shared dimensionless loss (including peak ion-well lag) and bound-normalized control penalty.
         # P3: lexicographic tie tolerance 1e-9 prefer sta (excitation primary) – if scores within eps, prefer sta baseline then shorter theta
         rerank=[]
         _eps = 1e-9
         for name,theta,baseline in candidates:
             r=self.evaluate(theta,baseline,exact_nodes=comp_nodes,subdivisions=valid_subdiv)
-            _n0 = float(self.task['max_n_total'])
-            _tol = float(self.task['position_tolerance_m'])
-            _cfg_weights = self.cfg.get('rerank_weights', {'n':1.0,'pos':1.0,'well':1.0})
-            score = _cfg_weights['n']*np.log1p(r['n_total']/ _n0) + _cfg_weights['pos']*np.log1p((r['position_error_m']/ _tol)**2) + _cfg_weights['well']*np.log1p((r['well_target_error_m']/ _tol)**2) + 1e-4*np.sum(np.asarray(theta)**2)
+            _cfg_weights = self.cfg.get('rerank_weights', {'n':1.0,'pos':1.0,'well':1.0,'lag':1.0})
+            _control_bounds = [(-.10,.10),(-.10,.10)]+[(-.4,.4)]*6
+            score = (scalar_loss_from_observables(r,self.task,weights=_cfg_weights)
+                     + dimensionless_control_penalty(
+                         theta,_control_bounds,
+                         float(self.cfg.get('control_regularization_weight',1e-4))))
             legacy_score = r['n_total']+1e8*r['well_target_error_m']+1e8*r['position_error_m']
             # Baseline-aware tie breaker: prefer 'sta' family if within eps, then lower position error
             # Encode as tuple (score_bucket, baseline_priority, pos_err)

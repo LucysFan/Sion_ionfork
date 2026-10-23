@@ -96,8 +96,11 @@ def main():
             metrics=runner.evaluate(best.to_theta8(), baseline=best_baseline, exact_nodes=runner.cfg.get('validation_nodes',321), subdivisions=runner.cfg.get('validation_subdivisions',4))
         # Recompute fitness consistently with same baseline metrics (not mixing baselines)
         try:
-            from shuttle_sim.ga.fitness import hierarchical_fitness
-            fitness_consistent = hierarchical_fitness(metrics, runner.task, distortion=metrics.get('distortion'), theta=best.theta)
+            from shuttle_sim.ga.fitness import scalar_fitness
+            fitness_consistent = scalar_fitness(
+                metrics, runner.task, distortion=metrics.get('distortion'), theta=best.theta,
+                control_bounds=best.bounds,
+                control_regularization_weight=runner.cfg.get('control_regularization_weight',1e-4))
         except Exception:
             fitness_consistent = best.fitness
         (out/"ga_best.json").write_text(json.dumps({"theta":best.theta.tolist(),"fitness":fitness_consistent,"metrics":metrics,"island":best.island,"baseline":best_baseline},indent=2, default=str))
