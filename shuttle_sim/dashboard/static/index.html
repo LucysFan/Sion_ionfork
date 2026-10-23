@@ -112,6 +112,17 @@ input[type=range]{accent-color:var(--accent)}
       <label class="kv">GDS файл <input type="file" id="inpGdsFile" accept=".gds,.GDS" class="btn" style="width:100%"></label>
       <div id="gdsUploadStatus" class="mono" style="font-size:11px;color:var(--muted)"></div>
       <label class="kv">или путь к GDS <input type="text" id="inpGdsPath" placeholder="configs/generated_fivewire.gds" style="width:100%;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:var(--text)"></label>
+      <div class="mono" style="font-size:11px;color:var(--muted);margin-top:6px;padding:6px;background:var(--panel2);border-radius:8px;border:1px dashed var(--border)">
+        <b>Откуда → куда летит ион</b><br>
+        Старт = минимум с <code>initial_dc_V</code> около <code>minimum_seed_m</code> (обычно <code>[0,0,90µm]</code>).<br>
+        Финиш = <code>старт + дистанция × направление</code> (направление сейчас <code>[1,0,0]</code> = вдоль X).<br>
+        <span id="startTargetPreview" class="mono" style="color:var(--text)">старт [0, 0, 90] → финиш [30, 0, 90] мкм</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+        <label class="kv">старт X мкм <input type="number" id="inpStartX" value="0" step="10" style="width:100%;padding:6px;border-radius:8px;background:var(--panel2);border:1px solid var(--border);color:var(--text)"></label>
+        <label class="kv">старт Y мкм <input type="number" id="inpStartY" value="0" step="10" style="width:100%;padding:6px;border-radius:8px;background:var(--panel2);border:1px solid var(--border);color:var(--text)"></label>
+        <label class="kv">старт Z мкм <input type="number" id="inpStartZ" value="90" step="5" style="width:100%;padding:6px;border-radius:8px;background:var(--panel2);border:1px solid var(--border);color:var(--text)"></label>
+      </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
         <label class="kv">дистанция мкм <input type="number" id="inpDistance" value="30" min="5" max="500" step="5" style="width:100%;padding:6px;border-radius:8px;background:var(--panel2);border:1px solid var(--border);color:var(--text)"></label>
         <label class="kv">время мкс <input type="number" id="inpDuration" value="15" min="5" max="200" step="1" style="width:100%;padding:6px;border-radius:8px;background:var(--panel2);border:1px solid var(--border);color:var(--text)"></label>
@@ -1190,8 +1201,18 @@ function init(){
           if(j.config.task.hold_s!=null) document.getElementById('inpHold').value=(j.config.task.hold_s*1e6).toFixed(1);
           if(j.config.task.protocol) document.getElementById('selProtocol').value=j.config.task.protocol;
         }
+        if(j.config.trap){
+          if(j.config.trap.path) document.getElementById('inpGdsPath').value=j.config.trap.path;
+          if(j.config.trap.minimum_seed_m){
+            let s=j.config.trap.minimum_seed_m;
+            document.getElementById('inpStartX').value=(s[0]*1e6).toFixed(0);
+            document.getElementById('inpStartY').value=(s[1]*1e6).toFixed(0);
+            document.getElementById('inpStartZ').value=(s[2]*1e6).toFixed(0);
+          }
+        }
         if(j.config.ga && j.config.ga.generations) document.getElementById('inpGens').value=j.config.ga.generations;
-        if(j.config.trap && j.config.trap.path) document.getElementById('inpGdsPath').value=j.config.trap.path;
+        // обновить превью старт→финиш
+        try{ updateStartTargetPreview(); }catch(e){}
       }
       if(j.gds_list){
         let sel=document.getElementById('inpGdsPath');
@@ -1204,6 +1225,25 @@ function init(){
       }
     }catch(e){ document.getElementById('configPreview').textContent="load error "+e.message}
   }
+  function updateStartTargetPreview(){
+    try{
+      let sx=parseFloat(document.getElementById('inpStartX').value)||0;
+      let sy=parseFloat(document.getElementById('inpStartY').value)||0;
+      let sz=parseFloat(document.getElementById('inpStartZ').value)||90;
+      let dist=parseFloat(document.getElementById('inpDistance').value)||30;
+      // направление пока фиксировано [1,0,0] — можно потом добавить выбор
+      let tx=sx+dist, ty=sy, tz=sz;
+      let el=document.getElementById('startTargetPreview');
+      if(el) el.textContent=`старт [${sx}, ${sy}, ${sz}] → финиш [${tx}, ${ty}, ${tz}] мкм  ( +${dist}мкм по X )`;
+    }catch(e){}
+  }
+  // обновлять превью при вводе
+  ['inpStartX','inpStartY','inpStartZ','inpDistance'].forEach(id=>{
+    let el=document.getElementById(id);
+    if(el) el.addEventListener('input', updateStartTargetPreview);
+  });
+  // первый расчёт
+  try{ updateStartTargetPreview(); }catch(e){}
   async function refreshRuns(){
     try{
       let r=await fetch('/api/runs?ts='+Date.now(),{cache:"no-store"}); let j=await r.json();
@@ -1235,7 +1275,8 @@ function init(){
     let gens=parseInt(document.getElementById('inpGens').value);
     let gds=document.getElementById('inpGdsPath').value;
     let out=document.getElementById('inpOut').value||"output/live_run";
-    let r=await fetch('/api/config',{method:'POST',headers:{"Content-Type":"application/json"},body:JSON.stringify({distance_m:distance,duration_s:duration,hold_s:hold,protocol:protocol,gds_path:gds,generations:gens})});
+    let sx=parseFloat(document.getElementById('inpStartX').value)*1e-6, sy=parseFloat(document.getElementById('inpStartY').value)*1e-6, sz=parseFloat(document.getElementById('inpStartZ').value)*1e-6;
+    let r=await fetch('/api/config',{method:'POST',headers:{"Content-Type":"application/json"},body:JSON.stringify({distance_m:distance,duration_s:duration,hold_s:hold,protocol:protocol,gds_path:gds,generations:gens,start_m:[sx,sy,sz]})});
     let j=await r.json(); document.getElementById('launchStatus').textContent= j.ok? "сохранено "+j.path : "ошибка "+(j.error||"");
     loadConfig();
   };
@@ -1246,12 +1287,14 @@ function init(){
     let gds=document.getElementById('inpGdsPath').value;
     let out=document.getElementById('inpOut').value||"output/live_run";
     let protocol=document.getElementById('selProtocol').value;
+    let sx=parseFloat(document.getElementById('inpStartX').value)*1e-6, sy=parseFloat(document.getElementById('inpStartY').value)*1e-6, sz=parseFloat(document.getElementById('inpStartZ').value)*1e-6;
     document.getElementById('launchStatus').textContent="запускаю pipeline...";
     document.getElementById('btnRunPipeline').disabled=true; document.getElementById('btnRunGA').disabled=true;
-    let r=await fetch('/api/launch',{method:'POST',headers:{"Content-Type":"application/json"},body:JSON.stringify({mode:"pipeline",distance_m:distance,duration_s:duration,gds_path:gds,out:out,protocol:protocol})});
+    let r=await fetch('/api/launch',{method:'POST',headers:{"Content-Type":"application/json"},body:JSON.stringify({mode:"pipeline",distance_m:distance,duration_s:duration,gds_path:gds,out:out,protocol:protocol,start_m:[sx,sy,sz]})});
     let j=await r.json();
     if(j.ok){
       document.getElementById('launchStatus').textContent="pipeline запущен "+j.job_id+" → "+j.out;
+      try{ window.__fitSeries={S:[],A:[],V:[],R:[],H:[],Q1:[],Q2:[],F:[], global:[]}; window.__liveSeries=[]; window.lastState=null; localStorage.removeItem('ga_fit_series'); drawLive({status:"no live yet"}); document.getElementById('kvGen').textContent="—/—"; document.getElementById('kvBest').textContent="—"; }catch(e){}
     } else {
       document.getElementById('launchStatus').textContent="ошибка "+(j.error||"") + (j.running_job? " (занято "+j.running_job+")":"");
       // re-enable if failed due to lock — pollJobs will also fix
@@ -1268,12 +1311,14 @@ function init(){
     let gens=parseInt(document.getElementById('inpGens').value);
     let out=document.getElementById('inpOut').value||"output/live_run";
     let protocol=document.getElementById('selProtocol').value;
+    let sx=parseFloat(document.getElementById('inpStartX').value)*1e-6, sy=parseFloat(document.getElementById('inpStartY').value)*1e-6, sz=parseFloat(document.getElementById('inpStartZ').value)*1e-6;
     document.getElementById('launchStatus').textContent="запускаю GA...";
     document.getElementById('btnRunPipeline').disabled=true; document.getElementById('btnRunGA').disabled=true;
-    let r=await fetch('/api/launch',{method:'POST',headers:{"Content-Type":"application/json"},body:JSON.stringify({mode:"ga",distance_m:distance,duration_s:duration,gds_path:gds,generations:gens,out:out,protocol:protocol})});
+    let r=await fetch('/api/launch',{method:'POST',headers:{"Content-Type":"application/json"},body:JSON.stringify({mode:"ga",distance_m:distance,duration_s:duration,gds_path:gds,generations:gens,out:out,protocol:protocol,start_m:[sx,sy,sz]})});
     let j=await r.json();
     if(j.ok){
       document.getElementById('launchStatus').textContent="GA запущен "+j.job_id+" → "+j.out + " (смотри Training/GA/Trap)";
+      try{ window.__fitSeries={S:[],A:[],V:[],R:[],H:[],Q1:[],Q2:[],F:[], global:[]}; window.__liveSeries=[]; window.lastState=null; localStorage.removeItem('ga_fit_series'); drawLive({status:"no live yet"}); document.getElementById('kvGen').textContent="—/—"; document.getElementById('kvBest').textContent="—"; }catch(e){}
     } else {
       document.getElementById('launchStatus').textContent="ошибка "+(j.error||"") + (j.running_job? " (занято "+j.running_job+")":"");
       if(!(j.error && j.error.includes("already"))){ document.getElementById('btnRunPipeline').disabled=false; document.getElementById('btnRunGA').disabled=false; }

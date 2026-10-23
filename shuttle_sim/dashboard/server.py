@@ -330,6 +330,13 @@ class Handler(SimpleHTTPRequestHandler):
                     # ga generations if provided
                     if "generations" in data:
                         cfg.setdefault("ga",{})["generations"]=int(data["generations"])
+                    # start position (minimum_seed_m) if provided
+                    if "start_m" in data:
+                        try:
+                            sm = [float(x) for x in data["start_m"]]
+                            if len(sm)==3:
+                                cfg["trap"]["minimum_seed_m"]=sm
+                        except: pass
                 # write to unified
                 dest=pathlib.Path("configs/unified_live.json")
                 dest.write_text(json.dumps(cfg,indent=2))
@@ -399,11 +406,17 @@ class Handler(SimpleHTTPRequestHandler):
                     cfg["trap"]["kind"]="gds"
                 if protocol:
                     cfg["task"]["protocol"]=str(protocol)
+                if "start_m" in data:
+                    try:
+                        sm=[float(x) for x in data["start_m"]]
+                        if len(sm)==3:
+                            cfg["trap"]["minimum_seed_m"]=sm
+                    except: pass
                 # write config for this run — clear previous state/live so new run shows 0/5 not old 2/2 100%
                 out_path=pathlib.Path(out_dir_str)
                 out_path.mkdir(parents=True, exist_ok=True)
-                # clean stale state from previous run (otherwise dashboard shows old 2/2 100% immediately)
-                for _p in [out_path/"state.json", out_path/"live.json"]:
+                # clean stale state from previous run (otherwise dashboard shows old 2/2 100% immediately — stale after break/finish)
+                for _p in [out_path/"state.json", out_path/"live.json", out_path/"checkpoint.json", out_path/"final.json"]:
                     try:
                         if _p.exists(): _p.unlink()
                     except: pass
@@ -413,6 +426,10 @@ class Handler(SimpleHTTPRequestHandler):
                 # also truncate run.log (will be reopened)
                 try:
                     (out_path/"run.log").write_text("", encoding="utf-8")
+                except: pass
+                # ensure history dir exists but empty
+                try:
+                    (out_path/"history").mkdir(parents=True, exist_ok=True)
                 except: pass
                 cfg_path=out_path/"config.json"
                 cfg_path.write_text(json.dumps(cfg,indent=2))
