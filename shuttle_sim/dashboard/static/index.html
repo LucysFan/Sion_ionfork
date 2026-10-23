@@ -1451,6 +1451,27 @@ function init(){
       document.getElementById('liveIsland').textContent=isNoLive ? "подготовка…" : (live.current_island||"—");
       document.getElementById('liveEval').textContent=isNoLive ? `—/—` : `${evalIn}/${totIn}`;
       document.getElementById('liveCurrentFit').textContent= live.current_fitness!=null ? `cur ${fmtFit(live.current_fitness)}` : (isNoLive ? "загрузка GDS…" : "");
+      // зеркалим live в шапку по поколениям, чтобы даже когда state.json ещё пустой (1/2 без картинок) было что видеть
+      try{
+        if(live.live_best!=null && ( !lastState || (lastState.global_generation||0) < Math.floor(genFloat) )){
+          document.getElementById('kvGen').textContent = `${Math.floor(genFloat)}/${totGens}`;
+          document.getElementById('kvBest').textContent = fmtFit(live.live_best)+` (${live.current_island||"?"}) live`;
+          document.getElementById('kvElapsed').textContent = fmtSec(live.elapsed_s);
+        }
+        // также пушим live best в per-generation график, чтобы Fitness vs generation шевелился внутри поколения
+        if(live.live_best!=null && live.live_best<1e6){
+          if(!window.__fitSeries) window.__fitSeries={S:[],A:[],V:[],R:[],H:[],Q1:[],Q2:[],F:[], global:[]};
+          let last = window.__fitSeries.global[window.__fitSeries.global.length-1];
+          if(!last || Math.abs(last.x - genFloat)>0.04){
+            window.__fitSeries.global.push({x: genFloat, y: live.live_best});
+            // перерисуем fitness прямо сейчас если вкладка открыта
+            if(document.getElementById('pane-overview').classList.contains('active')){
+              // лёгкий рефреш без полного state
+              drawFitness({global_generation: Math.floor(genFloat), total_generations: totGens, islands:[], hall_of_fame:[{fitness: live.live_best, island: live.current_island}]});
+            }
+          }
+        }
+      }catch(e){}
     }catch(e){}
     // keep series for live scatter (x = live_generation float, y = fitness)
     if(live.recent && Array.isArray(live.recent)){
