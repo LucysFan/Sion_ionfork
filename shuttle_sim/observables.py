@@ -104,7 +104,8 @@ def infer_observables_from_raw(raw_measurement: dict) -> dict:
     pseudo_metrics["_true_n_total"] = float(raw_measurement.get("true_n_total", n_total_est))
     return observables_from_simulation(pseudo_metrics)
 
-def raw_to_observables_chain(sim_metrics: dict, task: dict, include_raw: bool = True) -> dict:
+def raw_to_observables_chain(sim_metrics: dict, task: dict, include_raw: bool = True,
+                             weights=None) -> dict:
     """Full chain raw→observable→loss with honest raw synthesis step.
 
     When hardware is not attached, we synthesize raw via synthesize_raw_sideband_measurement
@@ -114,10 +115,37 @@ def raw_to_observables_chain(sim_metrics: dict, task: dict, include_raw: bool = 
     if include_raw:
         raw = synthesize_raw_sideband_measurement(sim_metrics)
         obs_via_raw = infer_observables_from_raw(raw)
-        loss = scalar_loss_from_observables({**obs_via_raw, "position_error_m": sim_metrics.get("position_error_m", 0), "well_target_error_m": sim_metrics.get("well_target_error_m", 0)}, task)
-        return {"raw_measurement": raw, "observables": obs_via_raw, "loss": loss, "provenance": "raw sideband counts → MLE n fit → observables → loss (raw contract present)"}
+        raw_metrics = {
+            **obs_via_raw,
+            "position_error_m": sim_metrics.get("position_error_m", 0),
+            "well_target_error_m": sim_metrics.get("well_target_error_m", 0),
+        }
+        requested_lag_weight = float(
+            (weights or {}).get("lag", DEFAULT_LOSS_WEIGHTS["lag"]))
+        if requested_lag_weight > 0:
+            # Final sideband counts cannot recover a path maximum. Preserve the
+            # endpoint-only comparison, but do not label it as the requested full loss.
+            endpoint_weights = dict(weights or {})
+            endpoint_weights["lag"] = 0.0
+            endpoint_loss = scalar_loss_from_observables(
+                raw_metrics, task, weights=endpoint_weights)
+            loss = None
+            loss_without_lag = endpoint_loss
+            loss_status = "incomplete_lag_unavailable_from_terminal_measurement"
+        else:
+            loss = scalar_loss_from_observables(raw_metrics, task, weights=weights)
+            loss_without_lag = None
+            loss_status = "complete_for_configured_weights"
+        return {
+            "raw_measurement": raw,
+            "observables": obs_via_raw,
+            "loss": loss,
+            "loss_without_lag": loss_without_lag,
+            "loss_status": loss_status,
+            "provenance": "raw sideband counts → MLE n fit → observables → loss (raw contract present)",
+        }
     else:
-        return processing_chain(sim_metrics, task)
+        return processing_chain(sim_metrics, task, weights=weights)
 
 def observables_from_simulation(sim_metrics: dict) -> dict:
     """Convert validated dynamics output to experiment-style observables.
@@ -184,32 +212,93 @@ def observables_from_simulation(sim_metrics: dict) -> dict:
         "coherent_fraction": float(coherent_frac),
         "position_error_m": float(sim_metrics.get("position_error_m", 0)),
         "well_target_error_m": float(sim_metrics.get("well_target_error_m", 0)),
+        # Simulated path metric; endpoint sideband data alone cannot identify it.
+        "max_ion_well_lag_m": (float(sim_metrics.get("max_ion_well_lag_m",
+                                                     sim_metrics.get("max_transport_error_m")))
+                                if sim_metrics.get("max_ion_well_lag_m",
+                                                  sim_metrics.get("max_transport_error_m")) is not None else None),
+        "max_transport_error_m": (float(sim_metrics["max_transport_error_m"])
+                                   if sim_metrics.get("max_transport_error_m") is not None else None),
+        "is_max_transport_error_fallback": bool(sim_metrics.get("is_max_transport_error_fallback", True)),
         "mapping": "raw simulation n_total → sideband asymmetry =1/(2n+1) (thermal proxy), recooling ∝n, displacement ∝sqrt(n_coh)",
         "provenance": "simulation proxies; experiment would fit actual sideband Rabi flops",
     }
 
-def scalar_loss_from_observables(obs: dict, task: dict) -> float:
-    """Scalar loss mirroring pipeline.optimize() but expressed via observables.
+DEFAULT_LOSS_WEIGHTS = {"n": 1.0, "pos": 1.0, "well": 1.0, "lag": 0.0}
 
-    Hierarchy:
-      1. infeasible -> large penalty (handled upstream via Rejected)
-      2. excitation (log1p n/n0) + position errors
-      3. robust aggregation outside
+
+def scalar_loss_from_observables(obs: dict, task: dict, weights=None) -> float:
+    """Безразмерная цена конечного качества; отставание по пути отдельно.
+
+    По умолчанию оцениваются конечное возбуждение и две ошибки положения.
+    Максимум смещения среднего иона относительно центра ямы сохраняется как
+    диагностика и получает вес только при явном выборе пользователя. Его
+    нельзя восстановить по одному конечному измерению.
     """
     n = float(obs["n_total"])
     pos = float(obs["position_error_m"])
     well = float(obs["well_target_error_m"])
     n0 = float(task["max_n_total"])
     tol = float(task["position_tolerance_m"])
-    val = np.log1p(n / n0)
-    val += np.log1p((pos / tol) ** 2)
-    val += np.log1p((well / tol) ** 2)
+    if not np.isfinite([n, pos, well, n0, tol]).all() or n < 0 or pos < 0 or well < 0 or n0 <= 0 or tol <= 0:
+        raise ValueError("loss inputs and scales must be finite and physically valid")
+
+    w = dict(DEFAULT_LOSS_WEIGHTS)
+    if weights is not None:
+        unknown = set(weights) - set(w)
+        if unknown:
+            raise ValueError(f"unknown loss weights: {sorted(unknown)}")
+        w.update({k: float(v) for k, v in weights.items()})
+    if not np.isfinite(list(w.values())).all() or min(w.values()) < 0:
+        raise ValueError("loss weights must be finite and nonnegative")
+
+    val = w["n"] * np.log1p(n / n0)
+    val += w["pos"] * np.log1p((pos / tol) ** 2)
+    val += w["well"] * np.log1p((well / tol) ** 2)
+
+    lag = obs.get("max_ion_well_lag_m", obs.get("max_transport_error_m"))
+    distance = task.get("distance_m")
+    lag_is_valid = lag is not None and not bool(obs.get("is_max_transport_error_fallback", False))
+    if w["lag"]:
+        if not lag_is_valid or distance is None:
+            raise ValueError("a nonzero lag weight requires a valid path-lag metric and transport distance")
+        lag = float(lag)
+        distance = float(distance)
+        if not np.isfinite([lag, distance]).all() or lag < 0 or distance <= 0:
+            raise ValueError("transient lag and transport distance must be finite and valid")
+        # This optional score compares mean lag with the travel distance. It is
+        # not a validated confinement or parasitic-field sensitivity criterion.
+        val += w["lag"] * np.log1p((lag / distance) ** 2)
     return float(val)
 
-def processing_chain(sim_metrics: dict, task: dict) -> dict:
+
+def dimensionless_control_penalty(theta, bounds, strength: float = 1e-4) -> float:
+    """Штраф за величину управления в координатах, нормированных границами.
+
+    Каждая компонента делится на половину собственного диапазона; поэтому
+    коэффициенты безразмерного изменения времени и напряжения в вольтах
+    сравниваются без смешения единиц. Усреднение делает штраф сопоставимым
+    при разном числе управляющих коэффициентов.
+    """
+    theta = np.asarray(theta, dtype=float)
+    bounds = np.asarray(bounds, dtype=float)
+    strength = float(strength)
+    if theta.ndim != 1 or bounds.shape != (theta.size, 2):
+        raise ValueError("one pair of finite bounds is required per control coefficient")
+    if not np.isfinite(theta).all() or not np.isfinite(bounds).all() or not np.isfinite(strength) or strength < 0:
+        raise ValueError("control coefficients, bounds, and penalty strength must be finite")
+    lower, upper = bounds[:, 0], bounds[:, 1]
+    scales = 0.5 * (upper - lower)
+    if np.any(scales <= 0):
+        raise ValueError("each control bound must have positive width")
+    centers = 0.5 * (upper + lower)
+    normalized = (theta - centers) / scales
+    return float(strength * np.mean(normalized ** 2))
+
+def processing_chain(sim_metrics: dict, task: dict, weights=None) -> dict:
     """Full chain raw→observable→loss for one evaluation."""
     obs = observables_from_simulation(sim_metrics)
-    loss = scalar_loss_from_observables(obs, task)
+    loss = scalar_loss_from_observables(obs, task, weights=weights)
     return {"observables": obs, "loss": loss, "provenance": obs["mapping"]}
 
 def aggregate_losses(losses: list, mode="weighted_worst"):

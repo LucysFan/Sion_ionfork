@@ -1,6 +1,10 @@
 import numpy as np
 import tempfile, json, pathlib
-from shuttle_sim.field import load_trap, Rejected
+import pytest
+from shuttle_sim.field import load_trap, Rejected, Local
+from shuttle_sim.dynamics import propagate
+from shuttle_sim.observables import scalar_loss_from_observables, dimensionless_control_penalty
+from shuttle_sim.ga.fitness import scalar_fitness
 from shuttle_sim.hardware import Hardware
 from shuttle_sim.safety import SafetyLayer
 from shuttle_sim.calibration import Calibration
@@ -268,3 +272,123 @@ def test_raw_chain_provenance():
     assert "raw_measurement" in chain
     assert "provenance" in chain
     assert "raw" in chain["provenance"].lower()
+
+
+def test_moving_harmonic_well_does_not_pin_ion_to_instantaneous_minimum():
+    mass = 1.0e-25
+    omega = 2*np.pi*1.0e6
+    duration = np.pi/omega
+    displacement = 1.0e-6
+    centers = np.array([[0.0, 0.0, 0.0], [displacement, 0.0, 0.0]])
+    hessian = mass*omega**2*np.eye(3)
+    hessians = np.repeat(hessian[None, :, :], 2, axis=0)
+    modes = np.eye(3)
+    initial = Local(centers[0], hessian, np.full(3, omega), modes)
+    final = Local(centers[1], hessian, np.full(3, omega), modes)
+
+    result = propagate(np.array([0.0, duration]), centers, hessians,
+                       initial, final, mass, centers[1], method='exact',
+                       hold='linear', path_samples_per_interval=8)
+
+    # For a linearly moving center, relative motion is y''+ω²y=0 with
+    # y(0)=0 and y'(0)=-v. At duration π/ω the endpoint displacement
+    # vanishes, while the midpoint lag reaches displacement/π.
+    assert result['position_error_m'] < 1e-10
+    assert np.isclose(result['max_ion_well_lag_m'], displacement/np.pi,
+                      rtol=1e-6, atol=1e-12)
+    assert not result['is_max_transport_error_fallback']
+
+
+def test_adaptive_integrator_reports_interior_well_lag():
+    mass = 1.0e-25
+    omega = 2*np.pi*1.0e6
+    duration = np.pi/omega
+    displacement = 1.0e-6
+    centers = np.array([[0.0, 0.0, 0.0], [displacement, 0.0, 0.0]])
+    hessian = mass*omega**2*np.eye(3)
+    hessians = np.repeat(hessian[None, :, :], 2, axis=0)
+    modes = np.eye(3)
+    initial = Local(centers[0], hessian, np.full(3, omega), modes)
+    final = Local(centers[1], hessian, np.full(3, omega), modes)
+
+    result = propagate(np.array([0.0, duration]), centers, hessians,
+                       initial, final, mass, centers[1], method='dop853',
+                       hold='linear', path_samples_per_interval=8)
+    assert np.isclose(result['max_ion_well_lag_m'], displacement/np.pi,
+                      rtol=2e-5, atol=1e-11)
+    assert not result['is_max_transport_error_fallback']
+
+
+def test_control_regularizer_is_invariant_to_voltage_units():
+    value_volts = dimensionless_control_penalty(
+        [0.05, 0.2], [(-0.1, 0.1), (-0.4, 0.4)], strength=1.0)
+    value_millivolts = dimensionless_control_penalty(
+        [0.05, 200.0], [(-0.1, 0.1), (-400.0, 400.0)], strength=1.0)
+    assert np.isclose(value_volts, value_millivolts)
+    assert np.isclose(value_volts, 0.25)
+
+
+def test_scalar_loss_keeps_transient_lag_diagnostic_unless_explicitly_weighted():
+    task = {"max_n_total": 0.5, "position_tolerance_m": 5e-6,
+            "distance_m": 30e-6}
+    metrics = {"n_total": 0.0, "position_error_m": 0.0,
+               "well_target_error_m": 0.0, "max_transport_error_m": 3e-6,
+               "is_max_transport_error_fallback": False}
+    expected_lag = np.log1p((3e-6/30e-6)**2)
+    assert scalar_loss_from_observables(metrics, task) == 0.0
+    assert np.isclose(scalar_loss_from_observables(
+        metrics, task, weights={"lag": 1.0}), expected_lag)
+
+    metrics["position_error_m"] = 1e-6
+    metrics["well_target_error_m"] = 2e-6
+    endpoint_loss = (np.log1p((1e-6/5e-6)**2)
+                     + np.log1p((2e-6/5e-6)**2))
+    assert np.isclose(scalar_loss_from_observables(metrics, task), endpoint_loss)
+    assert np.isclose(scalar_loss_from_observables(
+        metrics, task, weights={"lag": 1.0}), endpoint_loss + expected_lag)
+
+
+def test_unavailable_path_lag_is_not_fabricated_from_endpoint_error():
+    task = {"max_n_total": 0.5, "position_tolerance_m": 5e-6,
+            "distance_m": 30e-6}
+    metrics = {"n_total": 0.0, "position_error_m": 0.0,
+               "well_target_error_m": 0.0, "max_transport_error_m": 3e-6,
+               "is_max_transport_error_fallback": True}
+    assert scalar_loss_from_observables(metrics, task) == 0.0
+    with pytest.raises(ValueError, match="nonzero lag weight requires"):
+        scalar_loss_from_observables(metrics, task, weights={"lag": 1.0})
+
+
+def test_raw_chain_marks_requested_lag_as_unavailable_from_terminal_data():
+    from shuttle_sim.observables import raw_to_observables_chain
+
+    metrics = {
+        "n_total": 0.05,
+        "n_modes": [0.02, 0.03],
+        "position_error_m": 1e-6,
+        "well_target_error_m": 1e-6,
+    }
+    task = {"max_n_total": 0.5, "position_tolerance_m": 5e-6,
+            "distance_m": 30e-6}
+    chain = raw_to_observables_chain(metrics, task, weights={"lag": 1.0})
+    assert chain["loss"] is None
+    assert chain["loss_without_lag"] is not None
+    assert chain["loss_status"] == "incomplete_lag_unavailable_from_terminal_measurement"
+
+
+def test_genetic_scalar_fitness_uses_shared_loss_and_adds_penalties_once():
+    task = {"max_n_total": 0.5, "position_tolerance_m": 5e-6,
+            "distance_m": 30e-6, "min_frequency_hz": 400e3}
+    metrics = {"n_total": 0.1, "position_error_m": 1e-6,
+               "well_target_error_m": 2e-6, "max_ion_well_lag_m": 3e-6,
+               "is_max_transport_error_fallback": False,
+               "minimum_frequency_hz": 500e3}
+    theta = np.array([0.5, 5.0])
+    bounds = [(-1.0, 1.0), (-10.0, 10.0)]
+    expected = scalar_loss_from_observables(metrics, task)
+    expected += 0.5 * np.log(2.0)  # RMS deviation of 0.2 V above the 0.1 V soft scale.
+    expected += 0.2 * 0.25  # Mean squared normalized control; each coefficient is at 1/2 range.
+    got = scalar_fitness(metrics, task, distortion={"rms_deviation_V": 0.2},
+                         theta=theta, control_bounds=bounds,
+                         control_regularization_weight=0.2)
+    assert np.isclose(got, expected)

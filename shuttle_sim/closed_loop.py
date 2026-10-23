@@ -70,7 +70,8 @@ class ClosedLoopRefiner:
         result = self.runner.evaluate(theta, baseline="sta", hardware=hw,
                                       stray=stray, frequency_scale=frequency_scale,
                                       exact_nodes=321, subdivisions=4)
-        chain = processing_chain(result, self.task)
+        chain = processing_chain(
+            result, self.task, weights=getattr(self.runner, 'loss_weights', None))
         return {
             "sim_metrics": result,
             "observables": chain["observables"],

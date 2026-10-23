@@ -65,151 +65,199 @@ def summarize(z,C,local,mass,target_m):
             'min_symplectic_eigenvalue_over_hbar_half':float(np.min(np.abs(sym))/(hbar*T/(2*mass*L**2)))}
 
 
-def propagate(times_s, centers_m, hessians_J_m2, initial, final, mass, target_m, method='exact',hold='linear', return_trajectory=False, trajectory_decimate=400):
-    ts=finite(times_s,'time');r=finite(centers_m,'centers');H=finite(hessians_J_m2,'H')
-    if hold not in ('linear','zero_order'):
+def propagate(times_s, centers_m, hessians_J_m2, initial, final, mass, target_m,
+             method='exact', hold='linear', return_trajectory=False,
+             trajectory_decimate=400, path_samples_per_interval=8):
+    """Распространяет гауссово состояние иона в движущейся гармонической яме.
+
+    Механический лагранжиан имеет вид L = m |v|^2 / 2 - U(r, t).
+    Уравнение Эйлера—Лагранжа даёт m r̈ = -∇U. После разложения энергии до
+    второго порядка здесь решается уравнение осциллятора, меняющееся
+    со временем. Ион не закрепляется в мгновенном минимуме; среднее положение
+    и ковариация распространяются одним и тем же квадратичным гамильтонианом.
+
+    Аналитическое распространение точно для принятой на каждом интервале
+    постоянной кривизны и линейного движения центра; это не точное решение
+    для произвольно меняющейся кривизны. Максимальное отставание оценивается
+    по плотной сетке точек внутри временных интервалов.
+    """
+    ts = finite(times_s, 'time')
+    centers = finite(centers_m, 'centers')
+    hessians = finite(hessians_J_m2, 'H')
+    if hold not in ('linear', 'zero_order'):
         raise ValueError('unknown hold rule')
-    if ts.ndim!=1 or len(ts)<2 or r.shape!=(len(ts),3) or H.shape!=(len(ts),3,3) or np.any(np.diff(ts)<=0):
+    if (ts.ndim != 1 or len(ts) < 2 or centers.shape != (len(ts), 3)
+            or hessians.shape != (len(ts), 3, 3) or np.any(np.diff(ts) <= 0)):
         raise ValueError('inconsistent dynamics grid')
-    if not np.allclose(H,H.transpose(0,2,1),rtol=1e-12,atol=0):
+    if not isinstance(path_samples_per_interval, (int, np.integer)) or path_samples_per_interval < 1:
+        raise ValueError('path_samples_per_interval must be a positive integer')
+    if not isinstance(trajectory_decimate, (int, np.integer)) or trajectory_decimate < 2:
+        raise ValueError('trajectory_decimate must be at least 2')
+    if not np.allclose(hessians, hessians.transpose(0, 2, 1), rtol=1e-12, atol=0):
         raise ValueError('Hessians must be symmetric')
-    z,C=initial_state(initial,mass)
-    K=H/mass*T*T;c=r/L;tt=ts/T
-    if np.min(np.linalg.eigvalsh(K))<=0:
-        raise Rejected('weak_confinement','ROM Hessian not positive')
-    # trajectory capture + P2 max error tracking (always, not only when returning)
-    traj_times = [float(ts[0])] if return_trajectory else None
-    traj_means = [(z[:3]*L).tolist()] if return_trajectory else None
-    # Always track for max_transport_error, even when not returning
-    all_means_for_max = [(z[:3]*L).tolist()]
-    # we store decimated trajectory if large
-    if method=='exact':
-        for k,dt in enumerate(np.diff(tt)):
-            km=K[k] if hold=='zero_order' else (K[k]+K[k+1])/2
-            velocity=np.zeros(3) if hold=='zero_order' else (c[k+1]-c[k])/dt
-            eig,R=np.linalg.eigh(km);w=np.sqrt(eig)
-            co=R@np.diag(np.cos(w*dt))@R.T
-            si=R@np.diag(np.sin(w*dt)/w)@R.T
-            S=np.block([[co,si],[-km@si,co]])
-            # Exact affine solution for constant K and a linearly moving minimum.
-            eq0=np.r_[c[k],velocity]
-            eq1=np.r_[c[k] if hold=='zero_order' else c[k+1],velocity]
-            z=eq1+S@(z-eq0);C=S@C@S.T
-            all_means_for_max.append((z[:3]*L).tolist())
-            if return_trajectory:
-                traj_times.append(float(ts[k+1]))
-                traj_means.append((z[:3]*L).tolist())
-    elif method=='dop853' and hold=='zero_order':
-        for k,dt in enumerate(np.diff(tt)):
-            A=np.block([[np.zeros((3,3)),np.eye(3)],[-K[k],np.zeros((3,3))]])
-            b=np.r_[np.zeros(3),K[k]@c[k]]
-            def rhs(t,y):
-                cov=y[6:].reshape(6,6)
-                return np.r_[A@y[:6]+b,(A@cov+cov@A.T).ravel()]
-            sol=solve_ivp(rhs,(0,dt),np.r_[z,C.ravel()],method='DOP853',rtol=2e-10,atol=2e-13)
-            if not sol.success: raise Rejected('numerical_failure',sol.message)
-            z=sol.y[:6,-1];C=sol.y[6:,-1].reshape(6,6)
-            all_means_for_max.append((z[:3]*L).tolist())
-            if return_trajectory:
-                traj_times.append(float(ts[k+1]))
-                traj_means.append((z[:3]*L).tolist())
-    elif method=='dop853':
-        def rhs(t,y):
-            k=min(max(np.searchsorted(tt,t)-1,0),len(tt)-2)
-            a=np.clip((t-tt[k])/(tt[k+1]-tt[k]),0,1)
-            km=(1-a)*K[k]+a*K[k+1];rm=(1-a)*c[k]+a*c[k+1]
-            A=np.block([[np.zeros((3,3)),np.eye(3)],[-km,np.zeros((3,3))]])
-            yy=y[:6];cov=y[6:].reshape(6,6)
-            return np.r_[A@yy+np.r_[np.zeros(3),km@rm],(A@cov+cov@A.T).ravel()]
-        sol=solve_ivp(rhs,(tt[0],tt[-1]),np.r_[z,C.ravel()],method='DOP853',
-                      rtol=2e-10,atol=2e-13,max_step=float(np.min(np.diff(tt))))
+
+    z, C = initial_state(initial, mass)
+    K = hessians / mass * T * T
+    c = centers / L
+    tt = ts / T
+    if np.min(np.linalg.eigvalsh(K)) <= 0:
+        raise Rejected('weak_confinement', 'ROM Hessian not positive')
+
+    # Store a dense path estimate for the transient lag diagnostic and optional plots.
+    path_times_s = [float(ts[0])]
+    path_means_m = [(z[:3] * L).tolist()]
+    path_centers_m = [centers[0].tolist()]
+
+    def transition_matrix(curvature, eigvecs, frequencies, dt):
+        cos_block = eigvecs @ np.diag(np.cos(frequencies * dt)) @ eigvecs.T
+        sin_block = eigvecs @ np.diag(np.sin(frequencies * dt) / frequencies) @ eigvecs.T
+        return np.block([[cos_block, sin_block],
+                         [-curvature @ sin_block, cos_block]])
+
+    if method == 'exact':
+        for k, dt in enumerate(np.diff(tt)):
+            km = K[k] if hold == 'zero_order' else (K[k] + K[k + 1]) / 2
+            eig, modes = np.linalg.eigh(km)
+            if eig.min() <= 0:
+                raise Rejected('weak_confinement', 'nonpositive interval curvature')
+            frequencies = np.sqrt(eig)
+            velocity = (np.zeros(3) if hold == 'zero_order'
+                        else (c[k + 1] - c[k]) / dt)
+            eq0 = np.r_[c[k], velocity]
+            z0, C0 = z.copy(), C.copy()
+
+            # A zero-order well changes position instantaneously at a sample
+            # boundary. Record the state on the new side of that jump as well.
+            if k > 0 and hold == 'zero_order':
+                path_times_s.append(float(ts[k]))
+                path_means_m.append((z0[:3] * L).tolist())
+                path_centers_m.append(centers[k].tolist())
+
+            for j in range(1, path_samples_per_interval + 1):
+                fraction = j / path_samples_per_interval
+                sub_dt = fraction * dt
+                Ssub = transition_matrix(km, modes, frequencies, sub_dt)
+                if hold == 'linear':
+                    center_sub = c[k] + fraction * (c[k + 1] - c[k])
+                    equilibrium_sub = np.r_[center_sub, velocity]
+                else:
+                    center_sub = c[k]
+                    equilibrium_sub = np.r_[center_sub, np.zeros(3)]
+                zsub = equilibrium_sub + Ssub @ (z0 - eq0)
+                path_times_s.append(float(ts[k] + fraction * (ts[k + 1] - ts[k])))
+                path_means_m.append((zsub[:3] * L).tolist())
+                path_centers_m.append((center_sub * L).tolist())
+
+            S = transition_matrix(km, modes, frequencies, dt)
+            if hold == 'linear':
+                eq1 = np.r_[c[k + 1], velocity]
+            else:
+                eq1 = np.r_[c[k], np.zeros(3)]
+            z = eq1 + S @ (z0 - eq0)
+            C = S @ C0 @ S.T
+
+        if hold == 'zero_order':
+            # The final potential is the last sample, after the final ZOH jump.
+            path_times_s.append(float(ts[-1]))
+            path_means_m.append((z[:3] * L).tolist())
+            path_centers_m.append(centers[-1].tolist())
+
+    elif method == 'dop853' and hold == 'zero_order':
+        for k, dt in enumerate(np.diff(tt)):
+            if k > 0:
+                path_times_s.append(float(ts[k]))
+                path_means_m.append((z[:3] * L).tolist())
+                path_centers_m.append(centers[k].tolist())
+            A = np.block([[np.zeros((3, 3)), np.eye(3)],
+                          [-K[k], np.zeros((3, 3))]])
+            b = np.r_[np.zeros(3), K[k] @ c[k]]
+
+            def rhs(tau, y):
+                covariance = y[6:].reshape(6, 6)
+                return np.r_[A @ y[:6] + b,
+                             (A @ covariance + covariance @ A.T).ravel()]
+
+            sol = solve_ivp(rhs, (0, dt), np.r_[z, C.ravel()], method='DOP853',
+                            rtol=2e-10, atol=2e-13, dense_output=True)
+            if not sol.success:
+                raise Rejected('numerical_failure', sol.message)
+            sample_rel = np.linspace(0, dt, path_samples_per_interval + 1)[1:]
+            sample_states = sol.sol(sample_rel)
+            for sub_tau, state in zip(sample_rel, sample_states.T):
+                path_times_s.append(float((tt[k] + sub_tau) * T))
+                path_means_m.append((state[:3] * L).tolist())
+                path_centers_m.append(centers[k].tolist())
+            z = sol.y[:6, -1]
+            C = sol.y[6:, -1].reshape(6, 6)
+        path_times_s.append(float(ts[-1]))
+        path_means_m.append((z[:3] * L).tolist())
+        path_centers_m.append(centers[-1].tolist())
+
+    elif method == 'dop853':
+        def rhs(tau, y):
+            k = min(max(np.searchsorted(tt, tau) - 1, 0), len(tt) - 2)
+            fraction = np.clip((tau - tt[k]) / (tt[k + 1] - tt[k]), 0, 1)
+            km = (1 - fraction) * K[k] + fraction * K[k + 1]
+            rm = (1 - fraction) * c[k] + fraction * c[k + 1]
+            A = np.block([[np.zeros((3, 3)), np.eye(3)],
+                          [-km, np.zeros((3, 3))]])
+            state = y[:6]
+            covariance = y[6:].reshape(6, 6)
+            return np.r_[A @ state + np.r_[np.zeros(3), km @ rm],
+                         (A @ covariance + covariance @ A.T).ravel()]
+
+        sol = solve_ivp(rhs, (tt[0], tt[-1]), np.r_[z, C.ravel()],
+                        method='DOP853', rtol=2e-10, atol=2e-13,
+                        max_step=float(np.min(np.diff(tt))), dense_output=True)
         if not sol.success:
-            raise Rejected('numerical_failure',sol.message)
-        z=sol.y[:6,-1];C=sol.y[6:,-1].reshape(6,6)
-        # For P2, also populate all_means_for_max from sol.y when not returning trajectory
-        # sol.y contains states at tt points (if max_step enforced)
-        try:
-            if sol.y.shape[1] == len(tt):
-                all_means_for_max = (sol.y[:3].T * L).tolist()
-            else:
-                # sample via dense output
-                y_dense = sol.sol(tt)
-                all_means_for_max = (y_dense[:3].T * L).tolist()
-        except Exception:
-            all_means_for_max.append((z[:3]*L).tolist())
-        # for dop853 continuous, build trajectory by sampling ts
-        if return_trajectory:
-            # sol sampled at dense output if available, else interpolate from y
-            # we have sol.y at tt points if max_step enforced, otherwise dense
-            if hasattr(sol,'y') and sol.y.shape[1]==len(tt):
-                for idx in range(1,len(tt)):
-                    traj_times.append(float(ts[idx]))
-                    traj_means.append((sol.y[:3,idx]*L).tolist())
-            else:
-                # fallback: sample at ts via sol.sol
-                try:
-                    y_dense = sol.sol(tt)
-                    for idx in range(1,len(tt)):
-                        traj_times.append(float(ts[idx]))
-                        traj_means.append((y_dense[:3,idx]*L).tolist())
-                except Exception:
-                    # last fallback: only final
-                    traj_times.append(float(ts[-1]))
-                    traj_means.append((z[:3]*L).tolist())
+            raise Rejected('numerical_failure', sol.message)
+        z = sol.y[:6, -1]
+        C = sol.y[6:, -1].reshape(6, 6)
+        chunks = [np.linspace(a, b, path_samples_per_interval + 1)[:-1]
+                  for a, b in zip(tt[:-1], tt[1:])]
+        sample_tau = np.concatenate(chunks + [tt[-1:]])
+        sample_states = sol.sol(sample_tau)
+        sample_centers = np.column_stack([
+            np.interp(sample_tau, tt, c[:, axis]) for axis in range(3)
+        ])
+        path_times_s = (sample_tau * T).tolist()
+        path_means_m = (sample_states[:3].T * L).tolist()
+        path_centers_m = (sample_centers * L).tolist()
     else:
         raise ValueError('unknown propagator')
-    summary = summarize(z,C,final,mass,target_m)
-    # P2: compute max_transport_error as max over trajectory deviation from nominal path
-    # Must not rely on return_trajectory flag; track history even when not returning full trajectory.
-    # For exact method we have per-step means; for dop853 we reconstruct from r and mean history.
-    # Use nominal path = well center r (trap minimum) for transport error = |ion - well|; if r unavailable, fallback already set.
-    # Also compute vs straight line start + s*distance*direction for completeness, keep max of both.
-    try:
-        # Use stored traj_means if return_trajectory else reconstruct from internal history (we keep all_means)
-        # For exact method, we can recompute from the loop history even when return_trajectory=False
-        # To avoid missing history, we now always track all_means regardless of flag.
-        # If all_means not defined (dop853 without history), fallback remains.
-        if 'all_means_for_max' in locals() and all_means_for_max is not None:
-            mean_arr = np.asarray(all_means_for_max)
-            well_arr = np.asarray(r)
-            if mean_arr.shape == well_arr.shape and mean_arr.shape[0] == well_arr.shape[0]:
-                # P2 correct definition: max deviation from nominal path (straight line) is max |mean - well|
-                # Also compute vs straight line for sanity: start + s*distance*direction where s = (well - start)·direction / distance
-                # But for transport error, max |mean - well| is the primary (ion lag)
-                max_err_well = float(np.max(np.linalg.norm(mean_arr - well_arr, axis=1)))
-                summary['max_transport_error_m'] = max_err_well
-                summary['is_max_transport_error_fallback'] = False
-                summary['max_transport_error_vs_well_m'] = max_err_well
-                # Also store vs straight line for diagnostics
-                try:
-                    # nominal straight line at each well position: project well onto direction
-                    s_vals = np.dot(well_arr - r[0], (well_arr[-1]-well_arr[0]) / (np.linalg.norm(well_arr[-1]-well_arr[0])+1e-12)) / (np.linalg.norm(well_arr[-1]-well_arr[0])+1e-12)
-                    # fallback to simple
-                except Exception:
-                    pass
-    except Exception as e:
-        # keep fallback
-        summary['max_transport_error_error'] = str(e)
-    if return_trajectory:
-        # decimate if too long
-        if len(traj_times) > trajectory_decimate:
-            idx = np.linspace(0, len(traj_times)-1, trajectory_decimate, dtype=int)
-            traj_times = [traj_times[i] for i in idx]
-            traj_means = [traj_means[i] for i in idx]
-        summary['trajectory'] = {'times_s': traj_times, 'mean_positions_m': traj_means}
-        # also store well centers for convenience
-        # decimate well centers similarly
-        if len(ts) > trajectory_decimate:
-            didx = np.linspace(0, len(ts)-1, trajectory_decimate, dtype=int)
-            well_dec = r[didx].tolist()
-            ts_dec = ts[didx].tolist()
-        else:
-            well_dec = r.tolist()
-            ts_dec = ts.tolist()
-        summary['trajectory']['well_centers_m'] = well_dec
-        summary['trajectory']['well_times_s'] = ts_dec
-    return summary
 
+    summary = summarize(z, C, final, mass, target_m)
+    path_times = np.asarray(path_times_s, dtype=float)
+    path_means = np.asarray(path_means_m, dtype=float)
+    path_centers = np.asarray(path_centers_m, dtype=float)
+    if path_means.shape != path_centers.shape or path_means.shape[1:] != (3,):
+        raise Rejected('numerical_failure', 'inconsistent within-step path samples')
+    lag = np.linalg.norm(path_means - path_centers, axis=1)
+    if not np.isfinite(lag).all():
+        raise Rejected('numerical_failure', 'nonfinite transient ion-well lag')
+    summary.update({
+        'max_transport_error_m': float(np.max(lag)),
+        'max_ion_well_lag_m': float(np.max(lag)),
+        'mean_ion_well_lag_m': float(np.sum(0.5 * (lag[1:] + lag[:-1]) * np.diff(path_times))
+                                      / (ts[-1] - ts[0])),
+        'max_transport_error_vs_well_m': float(np.max(lag)),
+        'is_max_transport_error_fallback': False,
+        'path_samples_per_interval': int(path_samples_per_interval),
+    })
+
+    if return_trajectory:
+        if len(path_times_s) > trajectory_decimate:
+            idx = np.linspace(0, len(path_times_s) - 1, trajectory_decimate, dtype=int)
+            path_times_s = [path_times_s[i] for i in idx]
+            path_means_m = [path_means_m[i] for i in idx]
+            path_centers_m = [path_centers_m[i] for i in idx]
+        summary['trajectory'] = {
+            'times_s': path_times_s,
+            'mean_positions_m': path_means_m,
+            'well_centers_m': path_centers_m,
+            'well_times_s': path_times_s,
+        }
+    return summary
 
 def validate_full_field_centroid(trap,times_s,voltages,initial,target_m,stray=None,frequency_scale=1., return_trajectory=False, trajectory_decimate=400):
     """Nonlinear pseudopotential force; reports coherent excitation only, not total n."""
