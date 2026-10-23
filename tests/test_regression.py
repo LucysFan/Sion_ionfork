@@ -1,7 +1,7 @@
 import numpy as np
 import tempfile, json, pathlib
 import pytest
-from shuttle_sim.field import load_trap, Rejected, Local
+from shuttle_sim.field import load_trap, Rejected, Local, rejection_penalty
 from shuttle_sim.dynamics import propagate
 from shuttle_sim.observables import scalar_loss_from_observables, dimensionless_control_penalty
 from shuttle_sim.ga.fitness import scalar_fitness
@@ -9,7 +9,7 @@ from shuttle_sim.hardware import Hardware
 from shuttle_sim.safety import SafetyLayer
 from shuttle_sim.calibration import Calibration
 from shuttle_sim.closed_loop import ClosedLoopRefiner
-from shuttle_sim.pipeline import Runner
+from shuttle_sim.pipeline import Runner, match_normal_modes
 
 # Helper to get minimal config for fast tests
 def minimal_config():
@@ -25,6 +25,117 @@ def minimal_config():
     cfg["robust_samples"] = 2
     cfg["closed_loop_budget"] = 4
     return cfg
+
+def test_polygon_gapping_supports_rotated_edges_with_correct_clearance():
+    from shapely.affinity import rotate
+    from shapely.geometry import Polygon, box
+    from sion.sion import gapping
+
+    source = rotate(box(0.0, 0.0, 10.0, 4.0), 31.0, origin='centroid')
+    original = np.asarray(source.exterior.coords[:-1], dtype=float)
+    inset = Polygon(gapping(original, 0.5))
+    assert inset.is_valid
+    assert inset.area < source.area
+    assert inset.within(source)
+    assert np.isclose(source.boundary.distance(inset.boundary), 0.5, atol=1e-8)
+    assert np.array_equal(original, np.asarray(source.exterior.coords[:-1]))
+
+
+def test_wire_trap_builder_does_not_mutate_geometry_or_split_settings():
+    from sion.sion import n_wire_trap_design
+
+    top_dc = [[2.0, 4.0]]
+    bottom_dc = [[2.0, 4.0]]
+    central_wires = [[2.0, 5.0], [2.0, 5.0], [2.0, 5.0]]
+    original_wires = [row.copy() for row in central_wires]
+    wire_splitting = {0: [[1.0, 1.0], []]}
+    original_splitting = {0: [[1.0, 1.0], []]}
+
+    n_wire_trap_design(top_dc, bottom_dc, central_wires, [0, 2],
+                       Urf=[0.1, 0.1, 0.1], gap=0.1,
+                       wire_splitting=wire_splitting)
+    assert central_wires == original_wires
+    assert wire_splitting == original_splitting
+
+
+def test_external_simulator_command_keeps_paths_as_arguments():
+    from sion.pylion.pylion import Simulation
+    simulation = Simulation.__new__(Simulation)
+    simulation.attrs = {
+        "executable": "/opt/LAMMPS Folder/lmp",
+        "name": "/tmp/run with spaces",
+        "mpi": {"enabled": True, "executable": "/opt/MPI Folder/mpiexec",
+                "processes": 3},
+    }
+    assert simulation._build_command() == [
+        "/opt/MPI Folder/mpiexec", "-n", "3",
+        "/opt/LAMMPS Folder/lmp", "-log", "/tmp/run with spaces.lmp.log",
+        "-in", "/tmp/run with spaces.lammps",
+    ]
+
+
+def test_mode_tracking_is_invariant_to_sign_and_reordering():
+    previous = np.eye(3)
+    current = np.column_stack([-previous[:, 1], previous[:, 0], -previous[:, 2]])
+    overlaps, labels, rotation_risk = match_normal_modes(
+        previous, current, np.array([0, 1, 2]))
+    assert np.array_equal(labels, [1, 0, 2])
+    assert np.allclose(np.max(overlaps, axis=0), 1.0)
+    assert not rotation_risk
+
+
+def test_angle_between_vectors_clips_roundoff_and_handles_eigenvector_sign():
+    from sion.electrode.transformations import angle_between_vectors
+    assert angle_between_vectors([1.0, 0.0, 0.0], [1.0+1e-15, 0.0, 0.0]) == 0.0
+    assert np.isclose(angle_between_vectors([1, 0, 0], [-1, 0, 0], directed=False), 0.0)
+    with pytest.raises(ValueError, match='zero-length'):
+        angle_between_vectors([0, 0, 0], [1, 0, 0])
+
+
+def test_analytic_polygon_derivatives_match_finite_differences_through_order_five():
+    from sion.electrode.expressions import polygon_potential
+    from sion.electrode.utils import construct_derivative, expand_tensor
+
+    polygon = np.array([[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]])
+    points = np.array([[0.13, -0.22, 1.4], [0.24, 0.31, 1.1]])
+    derivatives = [polygon_potential(points, [polygon], 1.0, order, 0, 0.0, None)
+                   for order in range(6)]
+    step = 2e-4
+    for order in range(1, 6):
+        for index in range(2*order+1):
+            (lower_order, lower_index), axis = construct_derivative(order, index)
+            plus, minus = points.copy(), points.copy()
+            plus[:, axis] += step
+            minus[:, axis] -= step
+            upper = polygon_potential(plus, [polygon], 1.0, lower_order, 0, 0.0, None)[:, lower_index]
+            lower = polygon_potential(minus, [polygon], 1.0, lower_order, 0, 0.0, None)[:, lower_index]
+            finite_difference = (upper-lower)/(2*step)
+            np.testing.assert_allclose(derivatives[order][:, index], finite_difference,
+                                       rtol=2e-5, atol=2e-7)
+
+    hessian = expand_tensor(derivatives[2], order=2)
+    np.testing.assert_allclose(hessian, hessian.swapaxes(-1, -2), atol=1e-14)
+    np.testing.assert_allclose(np.trace(hessian, axis1=-2, axis2=-1), 0.0, atol=1e-14)
+
+
+def test_point_pixel_potential_converges_to_analytic_polygon():
+    from sion.electrode.expressions import point_potential, polygon_potential
+
+    polygon = np.array([[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]])
+    point = np.array([[0.13, -0.22, 1.4]])
+    exact = polygon_potential(point, [polygon], 1.0, 0, 0, 0.0, None)[0, 0]
+    errors = []
+    for resolution in (8, 16, 32):
+        spacing = 2.0/resolution
+        centers = -1.0 + (np.arange(resolution)+0.5)*spacing
+        xx, yy = np.meshgrid(centers, centers, indexing='xy')
+        pixels = np.column_stack((xx.ravel(), yy.ravel()))
+        areas = np.full(resolution**2, spacing**2)
+        approximate = point_potential(point, pixels, areas, 1.0, 0, 0, 0.0, None)[0, 0]
+        errors.append(abs(approximate-exact))
+    assert errors[2] < errors[1] < errors[0]
+    assert errors[2] < errors[0]/10
+
 
 def test_safety_nan_fail_closed():
     cfg = minimal_config()
@@ -225,7 +336,7 @@ def test_last_safe_checksum_present():
             assert fb["delivered_sha256"] is not None
             assert len(fb["delivered_sha256"]) == 64
 
-def test_frequency_genes_active():
+def test_extended_voltage_genes_and_sta_time_warp_are_active():
     cfg = minimal_config()
     runner = Runner(cfg)
     runner.prepare()
@@ -238,36 +349,61 @@ def test_frequency_genes_active():
     theta12[9] = -0.12
     theta12[10] = 0.10
     theta12[11] = -0.10
-    # Evaluate via pipeline commands: extra genes should change delivered voltages
+    # Evaluate via pipeline commands: extra genes should change delivered voltages.
     t8, v8, _ = runner.commands(theta8, baseline='sta')
     t10, v10, _ = runner.commands(theta10, baseline='sta')
     t12, v12, _ = runner.commands(theta12, baseline='sta')
-    # Extra genes should produce different voltages (not identical)
     assert not np.allclose(v8, v10), "theta10 extra genes should change voltages, but were ignored"
     assert not np.allclose(v8, v12), "theta12 extra genes should change voltages"
     assert not np.allclose(v10, v12), "theta10 vs 12 should differ"
-    # Fitness should also differ
+
+    # For a nonzero time warp, the STA center correction must differentiate
+    # P(warp(s)) by the chain rule without relying on a high-degree expansion.
+    from numpy.polynomial import Polynomial as Polynomial
+    theta_warp = np.zeros(8)
+    theta_warp[:2] = [0.04, -0.03]
+    _, _, warped_route = runner.commands(theta_warp, baseline='sta')
+    _, s_grid, directions, _, duration = runner.grid()
+    env = Polynomial([0, 0, 16, -32, 16])
+    identity = Polynomial([0, 1])
+    warp = identity + theta_warp[0]*env + theta_warp[1]*env*Polynomial([-1, 2])
+    s_warp = warp(s_grid)
+    p = Polynomial([0, 0, 0, 0, 35, -84, 70, -20])
+    warp_velocity = warp.deriv()(s_grid)
+    warp_acceleration = warp.deriv(2)(s_grid)
+    expected_q = (p(s_warp)
+                  + (p.deriv(2)(s_warp)*warp_velocity**2
+                     + p.deriv()(s_warp)*warp_acceleration)
+                  / (duration*runner.initial.omega_rad_s[0])**2)
+    expected_route = np.where(directions > 0, expected_q, 1-expected_q)
+    np.testing.assert_allclose(warped_route, expected_route, rtol=1e-13, atol=1e-13)
+
+    # Fitness should differ when active extended voltage genes change physics.
     from shuttle_sim.ga.fitness import evaluate_genome
     from shuttle_sim.ga.genome import Genome
     g8 = Genome(theta8, island='S')
     g10 = Genome(theta10, island='V')
     g12 = Genome(theta12, island='F')
-    # Need runner with fast config for fitness
     evaluate_genome(g8, runner)
     evaluate_genome(g10, runner)
     evaluate_genome(g12, runner)
-    # Fitness values should not be identical if genes active (allow some difference)
     assert g8.fitness != g10.fitness or g10.fitness != g12.fitness, "fitness should differ when extra genes change physics"
 
 def test_raw_chain_provenance():
     from shuttle_sim.observables import synthesize_raw_sideband_measurement, infer_observables_from_raw, raw_to_observables_chain
     metrics = {"n_total": 0.05, "n_modes": [0.02, 0.03], "coherent_n_total": 0.01, "position_error_m": 1e-6, "well_target_error_m": 1e-6}
     task = {"max_n_total": 0.5, "position_tolerance_m": 5e-6}
-    raw = synthesize_raw_sideband_measurement(metrics)
+    raw = synthesize_raw_sideband_measurement(metrics, rng_seed=17)
     assert "traces" in raw
     assert "t_probe_s" in raw
+    assert raw["is_synthetic"] is True
+    assert raw["random_seed"] == 17
     inferred = infer_observables_from_raw(raw)
     assert "n_total" in inferred
+    assert inferred["input_is_synthetic"] is True
+    assert inferred["input_random_seed"] == 17
+    other_seed = synthesize_raw_sideband_measurement(metrics, rng_seed=18)
+    assert raw["traces"][0]["counts_blue"] != other_seed["traces"][0]["counts_blue"]
     chain = raw_to_observables_chain(metrics, task)
     assert "raw_measurement" in chain
     assert "provenance" in chain
@@ -317,6 +453,65 @@ def test_adaptive_integrator_reports_interior_well_lag():
     assert np.isclose(result['max_ion_well_lag_m'], displacement/np.pi,
                       rtol=2e-5, atol=1e-11)
     assert not result['is_max_transport_error_fallback']
+
+
+def test_corridor_checks_transverse_mean_motion():
+    mass = 1.0e-25
+    omega = 2*np.pi*1.0e6
+    duration = np.pi/omega
+    hessian = mass*omega**2*np.eye(3)
+    hessians = np.repeat(hessian[None, :, :], 2, axis=0)
+    modes = np.eye(3)
+    axis = np.array([1.0, 0.0, 0.0])
+    origin = np.zeros(3)
+    width = 0.1e-6
+
+    centers_inside = np.array([[0.0, 0.0, 0.0], [1e-6, 0.0, 0.0]])
+    local_inside = Local(centers_inside[0], hessian, np.full(3, omega), modes)
+    final_inside = Local(centers_inside[1], hessian, np.full(3, omega), modes)
+    result = propagate(np.array([0.0, duration]), centers_inside, hessians,
+                       local_inside, final_inside, mass, centers_inside[-1],
+                       path_samples_per_interval=32, corridor_origin_m=origin,
+                       corridor_direction=axis, corridor_halfwidth_m=width)
+    assert result['corridor_passed']
+    assert result['max_transverse_excursion_m'] <= width
+
+    centers_outside = np.array([[0.0, 0.0, 0.0], [1e-6, 1e-6, 0.0]])
+    final_outside = Local(centers_outside[1], hessian, np.full(3, omega), modes)
+    with pytest.raises(Rejected, match='corridor_violation') as error:
+        propagate(np.array([0.0, duration]), centers_outside, hessians,
+                  local_inside, final_outside, mass, centers_outside[-1],
+                  path_samples_per_interval=32, corridor_origin_m=origin,
+                  corridor_direction=axis, corridor_halfwidth_m=width)
+    assert error.value.violation > 0
+
+
+def test_rejection_penalty_carries_normalized_violation():
+    assert rejection_penalty(Rejected('weak_confinement', 'shortfall', violation=0.01)) == 1e6 + 10.0
+    assert rejection_penalty(Rejected('numerical_failure', 'no metric')) == 1e6
+
+
+def test_robust_summary_uses_the_selected_baseline_and_fidelity():
+    from shuttle_sim.pipeline import Runner
+
+    class FakeRunner:
+        cfg = {"uncertainty": {"seed": 4}}
+        seen = []
+
+        def scenarios(self, count, seed):
+            return [{"scenario": 0, "hardware": {}, "stray_V_m": [0.0, 0.0, 0.0],
+                     "frequency_scale": 1.0}]
+
+        def evaluate(self, theta, baseline, **kwargs):
+            self.seen.append((baseline, kwargs["exact_nodes"], kwargs["subdivisions"]))
+            return {"n_total": 0.02, "accepted": True}
+
+    runner = FakeRunner()
+    report = Runner.robust(runner, np.zeros(8), count=1, baseline='smooth',
+                           exact_nodes=641, subdivisions=8)
+    assert runner.seen == [('smooth', 641, 8)]
+    assert report['baseline'] == 'smooth'
+    assert report['mean_n'] == 0.02
 
 
 def test_control_regularizer_is_invariant_to_voltage_units():
@@ -374,6 +569,38 @@ def test_raw_chain_marks_requested_lag_as_unavailable_from_terminal_data():
     assert chain["loss"] is None
     assert chain["loss_without_lag"] is not None
     assert chain["loss_status"] == "incomplete_lag_unavailable_from_terminal_measurement"
+
+
+def test_genetic_fitness_treats_frequency_floor_as_hard_constraint():
+    task = {"max_n_total": 0.5, "position_tolerance_m": 5e-6,
+            "distance_m": 30e-6, "min_frequency_hz": 400e3}
+    metrics = {"n_total": 0.1, "position_error_m": 0.0,
+               "well_target_error_m": 0.0, "minimum_frequency_hz": 399e3}
+    with pytest.raises(Rejected, match='weak_confinement') as error:
+        scalar_fitness(metrics, task)
+    assert error.value.violation > 0
+
+
+def test_hardware_island_alone_receives_direct_filter_penalty():
+    from shuttle_sim.ga.fitness import evaluate_genome
+    from shuttle_sim.ga.genome import Genome
+
+    class FakeRunner:
+        task = {"max_n_total": 0.5, "position_tolerance_m": 5e-6,
+                "distance_m": 30e-6, "min_frequency_hz": 400e3}
+        cfg = {"subdivisions": 4, "control_regularization_weight": 0.0}
+        loss_weights = None
+
+        def evaluate(self, *args, **kwargs):
+            return {"n_total": 0.1, "position_error_m": 0.0,
+                    "well_target_error_m": 0.0, "minimum_frequency_hz": 500e3,
+                    "distortion": {"rms_deviation_V": 0.2},
+                    "accepted": True}
+
+    runner = FakeRunner()
+    standard = evaluate_genome(Genome(np.zeros(8), island='S'), runner)
+    hardware = evaluate_genome(Genome(np.zeros(8), island='H'), runner)
+    assert np.isclose(hardware.fitness-standard.fitness, 0.5*np.log(2.0))
 
 
 def test_genetic_scalar_fitness_uses_shared_loss_and_adds_penalties_once():

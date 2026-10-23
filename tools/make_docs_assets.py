@@ -1,4 +1,4 @@
-"""Generate every image used by README.md from the run artifacts in ``output/``.
+"""Generate documentation figures from the run artifacts in ``output/``.
 
 Nothing here is hand-drawn fake data: the curves come from the CSV/JSON files that
 ``python -m shuttle_sim`` wrote.  Only the trap *schematic* is explicitly labelled
@@ -7,8 +7,8 @@ as a schematic (electrode silhouettes, not a field solve).
 Usage
 -----
     python tools/make_docs_assets.py            # all PNG + GIF
-    python tools/make_docs_assets.py --only ga  # a subset (wave, traj, freq,
-                                                # valid, robust, ga, dashboard, anim)
+    python tools/make_docs_assets.py --only ga  # generate the archived GA figure
+                                                # from the legacy output/ga_demo data
 
 Outputs go to ``assets/`` at the repository root.
 """
@@ -445,7 +445,7 @@ def fig_robust():
 
 
 # ----------------------------------------------------------------------------
-# 5. island GA: evolution, diversity, hall of fame
+# 5. archived island GA run: generated from the legacy output/ga_demo artifacts
 # ----------------------------------------------------------------------------
 def _ga_history():
     frames = [json.loads(p.read_text()) for p in sorted((GA / "history").glob("gen_*.json"))]
@@ -458,6 +458,8 @@ def fig_ga():
     strategies = [i["strategy"] for i in frames[0]["islands"]]
 
     fig = plt.figure(figsize=(12.6, 7.4))
+    fig.text(0.5, 1.015, "АРХИВ: output/ga_demo, прежняя схема генов и оценки",
+             ha="center", va="bottom", fontsize=9, color=WARN)
     gs = fig.add_gridspec(2, 2, hspace=0.46, wspace=0.22)
 
     ax = fig.add_subplot(gs[0, 0])
@@ -567,6 +569,8 @@ def fig_dashboard():
     gs = fig.add_gridspec(
         2, 3, hspace=0.55, wspace=0.30, left=0.06, right=0.985, top=0.775, bottom=0.075
     )
+    fig.text(0.5, 1.015, "АРХИВ: output/ga_demo, демонстрационные данные прежней схемы генома",
+             ha="center", va="bottom", fontsize=9, color=WARN)
 
     # --- header ------------------------------------------------------------
     fig.text(0.06, 0.945, "Island GA — дашборд в реальном времени", fontsize=19, fontweight="bold", color=TEXT)
@@ -584,7 +588,7 @@ def fig_dashboard():
     fig.patches.append(
         plt.Rectangle((0.86, 0.926), 0.125, 0.043, transform=fig.transFigure, facecolor=PANEL2, edgecolor=GRID, lw=1)
     )
-    fig.text(0.868, 0.940, "●  опрос 500 мс", fontsize=9, color=ACCENT2, va="center")
+    fig.text(0.868, 0.940, "●  опрос 0.9 с", fontsize=9, color=ACCENT2, va="center")
 
     # --- fitness -----------------------------------------------------------
     ax = fig.add_subplot(gs[0, :2])
@@ -782,9 +786,9 @@ def fig_scorecard():
     order = [
         ("shuttle_reference", "reference\nround-trip 30 мкм"),
         ("shuttle_oneway", "one_way\n30 мкм"),
-        ("shuttle_repeated", "repeated ×2\nсостояние фильтра сохраняется"),
+        ("shuttle_repeated", "repeated ×2\nфильтр без сброса"),
         ("shuttle_gds", "GDS-геометрия\n17 каналов"),
-        ("shuttle_variable_freq", "переменная ω\n±15 %"),
+        ("shuttle_variable_freq", "переменная ω\nлимит ±18 %"),
     ]
     cards = []
     for name, label in order:
@@ -827,13 +831,13 @@ def fig_architecture():
 
     layers = [
         ("1 · Поле", "field.py", "псевдопотенциал RF + DC,\nпоиск минимума", "trap_snapshot.json", ACCENT),
-        ("2 · Управление", "control.py", "θ ∈ ℝ⁸: time-warp + SVD,\nфиксированная или переменная ω", "config.json", "#6ee7d5"),
+        ("2 · Управление", "control.py", "GA: 8/10/12 компонентов;\nчастотный профиль отдельно", "config.json", "#6ee7d5"),
         ("3 · Инверсия", "voltage.py", "баланс сил и кривизны,\nSLSQP с ограничениями", "route_diagnostics.json", ACCENT2),
         ("4 · Аппаратный тракт", "hardware.py", "ЦАП, ZOH, RC-каскад,\nусиление, задержка, slew", "delivered_waveform.csv", WARN),
         ("5 · Динамика", "dynamics.py", "3D гауссов пакет, точный\nпропагатор или DOP853", "delivered_path.csv", "#ffa94d"),
         ("6 · Робастность", "pipeline.robust", "ансамбль сценариев\nmean/worst/CVaR", "robust.json", BAD),
         ("7 · Калибровка", "calibration.py", "идентификация gain/offset\nи фильтра → update_model", "calibration_*.json", "#f783ac"),
-        ("8 · Closed-loop", "closed_loop.py", "8 параметров, SafetyLayer,\nфиксированный бюджет", "closed_loop_*.json", "#c79bff"),
+        ("8 · Closed-loop", "closed_loop.py", "8 параметров + SafetyLayer;\nизмерения эмулируются", "closed_loop_*.json", "#c79bff"),
     ]
 
     fig = plt.figure(figsize=(13.0, 6.4))
