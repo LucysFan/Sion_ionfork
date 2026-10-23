@@ -14,17 +14,18 @@ def main():
     if cfg['trap']['kind']=='gds':
         p = Path(cfg['trap']['path'])
         if not p.is_absolute():
-            # try relative to config file, then relative to cwd
-            cand = (Path(a.config).resolve().parent / p)
-            if cand.exists():
-                p = cand.resolve()
+            for cand in (
+                Path(a.config).resolve().parent / p,
+                Path.cwd() / p,
+                Path.cwd() / 'configs' / p.name,
+                Path.cwd() / 'configs' / 'uploads' / p.name,
+                Path.cwd() / 'examples' / 'gds' / p.name,
+            ):
+                if cand.exists():
+                    p = cand.resolve()
+                    break
             else:
-                # also try repo-root relative
-                cand2 = (Path.cwd() / p)
-                if cand2.exists():
-                    p = cand2.resolve()
-                else:
-                    p = cand.resolve()  # will fail later with clear error
+                p = (Path(a.config).resolve().parent / p).resolve()
         cfg['trap']['path']=str(p)
     try:
         status=Runner(cfg).run(out,a.full_field)
