@@ -1,4 +1,4 @@
-"""CUDA helper — optional, never slows GA if absent."""
+"""GPU availability diagnostics; the GA fitness path itself remains CPU-based."""
 import importlib.util, platform
 
 def cuda_info():
@@ -25,7 +25,7 @@ def cuda_info():
     return info
 
 def get_xp():
-    """Return array module: cupy if available else numpy."""
+    """Optional array-module helper; current GA fitness code does not call it."""
     try:
         import cupy as cp
         # test
