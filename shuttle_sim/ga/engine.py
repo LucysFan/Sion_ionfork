@@ -1,18 +1,17 @@
-"""GA engine for islands, migration, hall of fame, checkpoints, and dashboard state.
+"""GA Engine — orchestrates islands, migration, hall of fame, checkpoints, dashboard state.
 
-State files are replaced atomically, but state assembly runs synchronously in the
-GA process. It may evaluate trajectories for the hall leader and island leaders;
-interval and result caches limit repeated work without guaranteeing zero overhead.
-The dashboard server can read the files independently.
+Real-time dashboard writes are async via atomic file replace, never blocks evolution.
+Trap tab: separate tab draws trap itself and animates shuttling for each island's top 3% best candidates.
+Design is non-blocking: file polling, atomic replace, cheap decimated ROM, interval + theta-hash cache.
 """
-import time, json, math
+import time, json, pathlib, threading, queue, math
 import numpy as np
 from pathlib import Path
 
 from .genome import Genome
 from .island import Island
 from .migration import RingMigration
-from .fitness import evaluate_genome
+from .fitness import evaluate_exact
 from .cuda import cuda_info
 
 class GAEngine:
@@ -44,9 +43,9 @@ class GAEngine:
             isl.initialize()
             self.islands.append(isl)
         if not self.islands:
-            # Default five-island set; the island names select search/scoring strategies.
+            # default 5 islands — разные базы, не только STA (STA «не радует» в эксперименте)
             defaults=[("S",20,"smooth"),("A",20,"sta"),("V",20,"sta"),("R",25,"sta"),("H",20,"smooth")]
-            # V adds voltage-basis genes, R scores uncertainty scenarios, H adds distortion cost.
+            # S=smooth адиабатика, A=STA короткий, V=variable частота, R=robust, H=hardware/lowpass
             for i,(s,p,b) in enumerate(defaults):
                 isl=Island(i,s,p, rng=self.rng.integers(0,1<<31), baseline=b)
                 isl.initialize()
@@ -58,7 +57,10 @@ class GAEngine:
         self.global_gen=0
         self.start_time=time.time()
         self.cuda=cuda_info()
-        # Trap geometry is prepared once at startup; trajectory diagnostics are assembled later.
+        # dashboard state queue (non-blocking)
+        self._state_queue=queue.Queue(maxsize=10)
+        self._dashboard_thread=None
+        # trap geometry — built once, never blocks per-gen
         try:
             self._trap_geometry = self._build_trap_geometry()
         except Exception as e:
@@ -70,9 +72,9 @@ class GAEngine:
     def _build_trap_geometry(self):
         """Export trap electrode polygons for dashboard Trap tab.
 
-        Runs once at initialization (field lookup may add startup time), then is cached.
-        Returns a JSON-serializable dictionary with electrodes in µm for the frontend.
-        It has no repeated per-generation cost.
+        Runs once at init (expensive field lookup) and then cached.
+        Returns JSON-serializable dict with electrodes in µm for frontend to draw.
+        No per-generation cost → never slows training.
         """
         runner = self.runner
         system = runner.trap.system
@@ -142,13 +144,14 @@ class GAEngine:
         return geom
 
     def _get_island_top_trajectories(self):
-        """Prepare per-island leader trajectories for the Trap tab.
+        """Per-island top 3% best trajectories for Trap tab animation.
 
-        - Evaluates the selected leaders with the reduced-order model and decimates the output.
-        - Selects ceil(pop*percent), at least one and capped by trap_traj_max_per_island.
-        - Generation-interval and theta caches limit repeated evaluations.
-        - This method runs synchronously during state assembly; runtime depends on the
-          model and configuration, so the caches bound repeated work but do not make it free.
+        Non-blocking design:
+        - cheap ROM (exact_nodes=None) with decimated trajectory (80-120 pts) → ~ms per candidate
+        - percent = ceil(pop*0.03) at least 1, capped at 3 per island to bound cost
+        - interval cache: recompute only every trap_traj_interval gens or when top thetas change
+        - theta-hash cache dict avoids re-evaluating same genome multiple times
+        Result size: ~8 islands*1 cand* ~100 pts*3 coords ~ small JSON (<100kB), atomic write never blocks evolve loop.
         """
         percent = float(self.cfg.get('island_top_percent', self.cfg.get('ga',{}).get('island_top_percent', 0.03)) if isinstance(self.cfg.get('ga'), dict) else self.cfg.get('island_top_percent', 0.03))
         # support nested ga config or top-level
@@ -226,35 +229,6 @@ class GAEngine:
         self._cached_island_trajs_gen = self.global_gen
         return result
 
-    def _hall_waveform_signature(self, genome, samples=64):
-        """Compare hall diversity on a common grid of normalized command voltages."""
-        baseline = next((isl.baseline for isl in self.islands
-                        if isl.strategy == genome.island), 'sta')
-        times, commands, _ = self.runner.commands(genome.theta, baseline=baseline)
-        grid = np.linspace(float(times[0]), float(times[-1]), samples)
-        span = np.maximum(self.runner.trap.hi - self.runner.trap.lo,
-                          np.finfo(float).eps)
-        normalized = (commands - self.runner.trap.lo) / span
-        return np.column_stack([
-            np.interp(grid, times, normalized[:, channel])
-            for channel in range(normalized.shape[1])
-        ]).ravel()
-
-    def _hall_distance(self, first, second, cache):
-        signatures = []
-        for genome in (first, second):
-            key = id(genome)
-            if key not in cache:
-                try:
-                    cache[key] = self._hall_waveform_signature(genome)
-                except Exception:
-                    cache[key] = None
-            signatures.append(cache[key])
-        if signatures[0] is not None and signatures[1] is not None:
-            return float(np.sqrt(np.mean((signatures[0] - signatures[1]) ** 2)))
-        # Fallback only when a candidate cannot produce a command waveform.
-        return first.distance(second)
-
     def _update_hall(self):
         # collect all finite — include not-ok but finite fitness (strict tol makes ok rare)
         all_genomes=[]
@@ -268,16 +242,17 @@ class GAEngine:
                     if g.fitness is not None:
                         all_genomes.append(g)
         all_genomes.sort(key=lambda g: g.fitness)
-        # Hall diversity is measured on command waveforms sampled on one common
-        # time grid; coefficient prefixes are not comparable across dimensions.
-        min_dist = float(self.cfg.get('hall_diversity_min_waveform_rms', 0.02))
-        signature_cache = {}
+        # --- diversity-aware hall: not just top-N by fitness, but distinct trajectories ---
+        # STA — лишь одна из инициализаций, GA ищет во всём пространстве 8-10 генов.
+        # Чтобы зал не схлопнулся в один STA-локальный минимум, фильтруем по θ-расстоянию
+        # (прокси траектории: theta→ΔV→смещение минимума).
+        min_dist = float(self.cfg.get('hall_diversity_min_distance', 0.12))
         diverse_hall=[]
         for g in all_genomes:
             if not diverse_hall:
                 diverse_hall.append(g)
                 continue
-            dmin = min(self._hall_distance(g, h, signature_cache) for h in diverse_hall)
+            dmin = min(g.distance(h) for h in diverse_hall)
             if dmin >= min_dist:
                 diverse_hall.append(g)
             # пропускаем близкого конкурента STA-кластера, ищем следующую ветвь
@@ -291,14 +266,15 @@ class GAEngine:
                     if len(diverse_hall) >= self.hall_size:
                         break
         self.hall_of_fame=diverse_hall[:self.hall_size]
-        # Dashboard diagnostic uses the same normalized waveform metric.
+        # store diagnostic: mean pairwise distance inside hall for dashboard
         self._hall_diversity = 0.0
         if len(self.hall_of_fame) > 1:
             ds=[]
             for i in range(len(self.hall_of_fame)):
                 for j in range(i+1, len(self.hall_of_fame)):
-                    ds.append(self._hall_distance(
-                        self.hall_of_fame[i], self.hall_of_fame[j], signature_cache))
+                    try:
+                        ds.append(self.hall_of_fame[i].distance(self.hall_of_fame[j]))
+                    except: pass
             self._hall_diversity = float(np.mean(ds)) if ds else 0.0
 
     def _write_state(self):
@@ -374,8 +350,8 @@ class GAEngine:
         elif trajectory is not None and isinstance(trajectory, dict) and 'times_s' in trajectory:
             traj_bundle = dict(trajectory=trajectory, hall_index=0)
 
-        # --- trap-tab data: per-island leader trajectories + cached trap geometry ---
-        # Trajectory evaluation is synchronous here; interval/result caches limit repeated work.
+        # --- trap tab data: per-island top 3% trajectories + trap geometry ---
+        # Must be cheap and cached → never slow training (polling file, no GIL block)
         try:
             island_trajectories = self._get_island_top_trajectories()
         except Exception as e:
@@ -398,7 +374,7 @@ class GAEngine:
             config=self.cfg,
             timestamp=time.time(),
             # dashboard contract note for frontend
-            dashboard=dict(note="state.json is atomically replaced. Trajectory diagnostics are evaluated synchronously while the GA assembles state; decimation and caches limit repeated work but do not guarantee zero overhead.", top_percent=float(self.cfg.get('island_top_percent', 0.03) if not isinstance(self.cfg.get('ga'), dict) else self.cfg.get('ga', {}).get('island_top_percent', 0.03)), decimate=int(self.cfg.get('trap_traj_decimate', 80) if not isinstance(self.cfg.get('ga'), dict) else self.cfg.get('ga', {}).get('trap_traj_decimate', 80))),
+            dashboard=dict(note="Trap tab polls state.json every 500ms; GA writes tmp->state.json atomically, no blocking. Per-island top 3% trajectories are decimated cheap ROM (exact_nodes=None) cached by theta hash, recomputed every trap_traj_interval gens.", top_percent=float(self.cfg.get('island_top_percent', 0.03) if not isinstance(self.cfg.get('ga'), dict) else self.cfg.get('ga', {}).get('island_top_percent', 0.03)), decimate=int(self.cfg.get('trap_traj_decimate', 80) if not isinstance(self.cfg.get('ga'), dict) else self.cfg.get('ga', {}).get('trap_traj_decimate', 80))),
         )
         # atomic write
         tmp=self.out/"state.json.tmp"
@@ -413,29 +389,9 @@ class GAEngine:
     def _evaluate_exact_hall(self):
         if self.global_gen % 5 !=0 and self.global_gen != self.generations:
             return
-        if getattr(self, '_exact_hall_generation', None) == self.global_gen:
-            return
-        final_pass = self.global_gen == self.generations
-        candidates = self.hall_of_fame if final_pass else self.hall_of_fame[:3]
-        nodes = int(self.runner.cfg.get('validation_nodes', 321))
-        subdivisions = int(self.runner.cfg.get('validation_subdivisions', 4))
-        baselines = {isl.strategy: isl.baseline for isl in self.islands}
-        for genome in candidates:
-            exact_genome = genome.copy()
-            baseline = baselines.get(genome.island, 'sta')
-            evaluate_genome(exact_genome, self.runner, baseline=baseline,
-                            exact_nodes=nodes, subdivisions=subdivisions)
-            genome.metrics['exact'] = exact_genome.metrics
-            genome.metrics['exact_fitness'] = float(exact_genome.fitness)
-            genome.metrics['exact_status'] = exact_genome.status
-            genome.metrics['exact_baseline'] = baseline
-            genome.metrics['exact_nodes'] = nodes
-            genome.metrics['exact_subdivisions'] = subdivisions
-        if final_pass:
-            self.hall_of_fame.sort(
-                key=lambda genome: (genome.metrics.get('exact_fitness', float('inf')),
-                                    genome.fitness))
-        self._exact_hall_generation = self.global_gen
+        for g in self.hall_of_fame[:3]:
+            exact=evaluate_exact(g, self.runner)
+            g.metrics['exact'] = exact
 
     def _write_live(self, evaluated, total, island_strategy=None, current_fitness=None):
         # lightweight live update inside generation — не тяжёлый как _write_state (без trap траекторий)

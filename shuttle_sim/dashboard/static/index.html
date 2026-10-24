@@ -281,11 +281,11 @@ input[type=range]{accent-color:var(--accent)}
       <table class="table mono" id="hallTable" style="margin-top:10px"></table>
     </div>
     <div class="card">
-      <h3>Theta heatmap <small>g0–g1: time warp · g2+: voltage corrections · up to 12 coefficients</small></h3>
+      <h3>Theta heatmap <small>гены лидеров</small></h3>
       <div id="heat"></div>
       <div class="legend">
-        <span><i style="width:60px;height:8px;border-radius:99px;display:inline-block;background:linear-gradient(90deg,#0a2a6a,#5ac8ff)"></i> base coefficients</span>
-        <span><i style="width:60px;height:8px;border-radius:99px;display:inline-block;background:linear-gradient(90deg,#4a1a2a,#ff7a7a)"></i> extended voltage-basis coefficients</span>
+        <span><i style="width:60px;height:8px;border-radius:99px;display:inline-block;background:linear-gradient(90deg,#0a2a6a,#5ac8ff)"></i> warp / SVD</span>
+        <span><i style="width:60px;height:8px;border-radius:99px;display:inline-block;background:linear-gradient(90deg,#4a1a2a,#ff7a7a)"></i> частоты</span>
       </div>
       <div id="thetaVals" class="mono" style="margin-top:8px;color:var(--muted)"></div>
     </div>
@@ -342,7 +342,7 @@ input[type=range]{accent-color:var(--accent)}
 
   <div style="padding:0 20px 16px 20px;display:grid;grid-template-columns:1fr;gap:16px">
     <div class="card">
-      <h3>Вид сверху и анимация переноса <small>состояние заменяется атомарно; траекторные диагностики собираются синхронно в GA engine</small></h3>
+      <h3>Вид сверху и анимация переноса</h3>
       <canvas id="cTrapTop" width="1200" height="360" class="trap-main"></canvas>
       <div class="legend" id="trapTopLegend"></div>
       <div style="display:flex;gap:12px;margin-top:10px;flex-wrap:wrap;align-items:center">
@@ -395,7 +395,7 @@ const COLORS = {
   Q1:"#ff6b9e", Q2:"#5affda", F:"#ffd05a",
   smooth:"#5ac8ff", sta:"#ffbe55", variable:"#7af0a0", robust:"#c58aff", hardware:"#ff7a7a", free:"#ffd05a"
 }
-const NAMES = {S:"S smooth", A:"A STA", V:"V extended voltage", R:"R robust", H:"H hardware", Q1:"Q1", Q2:"Q2", F:"F free 12-dim"}
+const NAMES = {S:"S smooth", A:"A STA", V:"V variable", R:"R robust", H:"H hardware", Q1:"Q1", Q2:"Q2", F:"F free"}
 const POLY_PALETTE = [
   "rgba(90,200,255,0.30)",
   "rgba(122,240,160,0.26)",
@@ -1196,7 +1196,6 @@ function drawHeat(state){
   if(!cont) return
   if(!state||!state.hall_of_fame){ cont.innerHTML=""; return}
   let hall=state.hall_of_fame.slice(0,5)
-  let maxGenes=Math.max(8,...hall.map(h=>(h.theta||[]).length))
   cont.innerHTML=""
   for(let idx=0; idx<hall.length; idx++){
     let h=hall[idx]
@@ -1208,7 +1207,7 @@ function drawHeat(state){
     for(let gi=0; gi<theta.length; gi++){
       let v=theta[gi]
       let lo,hi
-      if(gi<2){ lo=-0.10; hi=0.10}else if(gi<8){ lo=-0.4; hi=0.4}else if(gi<10){ lo=-0.15; hi=0.15}else{ lo=-0.12; hi=0.12}
+      if(gi<2){ lo=-0.10; hi=0.10}else if(gi<8){ lo=-0.4; hi=0.4}else{ lo=-0.15; hi=0.15}
       let norm=(v-lo)/(hi-lo)
       let cell=document.createElement('div'); cell.className="heat-cell"
       let hue, sat="78%", lit="56%"
@@ -1226,7 +1225,7 @@ function drawHeat(state){
       cell.title=`g${gi}=${v.toFixed(4)} [${lo},${hi}]`
       row.appendChild(cell)
     }
-    for(let gi=theta.length; gi<maxGenes; gi++){ let c=document.createElement('div'); c.className="heat-cell"; c.style.background="#1a2744"; row.appendChild(c)}
+    for(let gi=theta.length; gi<10; gi++){ let c=document.createElement('div'); c.className="heat-cell"; c.style.background="#1a2744"; row.appendChild(c)}
     cont.appendChild(row)
   }
   if(valsEl && hall[0]&&hall[0].theta){
@@ -1403,13 +1402,11 @@ function drawIslands(state){
   }
   tbl.innerHTML=html
   if(log){
-    const migrationInterval=state.config?.migration_interval??5
-    const header=`migration follows configured island order; interval ${migrationInterval} gens; global shuffle every ${migrationInterval*3}`
     if(state.migration_history && state.migration_history.length){
       let rows=state.migration_history.slice(-8)
-      log.innerHTML = header+"<br>"+rows.map(m=>`gen ${m.generation}: ${JSON.stringify(m.migrant_ids||m)}`).join("<br>")
+      log.innerHTML = rows.map(m=>`gen ${m.generation}: ${JSON.stringify(m.migrant_ids||m)}`).join("<br>")
     } else {
-      log.textContent = `${header}; first migration at gen ${migrationInterval}`
+      log.textContent = ""
     }
   }
   const bars = document.getElementById('hallIslandBars')
@@ -1446,14 +1443,11 @@ function updateKVs(state){
     if(tText) tText.textContent = prog.toFixed(1)+"% ("+(state.global_generation||0)+"/"+(state.total_generations||"—")+")";
   }
   let cuda=state.cuda||{}
-  let cudaTxt = cuda.has_cupy? `CuPy ${cuda.cupy_version||""} detected · GA CPU` : (cuda.has_numba? `Numba ${cuda.numba_version||""} detected · GA CPU` : "CPU NumPy · GA evaluation")
-  document.getElementById('cudaBadge').textContent = cudaTxt
+  let cudaTxt = cuda.has_cupy? `CUDA ${cuda.cupy_version||""}` : (cuda.has_numba? `Numba ${cuda.numba_cuda_available?"CUDA":""}` : "CPU")
+  document.getElementById('cudaBadge').textContent = cudaTxt.trim()
   document.getElementById('migrBadge').textContent = `миграций: ${state.migration_history?.length || 0}`
-  let geneDims = (state.hall_of_fame||[]).map(h=>h.theta?.length||0).filter(n=>n>0)
-  let maxGeneDim = geneDims.length ? Math.max(...geneDims) : null
-  document.getElementById('freqBadge').textContent = maxGeneDim
-    ? `${maxGeneDim}-component genome · frequency profile configured separately`
-    : "frequency profile configured separately from genome"
+  let vf = state.hall_of_fame?.some(h=>h.theta?.length===10)
+  document.getElementById('freqBadge').textContent = vf? "10 генов" : "8 генов"
   const activeTrap = state.trap || setupTrapData
   if(activeTrap){
     document.getElementById('trapBadge').textContent = `${activeTrap.filename || activeTrap.kind} · ${activeTrap.electrodes?.length||0}`

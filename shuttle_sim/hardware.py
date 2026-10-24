@@ -42,13 +42,10 @@ class Hardware:
         self.validate(c.shape[1])
         clipped = (c<self.dac_min_V)|(c>self.dac_max_V)
         if clipped.any():
-            excess=max(float(np.max(self.dac_min_V-c)),float(np.max(c-self.dac_max_V)),0.0)
-            span=max(self.dac_max_V-self.dac_min_V,np.finfo(float).eps)
-            raise Rejected('hardware_saturation','DAC range exceeded',violation=excess/span)
+            raise Rejected('hardware_saturation','DAC range exceeded')
         jumps = float(np.max(np.abs(np.diff(c,axis=0))))
         if jumps>self.max_jump_V:
-            raise Rejected('slew_limit',f'max jump {jumps:g} V',
-                           violation=(jumps-self.max_jump_V)/self.max_jump_V)
+            raise Rejected('slew_limit',f'max jump {jumps:g} V')
         lsb = (self.dac_max_V-self.dac_min_V)/(2**self.dac_bits-1)
         codes = np.rint((c-self.dac_min_V)/lsb).astype(np.int64)
         quantized = self.dac_min_V+codes*lsb

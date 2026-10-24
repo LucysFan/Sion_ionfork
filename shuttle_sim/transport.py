@@ -60,7 +60,7 @@ class TransportTask:
         target = start + distance * direction
         corridor = float(cfg.get("corridor_halfwidth_m", 20e-6))
         # Support both canonical and alias keys (hold_scan_s at cfg root vs task, durations_scan_s alias)
-        hold_scan = list(cfg.get("hold_scan_s", [hold]))
+        hold_scan = list(cfg.get("hold_scan_s", cfg.get("hold_scan_s", [hold])))
         # alias durations_scan_s used in configs (task holds durations_scan_s), canonical durations_s also supported
         if "durations_scan_s" in cfg:
             durations_src = cfg["durations_scan_s"]
@@ -90,11 +90,8 @@ class TransportTask:
             raise ValueError("start/target must be 3-vector")
         if abs(np.linalg.norm(self.direction) - 1) > 1e-9:
             raise ValueError("direction must be unit")
-        finite([self.distance_m, self.duration_s, self.min_frequency_hz,
-                self.corridor_halfwidth_m], "transport-task scales")
-        if (self.distance_m <= 0 or self.duration_s <= 0 or self.min_frequency_hz <= 0
-                or self.corridor_halfwidth_m <= 0):
-            raise ValueError("positive distance/duration/frequency/corridor required")
+        if self.distance_m <= 0 or self.duration_s <= 0 or self.min_frequency_hz <= 0:
+            raise ValueError("positive distance/duration/frequency required")
         if self.protocol not in ("one_way", "round_trip", "repeated"):
             raise ValueError("unknown protocol")
         if self.cycles < 1:

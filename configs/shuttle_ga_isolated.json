@@ -69,7 +69,7 @@
     "migration_interval": 5,
     "n_migrants": 2,
     "hall_size": 10,
-    "hall_diversity_min_waveform_rms": 0.02,
+    "hall_diversity_min_distance": 0.12,
     "seed": 42,
     "island_top_percent": 0.03,
     "trap_traj_decimate": 80,

@@ -12,7 +12,7 @@
 | Layer | Module | Key Entry |
 |---|---|---|
 | 1 Field model | `shuttle_sim/field.py` – `SionTrap` + `load_trap()` | `basis()`, `rf()`, `local()`, `invert()` |
-| 2 Control synthesis | `shuttle_sim/control.py` | `Runner.commands()` uses time warp + corrective voltage basis; frequency profile comes from task settings; `VoltageKnotParameterization` is a standalone helper |
+| 2 Control synthesis | `shuttle_sim/control.py` | `TrajectoryParameterization`, `FrequencyProfile` (fixed/variable), `VoltageKnotParameterization`, `CorrectiveBasis` |
 | 3 Voltage inversion | `shuttle_sim/voltage.py` + `SionTrap.invert()` | hard 3D force balance + axial curvature, bounds, regularization, null-space, feasibility check |
 | 4 Hardware execution | `shuttle_sim/hardware.py` – `Hardware` | DAC quantisation, ZOH, exact RC cascade (expm), gain/offset, delay/skew, slew clipping |
 | 5 Dynamics validation | `shuttle_sim/dynamics.py` | `propagate()` exact piecewise affine vs DOP853, Gaussian covariance, `validate_full_field_centroid()` non-linear |
@@ -20,7 +20,7 @@
 | 7 Calibration / identification | `shuttle_sim/calibration.py` | `Calibration.identify_from_residuals()`, `identify_filter()`, `update_model()` |
 | 8 Closed-loop | `shuttle_sim/closed_loop.py` | `ClosedLoopRefiner.optimize()` – 8-dim, safety-gated, budgeted, history |
 
-The modules are separate files, but they are not separate services: `Runner` calls the synthesis, delivery, dynamics, robust evaluation, calibration, and closed-loop steps sequentially in the same process. The dashboard HTTP server may be run separately; it is a viewer/control interface, not a worker that distributes the physical pipeline.
+All layers are **separate files** with explicit imports – not a single opaque notebook cell.
 
 ### TrapAdapter (spec §4)
 
@@ -42,12 +42,12 @@ Convention documented in `path_conventions.json`.
 
 ### Parameterizations (spec §5)
 
-1. **Trajectory-based**: `control.TrajectoryParameterization` describes a polynomial time-warp on the `16s²(1-s)²` envelope; `Runner.commands()` builds the same form inline and preserves endpoint position and slope.
-2. **Frequency / confinement**: `control.FrequencyProfile` – fixed or variable profile, configured separately through `task.frequency_mode` and `task.frequency_coeffs`; the summed modulation in `Runner.prepare()` is clipped to ±18% of the base frequency. Frequency coefficients are not GA genes.
-3. **Voltage knot**: `control.VoltageKnotParameterization` – CubicSpline knots at decimated route nodes; available as a helper, but not used by `Runner.commands()`.
-4. **Corrective basis**: `control.CorrectiveBasis` – used by `Runner.commands()` for 6/8/10 voltage-correction coefficients (3/4/5 envelopes × 2 SVD modes); with two time-warp coefficients this gives GA genome dimensions 8/10/12. The closed-loop optimizer remains fixed at 8 parameters (spec §12).
+1. **Trajectory-based**: `control.TrajectoryParameterization` – polynomial time-warp on `16s²(1-s)²` envelope, preserves boundary v=a=0.
+2. **Frequency / confinement**: `control.FrequencyProfile` – `fixed` (constant `omega0`) vs `variable` (`omega(s)=omega0·(1+ a·env + b·env·(2s-1))`). Pipeline `prepare()` switches on `task.frequency_mode`.
+3. **Voltage knot**: `control.VoltageKnotParameterization` – CubicSpline knots at decimated route nodes.
+4. **Corrective basis**: `control.CorrectiveBasis` – `theta[0:2]` time-warp + `theta[2:8]` 3 envelopes × 2 SVD geometry modes (top-2 modes of `route_V`). This is the **low-dim (8)** closed-loop space (spec §12).
 
-`pipeline.Runner.commands()` uses (1)+(4) plus baseline choice `smooth` (`10s³-15s⁴+6s⁵`) or `sta` (`35s⁴-84s⁵+70s⁶-20s⁷`). For a warped time law `σ(s)`, the STA acceleration term differentiates the composition: `[P''(σ)(σ')² + P'(σ)σ'']/(Tω₀)²`.
+`pipeline.Runner.commands()` uses (1)+(4) plus baseline choice `smooth` (10s³-15s⁴+6s⁵) vs `sta` (35s⁴-84s⁵+70s⁶-20s⁷ + s''/(Tω)²).
 
 ### Voltage Inversion (spec §5)
 
@@ -83,9 +83,9 @@ Convention documented in `path_conventions.json`.
 
 ### Objective & Metrics (spec §8)
 
-`Runner.optimize()` evaluates the nominal case and, only when `robust=True`, the configured training scenarios. For standard weights `w_n=w_pos=w_well=1`, `w_lag=0`, each scenario score is `ℓ_j = log1p(n_j/n0) + log1p((e_pos,j/tol)²) + log1p((e_well,j/tol)²)`, where `n0=task.max_n_total` and `tol=task.position_tolerance_m`. The objective is `0.35·mean_j(ℓ_j) + 0.65·max_j(ℓ_j) + λ·mean_i[((θ_i−c_i)/s_i)²]`; `s_i` is half the allowed range of coefficient `i`, `c_i` its center, and `λ=1e-4` by default. The weights come from `loss_weights` (defaults `{n:1,pos:1,well:1,lag:0}`); the older `rerank_weights` key is only a compatibility fallback. A lag term is included only when explicitly weighted and a valid path metric exists. Rejected evaluations use `rejection_penalty()` rather than the smooth objective. Metrics include `n_total`, `n_modes`, `coherent`, `covariance_n`, `position_error_m`, `well_target_error_m`, `max_transport_error_m` (`is_max_transport_error_fallback` marks whether it is a true path maximum rather than an endpoint fallback), `phase_space_displacement`, and `minimum_frequency_hz`.
+`optimize()` loss: `log1p(n/n0)+log1p((pos/tol)²)+log1p((well/tol)²)` aggregated `0.35·mean+0.65·max` + `1e-4·||theta||²` (P1/B1 unified, weights `rerank_weights` default `{n:1,pos:1,well:1}`). Metrics saved: `n_total`, `n_modes`, `coherent`, `covariance_n`, `position_error_m`, `well_target_error_m`, `max_transport_error_m` (`is_max_transport_error_fallback` flag, P2 — max over trajectory vs well/nominal, not just final error), `phase_space_displacement`, `minimum_frequency_hz`.
 
-Candidate reranking in `Runner.run()` evaluates four candidates (zero `sta`, zero `smooth`, and the `unaware`/`aware` optimized `sta` candidates) on the same `exact_nodes` and `subdivisions`, using the same weighted loss plus normalized control penalty. Scores are ordered by a `1e-9` rounded key, with the `sta` baseline preferred for tied keys and position error as the next key. If every candidate receives a rejection penalty, the run fails with `all_candidates_rejected`. `optimization_improved_over_baseline` is reported separately from the selected candidate.
+Candidate reranking (B2/P3): all baselines (`sta`+`smooth` zeros + `unaware`+`aware` optimized) evaluated on **identical** `exact_nodes`/`subdivisions` with same normalized `log1p` score; tie `eps 1e-9` prefers `sta` (lexicographic). Flag `optimization_improved_over_baseline` computed honestly from `rerank_full`.
 
 Aggregation policies in `observables.aggregate_losses()`: `weighted_worst`, `worst_case`, `mean`, `cvar_20`.
 
@@ -93,16 +93,16 @@ Hierarchy (spec §8): `safety` → `confinement` → `hardware realizability` �
 
 ### Robust (spec §10)
 
-`Runner.scenarios()` perturbs `gain (log)`, `offset`, `delay (uniform)`, `lowpass (log)`, `stray (3D)`, and `frequency_scale (log)` from a seeded, declared distribution. `Runner.robust()` reports `mean_n`, `worst_n`, `cvar_20pct_n`, and `pass_fraction` (the fraction with `accepted=true`). `all_scenarios_valid` instead indicates that every scenario returned metrics; `worst_n` and CVaR are withheld if a scenario calculation failed. These are simulated uncertainty scenarios, not a measured apparatus distribution.
+`Runner.scenarios()` perturbs `gain (log)`, `offset`, `delay (uniform)`, `lowpass (log)`, `stray (3D)`, `frequency_scale (log)` seeded RNG. Reports `mean_n`, `worst_n`, `cvar_20pct_n`, `pass_fraction` (all must be `accepted`).
 
 ### Calibration (spec §9–10)
 
-`Calibration` is **separate** from the closed-loop optimizer:
-- `identify_from_residuals(dataset)` fits affine `meas ≈ gain·cmd+offset` per channel; `identify_filter(step)` can estimate a time constant from a supplied step response.
-- An empty dataset returns provenance `blocked_by_missing_external_data` and failure code `missing_external_data`; it does not fabricate an estimate.
-- In `Runner.run()`, the calibration demonstration generates three command/delivery pairs from a declared synthetic hardware model (`gain=1.02`, `offset=0.015 V`, `delay=5 ns`). The residual fit identifies gain and offset only; filter poles and delay are retained, not estimated. It then separately resynthesizes and safety-checks with the updated model. `calibration_demo.json`, `calibration_resynthesis.json`, and `calibration_blocked.json` record these paths. This is a code-path demonstration, not experimental calibration.
+`Calibration` is **separate** from closed-loop optimizer:
+- `identify_from_residuals(dataset)` – affine fit `meas ≈ gain·cmd+offset` per channel; `identify_filter(step)` – tau from step response.
+- Dataset must be provided; empty → `blocked_by_missing_external_data` (no fake solution).
+- `update_model(result)` returns new `Hardware`; pipeline demo after identification re-evaluates with updated hardware and saves `calibration_demo.json` + `calibration_blocked.json` showing both paths.
 
-The closed-loop demonstration is a separate emulated run using perturbed hardware as its synthetic measurement truth; it is not a refinement that consumes the calibration result. The repository does not execute the combined sequence on a real apparatus.
+Sequence (spec §10): `identification → update_model → resynthesis → optional closed-loop fine-tuning` – implemented in pipeline (synthetic demo: identification on 3 thetas, then closed-loop uses perturbed truth).
 
 ### Observables (spec §10)
 
@@ -113,21 +113,23 @@ The closed-loop demonstration is a separate emulated run using perturbed hardwar
 
 ### Closed-Loop (spec §11)
 
-`ClosedLoopRefiner` is constructed with the `Runner`, `SafetyLayer`, and task; `optimize(measure_fn, initial_theta, bounds=None, budget=...)` accepts exactly eight coefficients. `measure_fn(theta)` returns a dictionary containing at least `loss` and optionally `observables`. In `Runner.run()`, the demonstration emulates measurements by evaluating a declared perturbed `Hardware`; no apparatus is called. Powell search uses bounds `(-0.1,0.1) ×2 + (-0.4,0.4)×6` by default. Safety is checked before each authorized measurement; a safety-rejected candidate does not consume the measurement budget, and the full history is logged. High-dimensional input is rejected before measurement (tested).
+`ClosedLoopRefiner`:
+- input: `theta` (8-dim) + `Hardware` + `measure_fn`
+- `measure_fn(theta)->{loss, observables}` – in production would call apparatus; in repo an **emulated** version uses perturbed `Hardware` (declared provenance, not fake).
+- `optimize()` – Powell, `budget_evaluations`, bounds `(-0.1,0.1) ×2 + (-0.4,0.4)×6`, safety gating via `SafetyLayer`, full history logged, high-dim insertion rejected (tested).
 
 ### Safety (spec §13)
 
-`SafetyLayer` applies a fail-closed gate before closed-loop measurements and the final simulation-only authorization decision:
-- delivered-voltage bounds (`trap.lo/hi`), command slew (`hw.max_jump_V`), local-minimum existence, frequency floor, and finite numerics;
-- filter-intent check compares `max_deviation_V` with the first configured key among `distortion_threshold_V`, `max_distortion_V`, and `distortion_threshold` (default 0.25 V). Exceeding it returns `delivered_intent_violated`. `Runner.run()` can attempt a limited resynthesis and repeats the safety check; failure remains blocked. This hard threshold is not applied as a separate per-genome filter in the main GA loop; strategy H instead has a soft RMS-distortion term. The repository still sets physical `export_authorized=false`. `fallback_state.json` holds the last modeled safe state when one is available.
+`SafetyLayer` checks before export:
+- voltage bounds (`trap.lo/hi`), slew (`hw.max_jump_V`), clipping, filter deviation, `trap.local` existence, `weak_confinement` (frequency floor), numerics (`finite`). Returns `SafetyReport(passed, checks, failure_code)`. `fallback_state.json` holds last known safe `theta=0`.
 
 ### Failure Classification (spec §14)
 
-Observed rejection, quality, and run-status labels include `no_minimum`, `weak_confinement`, `infeasible_voltages`, `hardware_saturation`, `slew_limit`, `route_corridor`, `corridor_violation`, `rom_trust_region`, `delivered_intent_violated`, `excessive_excitation`, `transport_accuracy`, `well_target_accuracy`, `numerical_failure`, `all_candidates_rejected`, `calibration_inconsistency`, `missing_external_data`, `integrity_failure`, and `optimizer_budget_exhaustion_or_stagnation`. These are not all `field.Rejected` exceptions: some are quality flags or report statuses, and the run records them with the relevant metrics.
+`field.Rejected` codes: `no_minimum`, `weak_confinement`, `infeasible_voltages`, `hardware_saturation`, `slew_limit`, `route_corridor`, `rom_trust_region`, `excessive_excitation`, `transport_accuracy`, `well_target_accuracy`, `numerical_failure`, `optimizer_budget_exhaustion`, `calibration_inconsistency`, `missing_external_data`, `integrity_failure`, etc. – all logged, not just traceback.
 
 ### Reproducibility (spec §15–16)
 
-Key artifacts from a full `Runner.run()` (`output/*`; conditional branches may add further files):
+Artifacts per run (`output/*`):
 - `config.json` (machine-readable)
 - `trap_snapshot.json`, `route_diagnostics.json`, `transport_task.json`, `path_conventions.json`
 - `ideal_waveform.csv`, `dac_waveform.csv`, `delivered_waveform.csv`, `delivered_path.csv`, `delivered_local_diagnostics.json`
@@ -140,17 +142,16 @@ Key artifacts from a full `Runner.run()` (`output/*`; conditional branches may a
 - `waveform_metadata.json` (channel_order, sample_period, units, hw_identifier, SHA256, safety, closed_loop dim)
 - `manifest.json` (package, python/numpy/scipy versions, platform, elapsed, input SHA256, source SHA256 per file)
 
-Scenario generation uses `uncertainty.seed`; synthetic raw-count generation uses the separate `synthetic_measurement_seed` and `synthetic_measurement_shots` settings. The synthetic calibration and closed-loop perturbations are declared in code and their provenance is written to artifacts.
+Seeds fixed (`uncertainty.seed`).
 
 ### Evidence (spec §17)
 
-A full `Runner.run()` records, for the single configuration selected for that run:
-1. zero-parameter `smooth` and `sta` open-loop comparisons;
-2. unaware/aware search candidates and a hardware-delivered selected waveform;
-3. independent integrator and refined-grid validation;
-4. the configured held-out robust ensemble (default count 8; mean, worst, CVaR, and pass fraction);
-5. an eight-parameter emulated closed-loop attempt with history and a dimension-rejection check;
-6. the selected transport protocol and geometry, recorded in `transport_task.json` and `trap_snapshot.json`.
-
-One-way, round-trip, repeated-cycle, five-wire, and GDS examples are separate configurations/runs; no individual run silently covers every protocol or geometry. The output contains the per-run artifacts listed above and in the manifest.
+Every run shows:
+1. nominal open-loop (zero theta smooth/sta)
+2. hardware-aware waveform (delivered)
+3. independent validation (exact vs dop853, refined)
+4. robust ensemble (6–8 scenarios, mean/worst/CVaR)
+5. closed-loop-ready low-dim (8) + history
+6. complete round-trip (reference) + one-way/repeated/gds runs
+7. saved artifacts reproducible.
 

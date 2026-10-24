@@ -44,9 +44,7 @@ def synthesize_raw_sideband_measurement(sim_metrics: dict, n_shots: int = 200, r
     n_modes = np.asarray(sim_metrics.get("n_modes", [n_total]))
     t_probe = np.linspace(0, 80e-6, 20)
     omega_0 = 2 * np.pi * 5e3
-    raw = {"t_probe_s": t_probe.tolist(), "n_shots": int(n_shots),
-           "random_seed": int(rng_seed), "is_synthetic": True,
-           "provenance": "synthesized from sim n_total via thermal sideband model; experiment would provide measured counts"}
+    raw = {"t_probe_s": t_probe.tolist(), "n_shots": int(n_shots), "provenance": "synthesized from sim n_total via thermal sideband model; experiment would provide measured counts"}
     traces = []
     for i, n in enumerate(n_modes):
         omega_n = omega_0 * np.sqrt(max(n, 0) + 1)
@@ -104,15 +102,10 @@ def infer_observables_from_raw(raw_measurement: dict) -> dict:
         "well_target_error_m": 0.0,
     }
     pseudo_metrics["_true_n_total"] = float(raw_measurement.get("true_n_total", n_total_est))
-    observables = observables_from_simulation(pseudo_metrics)
-    observables["input_is_synthetic"] = bool(raw_measurement.get("is_synthetic", False))
-    observables["input_random_seed"] = raw_measurement.get("random_seed")
-    observables["input_provenance"] = raw_measurement.get("provenance", "unlabeled raw counts")
-    return observables
+    return observables_from_simulation(pseudo_metrics)
 
 def raw_to_observables_chain(sim_metrics: dict, task: dict, include_raw: bool = True,
-                             weights=None, n_shots: int = 200,
-                             rng_seed: int = 0) -> dict:
+                             weights=None) -> dict:
     """Full chain raw→observable→loss with honest raw synthesis step.
 
     When hardware is not attached, we synthesize raw via synthesize_raw_sideband_measurement
@@ -120,8 +113,7 @@ def raw_to_observables_chain(sim_metrics: dict, task: dict, include_raw: bool = 
     In a real experiment raw_measurement would be provided externally and synthesis blocked.
     """
     if include_raw:
-        raw = synthesize_raw_sideband_measurement(
-            sim_metrics, n_shots=n_shots, rng_seed=rng_seed)
+        raw = synthesize_raw_sideband_measurement(sim_metrics)
         obs_via_raw = infer_observables_from_raw(raw)
         raw_metrics = {
             **obs_via_raw,

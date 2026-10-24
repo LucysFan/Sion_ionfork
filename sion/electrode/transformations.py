@@ -199,8 +199,7 @@ from __future__ import division, print_function
 import math
 
 from numpy import (identity, array, dot, outer, trace, float64, where, real,
-    diag, allclose, sum as np_sum, cos, sin, roll, cross, finfo,
-    any as np_any, clip, fabs, arccos)
+    diag, allclose, sum as np_sum, cos, sin, roll, cross, finfo)
 from numpy.linalg import eig, det, inv, svd, pinv, eigh
 from numpy.random import random as random_random, rand as random_rand, normal as random_normal
 # namespace so code can keep using numpy.xxx, numpy.linalg.xxx, numpy.random.xxx
@@ -211,7 +210,6 @@ numpy.identity, numpy.array, numpy.dot, numpy.outer = identity, array, dot, oute
 numpy.trace, numpy.float64, numpy.where, numpy.real = trace, float64, where, real
 numpy.diag, numpy.allclose, numpy.sum, numpy.cos = diag, allclose, np_sum, cos
 numpy.sin, numpy.roll, numpy.cross, numpy.finfo = sin, roll, cross, finfo
-numpy.any, numpy.clip, numpy.fabs, numpy.arccos = np_any, clip, fabs, arccos
 class _Numpy_linalg:
     pass
 numpy_linalg = _Numpy_linalg()
@@ -1854,16 +1852,11 @@ def angle_between_vectors(v0, v1, directed=True, axis=0):
     True
 
     """
-    v0 = numpy.array(v0, dtype=numpy.float64)
-    v1 = numpy.array(v1, dtype=numpy.float64)
-    denominator = vector_norm(v0, axis=axis) * vector_norm(v1, axis=axis)
-    if numpy.any(denominator <= numpy.finfo(numpy.float64).eps):
-        raise ValueError('angle is undefined for a zero-length vector')
-    cosine = numpy.sum(v0 * v1, axis=axis) / denominator
-    cosine = numpy.clip(cosine, -1.0, 1.0)
-    if not directed:
-        cosine = numpy.clip(numpy.fabs(cosine), 0.0, 1.0)
-    return numpy.arccos(cosine)
+    v0 = numpy.array(v0, dtype=numpy.float64, copy=False)
+    v1 = numpy.array(v1, dtype=numpy.float64, copy=False)
+    dot = numpy.sum(v0 * v1, axis=axis)
+    dot /= vector_norm(v0, axis=axis) * vector_norm(v1, axis=axis)
+    return numpy.arccos(dot if directed else numpy.fabs(dot))
 
 
 def inverse_matrix(matrix):

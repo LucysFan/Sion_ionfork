@@ -271,10 +271,17 @@ class Simulation(list):
         mpiexec = mpi_cfg.get('executable')
         num_procs = mpi_cfg.get('processes', 4)
         if use_mpi and mpiexec:
-            return [mpiexec, '-n', str(num_procs), *lammps_args]
+            cmd_parts = [
+                f'"{mpiexec}"' if ' ' in mpiexec else mpiexec,
+                '-n', str(num_procs),
+                f'"{self.attrs["executable"]}"' if ' ' in self.attrs['executable'] else self.attrs['executable'],
+                '-log', self.attrs['name'] + '.lmp.log',
+                '-in', self.attrs['name'] + '.lammps',
+            ]
+            return ' '.join(cmd_parts)
         if use_mpi and not mpiexec:
             print('[!] mpi enabled but mpiexec not found, running single process')
-        return lammps_args
+        return ' '.join(lammps_args)
 
     @save_atttributes_and_files
     def execute(self, mpi_processes=None, omp_threads=None):
@@ -309,12 +316,14 @@ class Simulation(list):
         signal.signal(signal.SIGINT, signal_handler)
 
         cmd = self._build_command()
-        # Pass executable and arguments separately: paths with spaces remain
-        # safe and no command shell interprets user-supplied paths or options.
+        # SION mod: subprocess gives reliable line-by-line streaming for lmp.exe
+        # and mpiexec on Windows.
+        # Popen + PIPE gives reliable line-by-line streaming; shell=True keeps mpiexec command strings.
         child = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
+            shell=True,
             text=True,
             bufsize=1,
         )

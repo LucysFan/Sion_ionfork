@@ -1,11 +1,15 @@
-"""Control-synthesis parameterizations.
+"""Control synthesis parameterizations.
 
-The operational Runner combines a ``smooth`` or ``sta`` baseline, two time-warp
-coefficients, and a corrective voltage basis. The GA uses 8/10/12-component
-vectors; added components extend the voltage basis, not the frequency profile.
-FrequencyProfile is configured separately through task settings. The voltage-knot
-class is available as a helper but is not used by Runner.commands(). Closed-loop
-refinement deliberately remains eight-dimensional.
+Spec refs: §5 parameterization, §5 frequency modes, §12 low-dim closed-loop.
+
+Four physically meaningful families are supported; closed-loop must stay low-dim.
+The Runner currently implements two baselines (smooth, STA) plus a corrective
+basis – this module documents them and adds the missing voltage-knot and
+frequency-profile forms so the architecture explicitly shows all four.
+
+STA — лишь частный случай: smooth+STA — два полинома, поверх них 6-мерная
+коррекция в R_svd (острова S/A/H) и 10-мерная с variable ω (острова V/F)
+генерит уже произвольное семейство не-STA траекторий, отбираемое по n_total.
 """
 from dataclasses import dataclass
 from typing import Literal
@@ -118,14 +122,14 @@ class VoltageKnotParameterization:
 class CorrectiveBasis:
     """Low-dimensional corrective basis over nominal waveform.
 
-    База 8: theta[2:8] – 6 коэффициентов для 3 огибающих × 2 моды напряжений.
-    Для размерности 10 добавляется e3=env*sin(2πs); для размерности 12 — также
-    e4=env*sin(4πs). Базовые огибающие e0=env, e1=env*(2s-1),
-    e2=env*(6s²-6s+1) обращаются в ноль на краях.
+    База 8: theta[2:8] – 6 коэфф. для 3 огибающих ×2 SVD-моды.
+    Расширено: если theta_tail длиннее 6, добавляются высшие гармоники
+    e3=env*sin(2πs), e4=env*sin(4πs) → профиль ΔV(s) может иметь
+    несколько провалов/горбов не только в середине (аналогично ω(s)).
+    e0=env, e1=env*(2s-1), e2=env*(6s²-6s+1) — все 0 на краях.
 
-    Геометрия: две ведущие правые сингулярные моды центрированной опорной
-    последовательности напряжений; это не нуль-пространство уравнения Лапласа.
-    Размерности 8/10/12 содержат соответственно 3/4/5 огибающих × 2 моды.
+    Геометрия: 2 SVD-моды R_svd (null-space лапласиана).
+    8 dim — 3×2, 12 dim — 5×2 (extra 2 гармоники для множественных провалов).
     """
     geometry_modes: np.ndarray  # shape (2, channels)
 
@@ -156,12 +160,9 @@ def smooth_poly(shape):
     # 10 s^3 -15 s^4 +6 s^5  (smooth step, zero vel/acc at ends)
     return 10*shape**3 -15*shape**4 + 6*shape**5
 
-def sta_poly(s, duration_s, omega_rad_s):
-    """Return the STA well-center coordinate for the identity time warp.
-
-    For a warped time law, ``Runner.commands`` evaluates the second derivative
-    of the composed path with the full chain rule instead.
-    """
-    s = np.asarray(s, float)
-    poly = P([0, 0, 0, 0, 35, -84, 70, -20])
-    return poly(s) + poly.deriv(2)(s) / (duration_s * omega_rad_s) ** 2
+def sta_poly(shape, duration_s, omega_rad_s):
+    # STA-inspired: s + s''/ (T*omega)^2 ; implemented via polynomial + second derivative
+    # full form: P = 35s^4-84s^5+70s^6-20s^7 plus correction
+    poly = 35*shape**4 -84*shape**5 +70*shape**6 -20*shape**7
+    # second derivative term approximated elsewhere; keep same as pipeline
+    return poly

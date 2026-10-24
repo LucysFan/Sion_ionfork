@@ -6,21 +6,9 @@ from scipy.optimize import least_squares, minimize
 
 
 class Rejected(RuntimeError):
-    """Expected physical or numerical rejection, with an optional scaled margin."""
-    def __init__(self, code, message, violation=None):
+    def __init__(self, code, message):
         self.code = code
-        self.violation = None if violation is None else float(violation)
-        if self.violation is not None and (not np.isfinite(self.violation) or self.violation < 0):
-            raise ValueError('rejection violation must be finite and non-negative')
         super().__init__(f'{code}: {message}')
-
-
-def rejection_penalty(error, base=1e6, scale=1e3):
-    """Fail-closed optimization value that preserves measured constraint margin."""
-    violation = getattr(error, 'violation', None)
-    if violation is None or not np.isfinite(violation) or violation < 0:
-        return float(base)
-    return float(base + scale * min(float(violation), 1e6))
 
 
 def finite(value, name):
@@ -99,21 +87,16 @@ class SionTrap:
             return self.energy_derivative(y*self.L, voltage_V, 2)*self.L**2/self.q
         y0 = seed/self.L
         if y0[2] <= .01:
-            raise Rejected('no_minimum', 'seed below surface',
-                           violation=max(0.0, .01-float(y0[2]))/.01)
+            raise Rejected('no_minimum', 'seed below surface')
         sol = least_squares(lambda y:1e4*fun(y), y0, jac=lambda y:1e4*jac(y), bounds=([-np.inf,-np.inf,.01], [np.inf]*3),
                             xtol=1e-12, ftol=1e-12, gtol=1e-12, max_nfev=100)
         r = sol.x*self.L
         H = self.energy_derivative(r, voltage_V, 2)
         eig, modes = np.linalg.eigh(H/self.mass)
-        residual = float(np.linalg.norm(fun(sol.x)))
-        if not sol.success or residual > 1e-8:
-            raise Rejected('no_minimum', sol.message,
-                           violation=max(0.0, residual/1e-8-1.0))
+        if not sol.success or np.linalg.norm(fun(sol.x)) > 1e-8:
+            raise Rejected('no_minimum', sol.message)
         if eig.min() <= 0:
-            scale=max(float(np.max(np.abs(eig))),np.finfo(float).eps)
-            raise Rejected('weak_confinement', 'nonpositive curvature',
-                           violation=max(0.0, -float(eig.min())/scale))
+            raise Rejected('weak_confinement', 'nonpositive curvature')
         return Local(r, H, np.sqrt(eig), modes)
 
     def invert(self, target_m, axial_direction, axial_omega_rad_s, previous_V, regularization=1e-4):
@@ -140,15 +123,11 @@ class SionTrap:
                        constraints=[{'type':'eq','fun':lambda v:A@v-b,'jac':lambda v:A}],
                        bounds=list(zip(self.lo,self.hi)),method='SLSQP',
                        options={'ftol':1e-11,'maxiter':150})
-        residual = float(np.max(np.abs(A@res.x-b)))
-        if not res.success or residual > 1e-6:
-            raise Rejected('infeasible_voltages', res.message,
-                           violation=max(0.0, residual/1e-6-1.0))
+        if not res.success or np.max(np.abs(A@res.x-b)) > 1e-6:
+            raise Rejected('infeasible_voltages', res.message)
         local = self.local(res.x,r)
-        position_error=float(np.linalg.norm(local.position_m-r))
-        if position_error > 5e-9:
-            raise Rejected('infeasible_voltages','minimum misses target',
-                           violation=(position_error-5e-9)/5e-9)
+        if np.linalg.norm(local.position_m-r) > 5e-9:
+            raise Rejected('infeasible_voltages','minimum misses target')
         return res.x, local
 
 
