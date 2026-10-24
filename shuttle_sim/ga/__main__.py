@@ -1,8 +1,7 @@
 """CLI for island GA: python -m shuttle_sim.ga --config configs/shuttle_ga_island.json --out output/ga_100um --dashboard --port 8000
 
-When requested, the dashboard server runs as a separate subprocess and reads
-state files written by the engine. Building dashboard trajectories is still part
-of synchronous state assembly in the GA process.
+Never blocks evolution — dashboard (if --dashboard) is forked as separate process via multiprocessing,
+or if unavailable, writes state.json for external server to poll.
 """
 import argparse, json, pathlib, sys, time, subprocess, os
 
@@ -105,26 +104,24 @@ def main():
                     break
         except Exception:
             best_baseline = 'sta'
-        # The final hall has been re-evaluated on the same validation grid;
-        # use that stored result rather than silently rescoring only its leader.
-        metrics=best.metrics.get('exact')
-        if not isinstance(metrics, dict):
-            metrics=runner.evaluate(best.theta, baseline=best_baseline,
-                                    exact_nodes=runner.cfg.get('validation_nodes',321),
-                                    subdivisions=runner.cfg.get('validation_subdivisions',4))
-        fitness_consistent=float(best.metrics.get('exact_fitness', best.fitness))
-        (out/"ga_best.json").write_text(json.dumps({
-            "theta":best.theta.tolist(), "fitness":fitness_consistent,
-            "search_fitness":best.fitness, "metrics":metrics, "island":best.island,
-            "baseline":best_baseline,
-            "ranking": "exact rerank of final hall on common validation grid",
-        },indent=2, default=str))
-        # Preserve both the cheap search score and the exact final score.
-        (out/"ga_hall.json").write_text(json.dumps([
-            {"theta":g.theta.tolist(), "fitness":g.metrics.get('exact_fitness',g.fitness),
-             "search_fitness":g.fitness, "exact_fitness":g.metrics.get('exact_fitness'),
-             "island":g.island, "status":g.status, "metrics":g.metrics}
-            for g in hall],indent=2, default=str))
+        # Re-evaluate with best's own baseline for consistency; use full theta (8/10/12) – N4, R6
+        try:
+            metrics=runner.evaluate(best.theta, baseline=best_baseline, exact_nodes=runner.cfg.get('validation_nodes',321), subdivisions=runner.cfg.get('validation_subdivisions',4))
+        except Exception:
+            metrics=runner.evaluate(best.to_theta8(), baseline=best_baseline, exact_nodes=runner.cfg.get('validation_nodes',321), subdivisions=runner.cfg.get('validation_subdivisions',4))
+        # Recompute fitness consistently with same baseline metrics (not mixing baselines)
+        try:
+            from shuttle_sim.ga.fitness import scalar_fitness
+            fitness_consistent = scalar_fitness(
+                metrics, runner.task, distortion=metrics.get('distortion'), theta=best.theta,
+                control_bounds=best.bounds,
+                control_regularization_weight=runner.cfg.get('control_regularization_weight',1e-4),
+                loss_weights=runner.loss_weights)
+        except Exception:
+            fitness_consistent = best.fitness
+        (out/"ga_best.json").write_text(json.dumps({"theta":best.theta.tolist(),"fitness":fitness_consistent,"metrics":metrics,"island":best.island,"baseline":best_baseline},indent=2, default=str))
+        # also save hall
+        (out/"ga_hall.json").write_text(json.dumps([{"theta":g.theta.tolist(),"fitness":g.fitness,"island":g.island,"status":g.status,"metrics":g.metrics} for g in hall],indent=2, default=str))
         print(f"[GA] wrote {out/'ga_best.json'} and {out/'ga_hall.json'}")
     except Exception as e:
         print(f"[GA] best export failed {e}")

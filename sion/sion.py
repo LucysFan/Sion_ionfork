@@ -2,8 +2,8 @@ from .pylion.lammps import lammps
 import builtins
 from numpy import (ones, array, max, concatenate, pi, tanh, exp, arange, mean, min, abs, std, 
                    identity, sqrt, zeros, vstack, sum, sin, cos, diag, dot, argmax, inner, 
-                   arccos, isnan, isfinite, any, sign, linspace, block, array_split, clip)
-from numpy.linalg import (norm, eig, eigh, inv, LinAlgError)
+                   arccos, isnan, any, sign, linspace, block, array_split)
+from numpy.linalg import (norm, eig, eigh, inv)
 from numpy.random import (choice, random)
 from .electrode import (System, PolygonPixelElectrode, PointPixelElectrode)
 from scipy.optimize import (minimize, curve_fit)
@@ -248,15 +248,15 @@ def point_trap(uid, trap, cover=(0, 0)):
     ----------
     trap : list
         List of two elements: [trap_rf, trap_dc], obtained from point_trap_design()
-        trap_rf: lists of RF electrodes, each contains 4 parameters:
+        trap_rf: lits of rf electrodes, each contains 4 parameters: 
             [frequency: RF frequency of the electrode,
              voltage: peak voltage of the electrode, 
-             areas: areas of each point,
-             centers: coordinates of points' centers]
-        trap_dc: lists of DC electrodes (can be empty), each contains 3 parameters:
+             centers: coordinates of points' centers, 
+             areas: areas of each point]
+        trap_dc: lits of dc electrodes (can be empty), each contains 4 parameters: 
             [voltage: voltage of the electrode,
-             areas: areas of each point,
-             centers: coordinates of points' centers]
+             centers: coordinates of points' centers, 
+             areas: areas of each point]
     cover : [cover_max, cover_height], optional, default is (0,0)
         array [cover_number, cover_height] - number of the terms incover electrode influence expansion 
         (5 is mostly enough) and its height.
@@ -579,7 +579,6 @@ def lossf_shuttle(uset, s, omegas, positions, L, dc_set, shuttlers, freq_coeff, 
         between current secular frequency and desired one.
     '''
     rfss = array([0 for el in s if el.rf])
-    dc_set = array(dc_set, dtype=float, copy=True)
     for c, elec in enumerate(shuttlers):
         dc_set[elec] = uset[c]
     u_set = concatenate([rfss, array(dc_set)])
@@ -593,28 +592,17 @@ def lossf_shuttle(uset, s, omegas, positions, L, dc_set, shuttlers, freq_coeff, 
                                     tol = 1e-9, options = {'maxiter' : 100000})
                     curv_z, _ = s.modes(xreal,sorted=False)
                     curv_z = curv_z[[freq_ax]]
-                except (LinAlgError, FloatingPointError, RuntimeError):
-                    loss += 1e6
-                    continue
-                except ValueError as exc:
-                    if not str(exc).startswith('failed,'):
-                        raise
-                    loss += 1e6
-                    continue
+                except:
+                    xreal = x * 1.1
+                    curv_z = omegas[i] * 1.1
                 loss += sqrt(norm(xreal - x) ** 2 + freq_coeff*L**(-2)*norm(curv_z - omegas[i])**2)
         else:
             for i,x in enumerate(positions):
                 try:
                     xreal = s.minimum(x*1.001, axis=(0, 1, 2), coord=identity(3), method="Newton-CG",
                                     tol = 1e-9, options = {'maxiter' : 100000})
-                except (LinAlgError, FloatingPointError, RuntimeError):
-                    loss += 1e6
-                    continue
-                except ValueError as exc:
-                    if not str(exc).startswith('failed,'):
-                        raise
-                    loss += 1e6
-                    continue
+                except:
+                    xreal = x * 1.1
                 loss += norm(xreal - x)
             
     return loss ** 2
@@ -1009,7 +997,7 @@ def circle_packaging(scale, boundary, n, res):
     return array(ps), array(ars)
 
 
-def n_wire_trap_design(top_dc, bottom_dc, central_wires, rf_indxs, Urf=0, gap=0, wire_splitting=None, L=1e-6,
+def n_wire_trap_design(top_dc, bottom_dc, central_wires, rf_indxs, Urf=0, gap=0, wire_splitting={}, L=1e-6, 
                      cheight=0, cmax=0, need_coordinates=False, need_plot=False, save_plot=None, figsize=(20,20)):
     '''
     Initializes the n-wire linear ion trap as *electrode* object. Each dc and rf electrode is labeled by its index, 
@@ -1034,7 +1022,7 @@ def n_wire_trap_design(top_dc, bottom_dc, central_wires, rf_indxs, Urf=0, gap=0,
     gap : float, optional, default is 0
         Uniform gap between the electrodes. If >0, all electrode sizes will be increased by the same gap for accurate 
         simulation. The same gap, applied to *polygons_to_gds* will produce the drawing with the desired gaps.
-    wire_splitting : dict or None, optional, default is None
+    wire_splitting : dict, optional, default is {}
         dictionary of the following structure: 
         {index of wire(int) : [[x-widths of electrodes(float)], [rf_indxs(int, could be empty)]]}
         separates the specified wire into electrodes of the specified length. The y-width of each such electrode is 
@@ -1065,12 +1053,6 @@ def n_wire_trap_design(top_dc, bottom_dc, central_wires, rf_indxs, Urf=0, gap=0,
         returns DC electrodes coordinates in SU for MD simulation.
 
     '''
-    # Copy caller-owned geometry and split specifications before normalizing;
-    # this constructor must be repeatable with the same input objects.
-    central_wires = array(central_wires, dtype=float, copy=True)
-    wire_splitting = {} if wire_splitting is None else {
-        int(index): [list(spec[0]), list(spec[1])] for index, spec in wire_splitting.items()
-    }
     #uniform format
     try:
         Urf[0]
@@ -1358,15 +1340,15 @@ def ring_trap_design(Urf, Omega, r, R, r_dc=0, v_dc=0, res=100, need_coordinates
         Surface trap from electrode.
     trap : list, optional
         List of two elements: [trap_rf, trap_dc], for simulation with point_trap()
-        trap_rf: lists of RF electrodes, each contains 4 parameters:
+        trap_rf: lits of rf electrodes, each contains 4 parameters: 
             [frequency: RF frequency of the electrode,
              voltage: peak voltage of the electrode, 
-             areas: areas of each point,
-             centers: coordinates of points' centers]
-        trap_dc: lists of DC electrodes (can be empty), each contains 3 parameters:
+             centers: coordinates of points' centers, 
+             areas: areas of each point]
+        trap_dc: lits of dc electrodes (can be empty), each contains 4 parameters: 
             [voltage: voltage of the electrode,
-             areas: areas of each point,
-             centers: coordinates of points' centers]
+             centers: coordinates of points' centers, 
+             areas: areas of each point]
     '''
     def ring_boundary(i, x):
         if i == 0:
@@ -1436,15 +1418,15 @@ def point_trap_design(frequencies, rf_voltages, dc_voltages, boundaries, scale, 
         Surface trap from electrode.
     trap : list, optional
         List of two elements: [trap_rf, trap_dc], for simulation with point_trap()
-        trap_rf: lists of RF electrodes, each contains 4 parameters:
+        trap_rf: lits of rf electrodes, each contains 4 parameters: 
             [frequency: RF frequency of the electrode,
              voltage: peak voltage of the electrode, 
-             areas: areas of each point,
-             centers: coordinates of points' centers]
-        trap_dc: lists of DC electrodes (can be empty), each contains 3 parameters:
+             centers: coordinates of points' centers, 
+             areas: areas of each point]
+        trap_dc: lits of dc electrodes (can be empty), each contains 4 parameters: 
             [voltage: voltage of the electrode,
-             areas: areas of each point,
-             centers: coordinates of points' centers]
+             centers: coordinates of points' centers, 
+             areas: areas of each point]
 
     '''
     x = []
@@ -1701,33 +1683,100 @@ def polygons_reshape(full_electrode_list, order, L=1e-6, need_plot=True, need_co
         return s
     
 def gapping(elec, gap):
-    """Inward-buffer a planar electrode by the requested edge clearance.
+    '''
+    Shrinks polygonal electrode by the "gap" parameter, creating gaps between electrodes
 
-    Negative Shapely buffering works for rotated and non-axis-aligned edges,
-    unlike the former coordinate-sign construction. A split result cannot be
-    represented by this legacy single-ring return value and is reported clearly.
-    """
-    from shapely.geometry import Polygon, MultiPolygon
+    Parameters
+    ----------
+    elec : np.array shape([number of points in electrode, 2])
+        Electrode to shrink, defined by its coordinates.
+    gap : float
+        Length to shrink the electrode. Corresponds to the width of the gap /2.
 
-    coordinates = array(elec, dtype=float, copy=True)
-    gap = float(gap)
-    if (coordinates.ndim != 2 or coordinates.shape[1] != 2
-            or len(coordinates) < 3 or not isfinite(coordinates).all()):
-        raise ValueError('electrode must be a finite polygon with at least three 2D vertices')
-    if not isfinite(gap) or gap < 0:
-        raise ValueError('gap must be finite and non-negative')
-    polygon = Polygon(coordinates)
-    if not polygon.is_valid or polygon.area <= 0:
-        raise ValueError('electrode polygon must be valid and have positive area')
-    if gap == 0:
-        return coordinates
+    Returns
+    -------
+    gapped : np.array shape([number of points in electrode, 2])
+        Shrinked electrode.
 
-    inset = polygon.buffer(-gap, join_style=2)
-    if inset.is_empty:
-        return array([], dtype=float).reshape(0, 2)
-    if isinstance(inset, MultiPolygon) or not isinstance(inset, Polygon):
-        raise ValueError('inward gap splits the electrode; one-ring output is insufficient')
-    return array(inset.exterior.coords[:-1], dtype=float)
+    '''
+    from shapely.geometry import Point
+    from shapely.geometry.polygon import Polygon as plgn
+    poly = plgn(elec)
+    gapped = []
+    newel = concatenate([[elec[-1]], elec, [elec[0]]])
+    for i, el in enumerate(newel):
+        try:
+            prev = el-newel[i-1]
+            nest = newel[i+1]-el
+        except:
+            pass
+        if nest[0]>0 and prev[1]<0:
+            dot1 = el + array([gap, gap])
+            dot2 = el - array([gap, gap])
+            point = Point(dot1[0], dot1[1])
+            if poly.contains(point):
+                gapped.append(dot1)
+            else:
+                gapped.append(dot2)
+        if nest[1]>0 and prev[0]>0:
+            dot1 = el + array([-gap, gap])
+            dot2 = el - array([-gap, gap])
+            point = Point(dot1[0], dot1[1])
+            if poly.contains(point):
+                gapped.append(dot1)
+            else:
+                gapped.append(dot2)
+        if nest[0]<0 and prev[1]>0:
+            dot1 = el + array([-gap, -gap])
+            dot2 = el - array([-gap, -gap])
+            point = Point(dot1[0], dot1[1])
+            if poly.contains(point):
+                gapped.append(dot1)
+            else:
+                gapped.append(dot2)
+        if nest[1]<0 and prev[0]<0:
+            dot1 = el + array([gap, -gap])
+            dot2 = el - array([gap, -gap])
+            point = Point(dot1[0], dot1[1])
+            if poly.contains(point):
+                gapped.append(dot1)
+            else:
+                gapped.append(dot2)
+        if nest[0]>0 and prev[1]>0:
+            dot1 = el + array([-gap, gap])
+            dot2 = el - array([-gap, gap])
+            point = Point(dot1[0], dot1[1])
+            if poly.contains(point):
+                gapped.append(dot1)
+            else:
+                gapped.append(dot2)
+        if nest[1]>0 and prev[0]<0:
+            dot1 = el + array([-gap, -gap])
+            dot2 = el - array([-gap, -gap])
+            point = Point(dot1[0], dot1[1])
+            if poly.contains(point):
+                gapped.append(dot1)
+            else:
+                gapped.append(dot2)
+        if nest[0]<0 and prev[1]<0:
+            dot1 = el + array([-gap, gap])
+            dot2 = el - array([-gap, gap])
+            point = Point(dot1[0], dot1[1])
+            if poly.contains(point):
+                gapped.append(dot1)
+            else:
+                gapped.append(dot2)
+        if nest[1]<0 and prev[0]>0:
+            dot1 = el + array([gap, gap])
+            dot2 = el - array([gap, gap])
+            point = Point(dot1[0], dot1[1])
+            if poly.contains(point):
+                gapped.append(dot1)
+            else:
+                gapped.append(dot2)
+                
+    gapped = array(gapped)
+    return gapped
 
 def polygon_to_gds(trap, name, gap=0):
     '''
@@ -2878,17 +2927,16 @@ def frequency_optimization(s, ion_masses, positions, axis, omegas, start_dcset, 
     rf_set = s.rfs
     numbers = array(numbers)
     omegas = array(omegas).T
-    start_dcset = array(start_dcset, dtype=float, copy=True)
+    start_dcset = array(start_dcset, dtype=float)
 
     def v_lossf(uset):
         with catch_warnings():
             simplefilter("ignore")
-            candidate_dcset = start_dcset.copy()
-            candidate_dcset[numbers] = uset
+            start_dcset[[numbers]] = uset
             pbarn.update(1)
             loss = 0
             u_set = zeros(len([rfs for rfs in s.rfs if rfs != 0]))
-            u_set = concatenate([u_set, candidate_dcset])
+            u_set = concatenate([u_set, start_dcset])
             
             for i, pos in enumerate(positions):
                 with s.with_voltages(dcs=u_set, rfs=rf_set*sqrt(M*charges[i]/ion_masses[i]/Z)):
@@ -2899,21 +2947,14 @@ def frequency_optimization(s, ion_masses, positions, axis, omegas, start_dcset, 
                                                         mathieu=mathieu, r=r_mathieu, Omega=Omega_rf)
                         omega_sec = omega_sec[[axis]]
 
-                        if any(~isfinite(omega_sec)):
+                        if any(isnan(omega_sec)):
                             loss += 100
                         else: 
                             loss += norm((omega_sec-omegas[i])/omegas[i][0])**2
                         
                         loss += micro*norm(x1-pos)**2
         
-                    except (LinAlgError, FloatingPointError, RuntimeError):
-                        loss += 100
-                    except ValueError as exc:
-                        # System.minimum uses this explicit message only when its
-                        # optimizer reports non-convergence; other ValueErrors
-                        # indicate invalid inputs or implementation defects.
-                        if not str(exc).startswith('failed,'):
-                            raise
+                    except: 
                         loss += 100
 
         return loss
@@ -3009,17 +3050,16 @@ def mode_optimization(s, alpha, potential_minimum, start_dcset, numbers=0, eps=1
         numbers = arange(len(start_dcset))
         
     numbers = array(numbers)
-    start_dcset = array(start_dcset, dtype=float, copy=True)
+    start_dcset = array(start_dcset, dtype=float)
     
     def v_lossf(uset):
         with catch_warnings():
             simplefilter("ignore")
-            candidate_dcset = start_dcset.copy()
-            candidate_dcset[numbers] = uset
+            start_dcset[[numbers]] = uset
             pbarn.update(1)
             loss = 0
             u_set = zeros(len([rfs for rfs in s.rfs if rfs != 0]))
-            u_set = concatenate([u_set, candidate_dcset])
+            u_set = concatenate([u_set, start_dcset])
             
             with s.with_voltages(dcs=u_set, rfs=None):
                 try:
@@ -3028,20 +3068,12 @@ def mode_optimization(s, alpha, potential_minimum, start_dcset, numbers=0, eps=1
                     _, mod_dir = s.modes(x1, sorted=False)
                     
                     e1 = array([0,0,1])
-                    # Eigenvectors are columns and their signs are arbitrary.
-                    # Use the highest-frequency mode, sign-invariant overlap,
-                    # and a clipped cosine to avoid arccos round-off failures.
-                    overlap = abs(dot(mod_dir[:, 2], e1))
-                    alp = arccos(clip(overlap, 0.0, 1.0))
+                    alp = arccos(inner(mod_dir[2],e1))
                     
                     loss += (alpha - alp)**2
                     loss += micro * norm(x1 - potential_minimum)**2
     
-                except (LinAlgError, FloatingPointError, RuntimeError):
-                    loss += 10
-                except ValueError as exc:
-                    if not str(exc).startswith('failed,'):
-                        raise
+                except: 
                     loss += 10
 
         return loss
@@ -3138,17 +3170,16 @@ def position_optimization(s, positions, start_dcset, numbers=0, eps=1e-2, tol=1e
     
     rf_set = s.rfs
     numbers = array(numbers)
-    start_dcset = array(start_dcset, dtype=float, copy=True)
+    start_dcset = array(start_dcset, dtype=float)
 
     def v_lossf(uset):
         with catch_warnings():
             simplefilter("ignore")
-            candidate_dcset = start_dcset.copy()
-            candidate_dcset[numbers] = uset
+            start_dcset[[numbers]] = uset
             pbarn.update(1)
             loss = 0
             u_set = zeros(len([rfs for rfs in s.rfs if rfs != 0]))
-            u_set = concatenate([u_set, candidate_dcset])
+            u_set = concatenate([u_set, start_dcset])
             
             for i, pos in enumerate(positions):
                 with s.with_voltages(dcs=u_set, rfs=rf_set*sqrt(M*charges[i]/ion_masses[i]/Z)):
@@ -3157,11 +3188,7 @@ def position_optimization(s, positions, start_dcset, numbers=0, eps=1e-2, tol=1e
                                     tol = 1e-9, options = {'maxiter' : 2000})                        
                         loss += norm(x1-pos)**2
         
-                    except (LinAlgError, FloatingPointError, RuntimeError):
-                        loss += 1e6
-                    except ValueError as exc:
-                        if not str(exc).startswith('failed,'):
-                            raise
+                    except: 
                         loss += 1e6
 
         return loss

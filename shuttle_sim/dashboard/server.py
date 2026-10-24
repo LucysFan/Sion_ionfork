@@ -1,7 +1,5 @@
 """Live dashboard server — serves static UI + JSON API for setup, trap preview, and GA/pipeline runs.
 
-The dashboard serves state files; trajectory preparation and evaluation occur synchronously in the GA engine.
-
 Run: python -m shuttle_sim.dashboard.server --out output/ga_run --port 8000
 Preview in E2B: https://8000-<sandboxId>.e2b.app
 """

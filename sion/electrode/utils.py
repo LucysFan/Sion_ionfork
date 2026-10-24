@@ -609,8 +609,7 @@ class DummyPool(object):
     `apply_async()` method. But in a synchronous way.
 
     """
-    def apply_async(self, func, args=(), kwargs=None):
-        kwargs = {} if kwargs is None else dict(kwargs)
+    def apply_async(self, func, args=(), kwargs={}):
         class _DummyRet(object):
             def get(self):
                 return func(*args, **kwargs)

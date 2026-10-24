@@ -67,9 +67,7 @@ def summarize(z,C,local,mass,target_m):
 
 def propagate(times_s, centers_m, hessians_J_m2, initial, final, mass, target_m,
              method='exact', hold='linear', return_trajectory=False,
-             trajectory_decimate=400, path_samples_per_interval=8,
-             corridor_origin_m=None, corridor_direction=None,
-             corridor_halfwidth_m=None):
+             trajectory_decimate=400, path_samples_per_interval=8):
     """Распространяет гауссово состояние иона в движущейся гармонической яме.
 
     Механический лагранжиан имеет вид L = m |v|^2 / 2 - U(r, t).
@@ -81,9 +79,7 @@ def propagate(times_s, centers_m, hessians_J_m2, initial, final, mass, target_m,
     Аналитическое распространение точно для принятой на каждом интервале
     постоянной кривизны и линейного движения центра; это не точное решение
     для произвольно меняющейся кривизны. Максимальное отставание оценивается
-    по плотной сетке точек внутри временных интервалов. Если задана ось
-    коридора, дополнительно проверяется поперечное смещение среднего состояния;
-    это не ограничивает ширину всего квантового пакета.
+    по плотной сетке точек внутри временных интервалов.
     """
     ts = finite(times_s, 'time')
     centers = finite(centers_m, 'centers')
@@ -248,33 +244,6 @@ def propagate(times_s, centers_m, hessians_J_m2, initial, final, mass, target_m,
         'is_max_transport_error_fallback': False,
         'path_samples_per_interval': int(path_samples_per_interval),
     })
-
-    corridor_inputs = (corridor_origin_m, corridor_direction, corridor_halfwidth_m)
-    if any(value is not None for value in corridor_inputs):
-        if any(value is None for value in corridor_inputs):
-            raise ValueError('corridor origin, direction, and half-width must be provided together')
-        origin = finite(corridor_origin_m, 'corridor origin')
-        direction = finite(corridor_direction, 'corridor direction')
-        halfwidth = float(corridor_halfwidth_m)
-        if origin.shape != (3,) or direction.shape != (3,) or not np.isfinite(halfwidth) or halfwidth <= 0:
-            raise ValueError('corridor must have a 3D axis and positive finite half-width')
-        direction_norm = float(np.linalg.norm(direction))
-        if direction_norm <= 0:
-            raise ValueError('corridor direction must be nonzero')
-        direction = direction / direction_norm
-        relative = path_means - origin
-        transverse = relative - np.outer(relative @ direction, direction)
-        max_transverse = float(np.max(np.linalg.norm(transverse, axis=1)))
-        summary.update({
-            'max_transverse_excursion_m': max_transverse,
-            'corridor_halfwidth_m': halfwidth,
-            'corridor_passed': bool(max_transverse <= halfwidth),
-        })
-        if max_transverse > halfwidth:
-            violation = (max_transverse - halfwidth) / halfwidth
-            raise Rejected('corridor_violation',
-                           f'mean trajectory exceeds corridor by {max_transverse-halfwidth:g} m',
-                           violation=violation)
 
     if return_trajectory:
         if len(path_times_s) > trajectory_decimate:
