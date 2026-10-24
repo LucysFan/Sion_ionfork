@@ -19,8 +19,8 @@ from pathlib import Path
 import csv, hashlib, json, platform, sys, time
 import numpy as np
 from scipy.interpolate import CubicSpline
-from scipy.optimize import minimize
-from .field import finite, Rejected, load_trap
+from scipy.optimize import minimize, linear_sum_assignment
+from .field import finite, Rejected, load_trap, rejection_penalty
 from .hardware import Hardware
 from .dynamics import propagate, validate_full_field_centroid
 # Explicit layer imports for spec completeness
@@ -31,6 +31,24 @@ from .observables import (observables_from_simulation, scalar_loss_from_observab
                           dimensionless_control_penalty, processing_chain)
 from .calibration import Calibration
 from .closed_loop import ClosedLoopRefiner
+
+
+def match_normal_modes(previous_modes, current_modes, labels):
+    """Match eigenvectors by maximum squared overlap, ignoring arbitrary sign."""
+    previous = np.asarray(previous_modes, dtype=float)
+    current = np.asarray(current_modes, dtype=float)
+    labels = np.asarray(labels, dtype=int)
+    if previous.shape != current.shape or previous.ndim != 2 or previous.shape[0] != previous.shape[1]:
+        raise ValueError('mode matrices must be square and have matching shapes')
+    if labels.shape != (previous.shape[1],):
+        raise ValueError('one persistent label is required per mode')
+    overlaps = np.abs(previous.T @ current)
+    rows, cols = linear_sum_assignment(-overlaps**2)
+    current_labels = np.empty_like(labels)
+    current_labels[cols] = labels[rows]
+    assigned_overlaps = overlaps[rows, cols]
+    rotation_risk = bool(np.min(assigned_overlaps) < 0.95)
+    return overlaps, current_labels, rotation_risk
 
 
 def write_json(path,value):
@@ -96,6 +114,7 @@ class Runner:
         self.failures=[];self.history=[];self.checkpoint=None
         # Explicit TransportTask entity (spec §4)
         self.transport_task = TransportTask.from_config(self.task, self.initial.position_m)
+        self.transport_task.validate()
         self.safety_layer = SafetyLayer(self.trap, self.hw, self.task)
         self.calibration = Calibration(self.trap, self.hw, self.task)
 
@@ -129,7 +148,7 @@ class Runner:
             else:
                 sc = np.clip(s, 0, 1) if 0 <= s <= 1 else s
                 # сумма базисов, клип ±18% чтобы не потерять confinement
-                # для s вне [0,1] — только env часть уже 0 → ω≈ω0
+                # вне [0,1] профиль явно продолжен постоянной базовой частотой.
                 if 0 <= s <= 1:
                     mod = float(freq_profile.omega_scaling(np.array([sc]))[0] - 1)
                 else:
@@ -162,19 +181,20 @@ class Runner:
         self.BHspline=CubicSpline(self.sroute,self.route_BH,axis=0)
         _,_,R=np.linalg.svd(self.route_V-self.route_V.mean(axis=0),full_matrices=False)
         self.correction_modes=R[:2]
+        self.corrective_basis=CorrectiveBasis(self.correction_modes)
         self.support_diagnostics=[]
-        from scipy.optimize import linear_sum_assignment
         last=None
         labels=np.arange(3)
         for s,z,v in zip(self.sroute,ls,self.route_V):
-            overlaps=None if last is None else np.abs(last.T@z.modes)
-            if overlaps is not None:
-                _,cols=linear_sum_assignment(-overlaps**2)
-                mapped=labels.copy();mapped[cols]=labels;labels=mapped
+            if last is None:
+                overlaps=None
+                mode_rotation_risk=False
+            else:
+                overlaps,labels,mode_rotation_risk=match_normal_modes(last,z.modes,labels)
             self.support_diagnostics.append({'s':s,'position_m':z.position_m,'frequencies_hz':z.omega_rad_s/(2*np.pi),
                 'modes_columns':z.modes,'voltage_V':v,'adjacent_mode_overlap':overlaps,
                 'tracked_labels_for_sorted_modes':labels.copy(),
-                'mode_rotation_risk':bool(overlaps is not None and np.min(np.max(overlaps,axis=1))<.95),
+                'mode_rotation_risk':mode_rotation_risk,
                 'relative_min_gap':float(np.min(np.diff(z.omega_rad_s))/z.omega_rad_s.max())})
             last=z.modes
 
@@ -218,48 +238,35 @@ class Runner:
         shape=x+theta[0]*env+theta[1]*env*P([-1,2])
         ss=shape(s)
         if ss.min() < -1e-10 or ss.max() > 1+1e-10:
-            raise Rejected('route_corridor','nonphysical time-law overshoot')
-        envelope=env(s)
+            violation=max(0.0, -float(ss.min()), float(ss.max())-1.0)
+            raise Rejected('route_corridor','nonphysical time-law overshoot',violation=violation)
         if baseline=='smooth':
             poly=P([0,0,0,10,-15,6])(shape)
             q=poly(s)
         elif baseline=='sta':
-            poly=P([0,0,0,0,35,-84,70,-20])(shape)
-            q=poly(s)+poly.deriv(2)(s)/(T0*self.initial.omega_rad_s[0])**2
+            poly=P([0,0,0,0,35,-84,70,-20])
+            warp_velocity=shape.deriv()(s)
+            warp_acceleration=shape.deriv(2)(s)
+            # q(t)=P(shape(s)); differentiate the composition before applying
+            # Q=q+q¨/omega², including both chain-rule terms.
+            q0=poly(ss)
+            q_acceleration=(poly.deriv(2)(ss)*warp_velocity**2
+                            + poly.deriv()(ss)*warp_acceleration)
+            q=q0+q_acceleration/(T0*self.initial.omega_rad_s[0])**2
         else: raise ValueError('baseline must be smooth or sta')
         route=np.where(d>0,q,1-q)
         if route.min()<self.sroute[0] or route.max()>self.sroute[-1]:
-            raise Rejected('route_corridor','reference outside supported route')
+            span=max(float(self.sroute[-1]-self.sroute[0]),np.finfo(float).eps)
+            violation=max(float(self.sroute[0]-route.min()),float(route.max()-self.sroute[-1]),0.0)/span
+            raise Rejected('route_corridor','reference outside supported route',violation=violation)
         v=self.voltage_spline(route)
-        # ΔV basis – extended envelope set so that 10/12 dims are physically active (R6 fix)
-        # 8: 3 basis ×2 modes =6, 10: 4 basis ×2 =8, 12: 5 basis ×2 =10
-        # Extra harmonics allow multiple non-central dips (not necessarily midpoint)
-        import math
-        if theta.shape[0]==12:
-            # 5 basis: env, env*(2s-1), env*(6s^2-6s+1), env*sin(2πs), env*sin(4πs)
-            basis=np.column_stack([
-                envelope,
-                envelope*(2*s-1),
-                envelope*(6*s*s-6*s+1),
-                envelope*np.sin(2*math.pi*s),
-                envelope*np.sin(4*math.pi*s),
-            ])
-            correction=(basis@theta_volt.reshape(5,2))@self.correction_modes
-        elif theta.shape[0]==10:
-            # 4 basis: env, env*(2s-1), env*(6s^2-6s+1), env*sin(2πs)
-            basis=np.column_stack([
-                envelope,
-                envelope*(2*s-1),
-                envelope*(6*s*s-6*s+1),
-                envelope*np.sin(2*math.pi*s),
-            ])
-            correction=(basis@theta_volt.reshape(4,2))@self.correction_modes
-        else:
-            basis=np.column_stack([envelope,envelope*(2*s-1),envelope*(6*s*s-6*s+1)])
-            correction=(basis@theta_volt.reshape(3,2))@self.correction_modes
+        # The shared helper applies the 3/4/5-envelope voltage basis for 8/10/12 genes.
+        correction=self.corrective_basis.correction(s, theta_volt)
         v+=correction
         if np.any(v<self.trap.lo) or np.any(v>self.trap.hi):
-            raise Rejected('infeasible_voltages','command outside electrode bounds')
+            span=max(float(np.max(self.trap.hi-self.trap.lo)),np.finfo(float).eps)
+            excess=max(float(np.max(self.trap.lo-v)),float(np.max(v-self.trap.hi)),0.0)
+            raise Rejected('infeasible_voltages','command outside electrode bounds',violation=excess/span)
         return t,v,route
 
     def rom(self,t,delivered,command_times,route,stray=None,exact_nodes=None):
@@ -282,13 +289,13 @@ class Runner:
             if stray is not None: g-=self.trap.q*np.asarray(stray)
             r=r-np.linalg.solve(H,g[...,None])[...,0]
             final=self.trap.local(delivered[-1],r[-1],stray);diag=[]
-        eig=np.linalg.eigvalsh(H/self.trap.mass)
-        if eig.min()<(2*np.pi*self.task['min_frequency_hz'])**2:
-            raise Rejected('weak_confinement','frequency below task floor')
+        # Apply the common frequency floor after scenario scaling in evaluate().
         nominal=self.start+sr[:,None]*self.task['distance_m']*self.direction
         max_shift=float(np.max(np.linalg.norm(r-nominal,axis=1)))
-        if max_shift>self.cfg.get('rom_max_shift_m',20e-6):
-            raise Rejected('rom_trust_region','delivered minimum outside validated local corridor')
+        max_shift_limit=float(self.cfg.get('rom_max_shift_m',20e-6))
+        if max_shift>max_shift_limit:
+            violation=(max_shift-max_shift_limit)/max_shift_limit
+            raise Rejected('rom_trust_region','delivered minimum outside validated local corridor',violation=violation)
         # r and H describe the instantaneous well only. The ion's mean state is
         # propagated separately and is not set equal to this moving center.
         return r,H,final,diag
@@ -299,7 +306,9 @@ class Runner:
         hw=hardware or self.hw
         t,v,codes,dist=hw.deliver(cmd,subdivisions or self.cfg.get('subdivisions',4),ideal)
         if np.any(v<self.trap.lo) or np.any(v>self.trap.hi):
-            raise Rejected('hardware_saturation','delivered voltage outside trap bounds')
+            span=max(float(np.max(self.trap.hi-self.trap.lo)),np.finfo(float).eps)
+            excess=max(float(np.max(self.trap.lo-v)),float(np.max(v-self.trap.hi)),0.0)
+            raise Rejected('hardware_saturation','delivered voltage outside trap bounds',violation=excess/span)
         if ideal:
             # No interpolation across DAC jumps. One state per actual command.
             t=ct;v=cmd.copy()
@@ -332,17 +341,27 @@ class Runner:
                          hold='zero_order' if ideal else 'linear',
                          return_trajectory=return_trajectory,
                          trajectory_decimate=trajectory_decimate,
-                         path_samples_per_interval=path_samples_per_interval)
+                         path_samples_per_interval=path_samples_per_interval,
+                         corridor_origin_m=self.start,
+                         corridor_direction=self.direction,
+                         corridor_halfwidth_m=self.transport_task.corridor_halfwidth_m)
         result['distortion']=dist
+        result['minimum_frequency_hz']=float(np.sqrt(np.linalg.eigvalsh(H/self.trap.mass).min())/(2*np.pi))
+        frequency_floor=float(self.task['min_frequency_hz'])
+        if result['minimum_frequency_hz'] < frequency_floor:
+            violation=(frequency_floor-result['minimum_frequency_hz'])/frequency_floor
+            raise Rejected('weak_confinement','frequency below task floor after scenario scaling',
+                           violation=violation)
         result['accepted']=bool(result['n_total']<=self.task['max_n_total'] and
              result['position_error_m']<=self.task['position_tolerance_m'] and
-             result['well_target_error_m']<=self.task['position_tolerance_m'])
+             result['well_target_error_m']<=self.task['position_tolerance_m'] and
+             result.get('corridor_passed', True))
         result['quality_failures']=[]
         if result['n_total']>self.task['max_n_total']:result['quality_failures'].append('excessive_excitation')
         if result['position_error_m']>self.task['position_tolerance_m']:result['quality_failures'].append('transport_accuracy')
         if result['well_target_error_m']>self.task['position_tolerance_m']:result['quality_failures'].append('well_target_accuracy')
+        if not result.get('corridor_passed', True):result['quality_failures'].append('corridor_violation')
         result['model']='3D geometry-derived local harmonic Gaussian'
-        result['minimum_frequency_hz']=float(np.sqrt(np.linalg.eigvalsh(H/self.trap.mass).min())/(2*np.pi))
         if keep:
             return result,dict(t=t,v=v,codes=codes,ct=ct,cmd=cmd,route=route,r=r,H=H,initial=init,final=final,diag=diag)
         return result
@@ -380,6 +399,7 @@ class Runner:
         control_regularization_weight=float(self.cfg.get('control_regularization_weight',1e-4))
         training=self.scenarios(self.cfg.get('robust_training_samples',3),self.cfg['uncertainty']['seed']+1) if robust else []
         def loss(x):
+            constraint_violation=None
             try:
                 results=[self.evaluate(x,baseline='sta',ideal=ideal)]
                 for sc in training:
@@ -391,11 +411,13 @@ class Runner:
                             +dimensionless_control_penalty(x,bounds,control_regularization_weight))
                 status='ok'
             except Rejected as ex:
-                value=1e6;status=ex.code
+                value=rejection_penalty(ex);status=ex.code
+                constraint_violation=ex.violation
             except (np.linalg.LinAlgError,FloatingPointError) as ex:
                 value=1e6;status='numerical_failure'
             if value<best[0]:best[:]=[float(value),x.copy()]
-            history.append({'evaluation':len(history),'loss':float(value),'theta':x.tolist(),'status':status})
+            history.append({'evaluation':len(history),'loss':float(value),'theta':x.tolist(),
+                            'status':status,'constraint_violation':constraint_violation})
             if self.checkpoint is not None:
                 write_json(self.checkpoint,{'best_loss':best[0],'theta':best[1],'history':history,'complete':False})
             return value
@@ -426,20 +448,22 @@ class Runner:
         if self.checkpoint is not None:write_json(self.checkpoint,{**out,'complete':True})
         return out
 
-    def robust(self,theta,count=12):
-        """Held-out, declared Monte Carlo simulation. No experimental claims."""
+    def robust(self,theta,count=12,baseline='sta',exact_nodes=641,subdivisions=8):
+        """Held-out simulation, consistently evaluated for the chosen baseline."""
         spec=self.cfg['uncertainty'];rows=[]
         for sc in self.scenarios(count,spec['seed']):
             row=dict(sc)
             try:
-                row.update(self.evaluate(theta,'sta',hardware=Hardware(**sc['hardware']),stray=sc['stray_V_m'],
-                    frequency_scale=sc['frequency_scale'],exact_nodes=641,subdivisions=8))
+                row.update(self.evaluate(theta,baseline,hardware=Hardware(**sc['hardware']),stray=sc['stray_V_m'],
+                    frequency_scale=sc['frequency_scale'],exact_nodes=exact_nodes,subdivisions=subdivisions))
                 row['status']='ok'
-            except Rejected as ex:row.update(status=ex.code,accepted=False)
+            except Rejected as ex:
+                row.update(status=ex.code,accepted=False,violation=ex.violation)
             rows.append(row)
         values=np.array([r['n_total'] for r in rows if r['status']=='ok'])
         valid=len(values)==count
         return {'assumption':'unmeasured uncertainty distribution; simulation only',
+                'baseline':baseline,'exact_nodes':int(exact_nodes),'subdivisions':int(subdivisions),
                 'all_scenarios_valid':valid,'pass_fraction':sum(r['accepted'] for r in rows)/count,
                 'mean_n':float(values.mean()) if len(values) else None,
                 'worst_n':float(values.max()) if valid else None,
@@ -476,6 +500,8 @@ class Runner:
         refined_nodes = int(self.cfg.get('refined_nodes', 641))
         subdiv = int(self.cfg.get('subdivisions', 4))
         valid_subdiv = int(self.cfg.get('validation_subdivisions', 8))
+        coarse_path_samples = int(self.cfg.get('validation_path_samples_coarse', 16))
+        refined_path_samples = int(self.cfg.get('validation_path_samples_refined', 32))
         comparison={}
         for name,kind in [('smooth','smooth'),('sta','sta')]:
             comparison[name+'_ideal']=self.evaluate(np.zeros(8),kind,ideal=True,exact_nodes=comp_nodes,subdivisions=valid_subdiv)
@@ -492,27 +518,45 @@ class Runner:
         for _name,_th,_bl in list(candidates):
             # Add cross-baseline evaluations for provenance without changing selection budget
             pass
-        # Rerank under actual local-minimum reconstruction, not the search ROM.
-        # Use the same configured weights as the optimizer; path lag is diagnostic
-        # unless its weight is explicitly made nonzero.
+        # Rerank every finalist on the same validated local-minimum grid; the
+        # cheaper comparison above is descriptive only. Use the same weights as search.
         # P3: lexicographic tie tolerance 1e-9 prefer sta (excitation primary) – if scores within eps, prefer sta baseline then shorter theta
         rerank=[]
         _eps = 1e-9
         for name,theta,baseline in candidates:
-            r=self.evaluate(theta,baseline,exact_nodes=comp_nodes,subdivisions=valid_subdiv)
-            _control_bounds = [(-.10,.10),(-.10,.10)]+[(-.4,.4)]*6
-            score = (scalar_loss_from_observables(r,self.task,weights=self.loss_weights)
-                     + dimensionless_control_penalty(
-                         theta,_control_bounds,
-                         float(self.cfg.get('control_regularization_weight',1e-4))))
-            legacy_score = r['n_total']+1e8*r['well_target_error_m']+1e8*r['position_error_m']
-            # Baseline-aware tie breaker: prefer 'sta' family if within eps, then lower position error
-            # Encode as tuple (score_bucket, baseline_priority, pos_err)
+            try:
+                r=self.evaluate(theta,baseline,exact_nodes=valid_nodes,subdivisions=valid_subdiv)
+                _control_bounds = [(-.10,.10),(-.10,.10)]+[(-.4,.4)]*6
+                score = (scalar_loss_from_observables(r,self.task,weights=self.loss_weights)
+                         + dimensionless_control_penalty(
+                             theta,_control_bounds,
+                             float(self.cfg.get('control_regularization_weight',1e-4))))
+                legacy_score = r['n_total']+1e8*r['well_target_error_m']+1e8*r['position_error_m']
+                position_error=r['position_error_m']
+                r['_legacy_score'] = float(legacy_score)
+                r['_normalized_score'] = float(score)
+                r['_baseline'] = baseline
+            except Rejected as ex:
+                score=rejection_penalty(ex)
+                position_error=float('inf')
+                legacy_score=None
+                r={'accepted':False,'rejection_code':ex.code,'rejection_message':str(ex),
+                   'constraint_violation':ex.violation,'_normalized_score':float(score),
+                   '_legacy_score':None,'_baseline':baseline}
+            except (np.linalg.LinAlgError,FloatingPointError) as ex:
+                score=1e6
+                position_error=float('inf')
+                legacy_score=None
+                r={'accepted':False,'rejection_code':'numerical_failure',
+                   'rejection_message':str(ex),'constraint_violation':None,
+                   '_normalized_score':float(score),'_legacy_score':None,
+                   '_baseline':baseline}
+            # Baseline-aware tie breaker: prefer 'sta' family if within eps, then lower position error.
             bl_prio = 0 if baseline=='sta' else 1
-            rerank.append((score,bl_prio, r['position_error_m'], name,theta,baseline,r))
-            r['_legacy_score'] = float(legacy_score)
-            r['_normalized_score'] = float(score)
-            r['_baseline'] = baseline
+            rerank.append((score,bl_prio,position_error,name,theta,baseline,r))
+        if not rerank or all(entry[0] >= 1e6 for entry in rerank):
+            raise Rejected('all_candidates_rejected',
+                           'all final candidates failed the common validated checks')
         # Sort by score with epsilon tie handling: group within eps then prefer sta
         # First sort by raw score, then apply stable tie logic
         rerank_sorted = sorted(rerank, key=lambda z:(round(z[0]/_eps), z[1], z[2]))
@@ -524,24 +568,57 @@ class Runner:
         # Keep full rerank for provenance
         # Note: sorted with tie tolerance 1e-9 prefer sta (P3)
         write_json(out/'candidate_reranking.json',[{'source':n,'score':sc,'theta':th,'metrics':rr} for sc,n,th,rr in rerank])
-        comparison['hardware_aware_candidate_delivered']=rerank[-1][3]
+        comparison['hardware_aware_candidate_delivered'] = next(
+            (metrics for _, source, _, metrics in rerank if source == 'aware'), None)
+        comparison['rerank_settings'] = {
+            'exact_nodes': valid_nodes,
+            'subdivisions': valid_subdiv,
+            'weights': self.loss_weights,
+        }
         comparison['selected']=r
         comparison['selected_baseline']=selected_baseline
         comparison['rerank_full']=[{'source':n,'baseline':rr.get('_baseline','sta'),'score':sc,'normalized_score':rr.get('_normalized_score'),'legacy_score':rr.get('_legacy_score'),'metrics':{k:rr[k] for k in ('n_total','position_error_m','well_target_error_m','accepted') if k in rr}} for sc,n,th,rr in rerank]
         write_json(out/'comparison.json',comparison)
-        r,trace=self.evaluate(theta,selected_baseline,exact_nodes=valid_nodes,subdivisions=valid_subdiv,keep=True)
-        refined=self.evaluate(theta,selected_baseline,exact_nodes=refined_nodes,subdivisions=valid_subdiv*2 if valid_subdiv*2<=16 else 16)
-        ind=self.evaluate(theta,selected_baseline,exact_nodes=valid_nodes,subdivisions=valid_subdiv,method='dop853')
+        r,trace=self.evaluate(theta,selected_baseline,exact_nodes=valid_nodes,
+                              subdivisions=valid_subdiv,keep=True,
+                              path_samples_per_interval=coarse_path_samples)
+        refined=self.evaluate(theta,selected_baseline,exact_nodes=refined_nodes,
+                              subdivisions=min(valid_subdiv*2, 16),
+                              path_samples_per_interval=refined_path_samples)
+        ind=self.evaluate(theta,selected_baseline,exact_nodes=valid_nodes,
+                          subdivisions=valid_subdiv,method='dop853',
+                          path_samples_per_interval=coarse_path_samples)
         cheap=self.evaluate(theta,'sta')
+        refined_subdivisions = min(valid_subdiv*2, 16)
+        lag_delta = abs(r['max_ion_well_lag_m']-refined['max_ion_well_lag_m'])
+        transverse_delta = abs(r.get('max_transverse_excursion_m', 0.0)
+                               - refined.get('max_transverse_excursion_m', 0.0))
         validation={'cheap_search_model':cheap,'cheap_vs_validated_delta_n':abs(cheap['n_total']-r['n_total']),
-                    'midpoint_exact_fine':r,'independent_dop853':ind,'refined_1281_nodes_16_substeps':refined,
+                    'midpoint_exact_fine':r,'independent_dop853':ind,'refined':refined,
                     'refinement_delta_n':abs(r['n_total']-refined['n_total']),
+                    'transient_diagnostic_refinement':{
+                        'coarse_max_ion_well_lag_m':r['max_ion_well_lag_m'],
+                        'refined_max_ion_well_lag_m':refined['max_ion_well_lag_m'],
+                        'absolute_change_max_ion_well_lag_m':lag_delta,
+                        'relative_change_max_ion_well_lag':lag_delta/max(
+                            abs(refined['max_ion_well_lag_m']),np.finfo(float).eps),
+                        'coarse_max_transverse_excursion_m':r.get('max_transverse_excursion_m'),
+                        'refined_max_transverse_excursion_m':refined.get('max_transverse_excursion_m'),
+                        'absolute_change_max_transverse_excursion_m':transverse_delta,
+                        'coarse_subdivisions':valid_subdiv,
+                        'refined_subdivisions':refined_subdivisions,
+                        'coarse_exact_nodes':valid_nodes,
+                        'refined_exact_nodes':refined_nodes,
+                        'coarse_path_samples_per_interval':r['path_samples_per_interval'],
+                        'refined_path_samples_per_interval':refined['path_samples_per_interval'],
+                    },
                     'selected_from':selected,'selected_theta':theta,
                     'coarse_to_fine_delta_n':abs(r['n_total']-comparison['selected']['n_total']),
                     'integrator_delta_n':abs(r['n_total']-ind['n_total']),
                     'independence':'Different integration method; same 3D local harmonic physical approximation',
                     'limitation':'No full RF micromotion or non-Gaussian quantum propagation'}
-        # Tolerance is explicit and saved, not silently replaced by acceptance.
+        # This flag covers final excitation n only; transient trajectory diagnostics
+        # report their own coarse-to-refined differences above without a hidden tolerance.
         tol=self.cfg.get('validation_n_tolerance',.005)
         validation['convergence_passed']=bool(max(validation['refinement_delta_n'],validation['integrator_delta_n'])<=tol)
         validation['n_tolerance']=tol
@@ -581,32 +658,10 @@ class Runner:
             if hasattr(self, 'transport_task'):
                 self.transport_task.hold_s = float(original_hold)
         write_json(out/'hold_scan.json',hold_scan)
-        # Robust – ensure evaluation uses current task settings restored above, with selected baseline
-        _rob_baseline = locals().get('selected_baseline', 'sta')
-        # robust method currently hardcodes 'sta' – evaluate manually for correct baseline if needed
-        # For now call evaluate per scenario with correct baseline via monkey patch: pass baseline through self.evaluate inside robust?
-        # We expose robust baseline provenance
-        robust=self.robust(theta,self.cfg.get('robust_samples',8))
-        # Re-evaluate robust with correct baseline for metrics if baseline != sta: compute fair comparison
-        if _rob_baseline != 'sta':
-            # Overwrite robust rows with smooth baseline evaluations for consistency check
-            try:
-                rows=[]
-                for sc in self.scenarios(self.cfg.get('robust_samples',8), self.cfg['uncertainty']['seed']):
-                    row=dict(sc)
-                    try:
-                        row.update(self.evaluate(theta,_rob_baseline,hardware=__import__('shuttle_sim.hardware',fromlist=['Hardware']).Hardware(**sc['hardware']),stray=sc['stray_V_m'],frequency_scale=sc['frequency_scale'],exact_nodes=641,subdivisions=8))
-                        row['status']='ok'
-                    except Exception as ex:
-                        from shuttle_sim.field import Rejected as _Rej
-                        row.update(status=getattr(ex,'code','unknown'),accepted=False)
-                    rows.append(row)
-                robust['_baseline'] = _rob_baseline
-                robust['_baseline_rows'] = rows
-            except Exception as e:
-                robust['_baseline_error']=str(e)
-        else:
-            robust['_baseline']='sta'
+        # Held-out scenarios use the exact same selected baseline and validation fidelity.
+        _rob_baseline = selected_baseline
+        robust=self.robust(theta,self.cfg.get('robust_samples',8),baseline=_rob_baseline,
+                           exact_nodes=refined_nodes,subdivisions=refined_subdivisions)
         write_json(out/'robust.json',robust)
 
         # === Observables & loss chain (spec §10) ===
@@ -616,10 +671,14 @@ class Runner:
         # Raw measurement contract (spec §10 raw→observable): synthesize raw sideband data then infer (R4)
         try:
             from .observables import synthesize_raw_sideband_measurement, infer_observables_from_raw, raw_to_observables_chain
-            raw = synthesize_raw_sideband_measurement(r)
+            synthetic_seed=int(self.cfg.get('synthetic_measurement_seed',0))
+            synthetic_shots=int(self.cfg.get('synthetic_measurement_shots',200))
+            raw = synthesize_raw_sideband_measurement(
+                r, n_shots=synthetic_shots, rng_seed=synthetic_seed)
             inferred = infer_observables_from_raw(raw)
             raw_chain = raw_to_observables_chain(
-                r, self.task, include_raw=True, weights=self.loss_weights)
+                r, self.task, include_raw=True, weights=self.loss_weights,
+                n_shots=synthetic_shots, rng_seed=synthetic_seed)
             write_json(out/'raw_measurement.json', raw)
             write_json(out/'observables_from_raw.json', inferred)
             write_json(out/'raw_chain.json', {
@@ -653,7 +712,9 @@ class Runner:
         # safety fails with delivered_intent_violated and pipeline must re-optimize or reject.
         safety_report = self.safety_layer.evaluate(trace['cmd'], trace['v'], r['distortion'], trace['H'])
         write_json(out/'safety_report.json', {"passed": bool(safety_report.passed), "checks": safety_report.checks,
-                                               "failure_code": safety_report.failure_code, "failure_message": safety_report.failure_message})
+                                               "failure_code": safety_report.failure_code,
+                                               "failure_message": safety_report.failure_message,
+                                               "violation": safety_report.violation})
         # B5 executable threshold handling: if delivered intent violated, attempt limited re-optimization under delivered model
         distortion_requires_resynthesis = False
         distortion_reopt_result = None

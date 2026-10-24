@@ -25,6 +25,7 @@ class SafetyReport:
     checks: dict
     failure_code: str = None
     failure_message: str = None
+    violation: float = None
 
 class SafetyLayer:
     def __init__(self, trap, hardware, task):
@@ -37,7 +38,10 @@ class SafetyLayer:
         lo, hi = self.trap.lo, self.trap.hi
         violations = (v < lo) | (v > hi)
         if np.any(violations):
-            raise Rejected("hardware_saturation", f"voltage bounds violated max {np.max(v-hi):.3g} V")
+            span=max(float(np.max(hi-lo)),np.finfo(float).eps)
+            excess=max(float(np.max(lo-v)),float(np.max(v-hi)),0.0)
+            raise Rejected("hardware_saturation", f"voltage bounds violated by at most {excess:.3g} V",
+                           violation=excess/span)
         return {"voltage_bounds": "ok", "max_margin_V": float(np.min(np.minimum(hi - v, v - lo).max(axis=1).min())) if v.size else 0}
 
     def check_slew(self, commands_V):
@@ -48,7 +52,8 @@ class SafetyLayer:
         if not np.isfinite(jumps):
             raise Rejected("numerical_failure", "slew jump is non-finite")
         if jumps > self.hw.max_jump_V + 1e-12:
-            raise Rejected("slew_limit", f"max jump {jumps:g} V exceeds {self.hw.max_jump_V:g}")
+            raise Rejected("slew_limit", f"max jump {jumps:g} V exceeds {self.hw.max_jump_V:g}",
+                           violation=max(0.0, jumps-self.hw.max_jump_V)/self.hw.max_jump_V)
         return {"max_jump_V": jumps, "slew_proxy": "ok"}
 
     def check_filter_consistency(self, distortion_report: dict, threshold_V=None):
@@ -76,8 +81,10 @@ class SafetyLayer:
                     raise Rejected("numerical_failure", f"distortion field {k} is non-finite")
         # Executable threshold: reject with delivered_intent_violated if intent destroyed (spec B5)
         if max_dev > threshold_V:
+            scale=max(float(threshold_V),np.finfo(float).eps)
             raise Rejected("delivered_intent_violated",
-                           f"max_deviation {max_dev:.3f} V exceeds threshold {threshold_V:.3f} V – intent destroyed, requires re-optimization under delivered model or rejection")
+                           f"max_deviation {max_dev:.3f} V exceeds threshold {threshold_V:.3f} V – intent destroyed, requires re-optimization under delivered model or rejection",
+                           violation=(float(max_dev)-float(threshold_V))/scale)
         flag = "ok"  # only ok remains; warn case now raises
         return {"max_deviation_V": float(max_dev), "filter_consistency": flag, "threshold_V": float(threshold_V)}
 
@@ -97,7 +104,9 @@ class SafetyLayer:
         if not np.isfinite(fmin):
             raise Rejected("numerical_failure", "min frequency is non-finite")
         if fmin < min_freq_hz - 1e-9:
-            raise Rejected("weak_confinement", f"min frequency {fmin/1e6:.3f} MHz below floor {min_freq_hz/1e6:.3f} MHz")
+            violation=max(0.0,(float(min_freq_hz)-fmin)/float(min_freq_hz))
+            raise Rejected("weak_confinement", f"min frequency {fmin/1e6:.3f} MHz below floor {min_freq_hz/1e6:.3f} MHz",
+                           violation=violation)
         return {"min_frequency_hz": float(fmin), "confinement": "ok"}
 
     def evaluate(self, commands_V, delivered_V, distortion, hessians):
@@ -121,8 +130,10 @@ class SafetyLayer:
             # Numerical stability checked via finite() inside above
             return SafetyReport(passed=True, checks=checks)
         except Rejected as ex:
-            checks["failure"] = {"code": ex.code, "message": str(ex)}
-            return SafetyReport(passed=False, checks=checks, failure_code=ex.code, failure_message=str(ex))
+            checks["failure"] = {"code": ex.code, "message": str(ex),
+                                  "violation": ex.violation}
+            return SafetyReport(passed=False, checks=checks, failure_code=ex.code,
+                                failure_message=str(ex), violation=ex.violation)
         except Exception as ex:
             # Any unexpected exception is also fail-closed
             checks["failure"] = {"code": "numerical_failure", "message": str(ex)}
@@ -131,5 +142,5 @@ class SafetyLayer:
     def assert_safe(self, commands_V, delivered_V, distortion, hessians):
         rep = self.evaluate(commands_V, delivered_V, distortion, hessians)
         if not rep.passed:
-            raise Rejected(rep.failure_code, rep.failure_message)
+            raise Rejected(rep.failure_code, rep.failure_message, violation=rep.violation)
         return rep

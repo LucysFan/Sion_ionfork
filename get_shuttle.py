@@ -1,31 +1,28 @@
 #!/usr/bin/env python3
 """
-get_shuttle.py — один файл-вход, куча хороших алгоритмов на выходе
+get_shuttle.py — единый вход для островного GA и полного pipeline
 ========================================================
-Даёшь JSON (тот самый общий файл) — получаешь оптимизированные шаттлы.
+Принимает конфигурационный JSON (любой совместимый файл, в том числе созданный через Setup) и
+запускает GA, полный pipeline либо оба режима. По умолчанию запускается GA; это не замена CLI
+`python -m shuttle_sim` для обычного полного расчёта.
 
-Что это за общий файл?
-  configs/unified_live.json  (или любой из configs/*.json)
-  Содержит: trap.kind/path/electrode_map (+ RF, height 90µm) +
-            hardware (DAC/RC/jitter) +
-            task (distance_m, duration_s, hold_s, protocol) +
-            ga (острова, generations) +
-            uncertainty (robust)
+Примеры:
+  python get_shuttle.py --config configs/shuttle_ga_island.json --out output/ga_run
+  python get_shuttle.py --config configs/shuttle_gds.json --out output/ga_gds --generations 30 --dashboard
+  python get_shuttle.py --config configs/shuttle_reference.json --out output/pipeline --mode pipeline
 
-Пример вызова:
-  python get_shuttle.py --config configs/unified_live.json --out output/my_shuttles
-  python get_shuttle.py --config configs/shuttle_gds.json --out output/ga_big --generations 30 --dashboard
-  python get_shuttle.py --config my_trap.json --out output/big_trap --mode pipeline   # быстрый 1 алгоритм без GA
+Выход каталога GA:
+  - input_config.json — копия использованной конфигурации
+  - ga_hall.json и algorithms/algo_000.json ... — параметры кандидатов и симуляционные метрики
+  - algorithms/algo_000_waveform.csv — командная форма лучшего кандидата, только для анализа
+  - ga_best.json и summary.md — сводка лучшего кандидата
+  - state.json, live.json и history/ — состояние расчёта
 
-Выход — папка output/my_shuttles/:
-  - ga_hall.json          — топ-N разнообразных алгоритмов (theta, fitness, n_total, pos_err, baseline, island)
-  - algorithms/algo_000.json ... algo_00K.json — каждый алгоритм отдельно (для импорта в закрытый контур)
-  - best_waveform.csv / dac_waveform.csv / delivered_waveform.csv — лучший (для прошивки)
-  - summary.md            — читаемая таблица
-  - state.json + history/ — live для дашборда (если --dashboard)
+Все результаты симуляционные. Файлы кандидатов и командная форма не являются данными для прошивки;
+физическое исполнение в этом репозитории не разрешается.
 
-Дашборд всегда: python -m shuttle_sim.dashboard.server --out output/my_shuttles --port 8000
-  Открой http://localhost:8000 → вкладки Setup / Training / GA / Trap (анимация ямы+иона)
+Для отдельного просмотра состояния запусти `python -m shuttle_sim.dashboard.server --out output/ga_run --port 8000`.
+  Открой http://localhost:8000 → вкладки Setup / Training / GA / Trap (анимация ямы и иона).
 """
 import argparse, json, pathlib, sys, time, subprocess, shlex
 
@@ -86,9 +83,9 @@ def main():
     ap.add_argument("--config", required=True, help="Путь к общему JSON (configs/unified_live.json или shuttle_gds.json)")
     ap.add_argument("--out", default="output/shuttles", help="Куда писать кучу алгоритмов")
     ap.add_argument("--generations", type=int, default=None, help="Переопределить generations (иначе из JSON)")
-    ap.add_argument("--hall-size", type=int, default=20, help="Сколько алгоритмов в выходе (по умолчанию 20)")
-    ap.add_argument("--mode", choices=["ga","pipeline","both"], default="ga", help="ga = много разнообразных (hall), pipeline = один быстрый робастный, both = и то и то")
-    ap.add_argument("--dashboard", action="store_true", help="Поднять дашборд на --port (не блокирует оптимизацию)")
+    ap.add_argument("--hall-size", type=int, default=None, help="Переопределить размер зала (по умолчанию из JSON или 20)")
+    ap.add_argument("--mode", choices=["ga","pipeline","both"], default="ga", help="ga = островной поиск, pipeline = полный Runner.run без GA, both = последовательно оба режима")
+    ap.add_argument("--dashboard", action="store_true", help="Запустить отдельный сервер дашборда на --port")
     ap.add_argument("--port", type=int, default=8000, help="Порт дашборда")
     ap.add_argument("--no-robust", action="store_true", help="Отключить robust остров (только для отладки)")
     args = ap.parse_args()
@@ -114,15 +111,13 @@ def main():
             print("[get_shuttle] дашборд не стартанул — продолжаю без него", file=sys.stderr)
             dash_proc = None
 
-    # --- pipeline быстрый (один) ---
+    # --- полный pipeline без генетического поиска ---
     if args.mode in ("pipeline","both"):
-        print(f"[get_shuttle] pipeline robust (1 θ) → {out}/pipeline_ ...")
+        print(f"[get_shuttle] полный pipeline без GA → {out}/pipeline_run ...")
         try:
             from shuttle_sim.pipeline import Runner
             runner = Runner(cfg)
             runner.prepare()
-            # быстрый pipeline прогон (не весь run, а только optimize + validate, чтобы не ждать 30с)
-            # используем runner.run для полной воспроизводимости, но с текущими nodes
             status = runner.run(out / "pipeline_run", full_field=False)
             print(f"[get_shuttle] pipeline done: {status}")
         except Exception as e:
@@ -131,15 +126,24 @@ def main():
 
     # --- GA много алгоритмов (hall) ---
     if args.mode in ("ga","both"):
-        print(f"[get_shuttle] GA много алгоритмов → {out}  (hall_size={args.hall_size})")
         # prepare config for GA
         ga_cfg = cfg.get("ga", {})
         if args.generations is not None:
             ga_cfg["generations"] = args.generations
         if "generations" not in ga_cfg:
             ga_cfg["generations"] = 12
-        if "hall_size" not in ga_cfg:
+        if args.hall_size is not None:
+            if args.hall_size < 1:
+                print("[get_shuttle] --hall-size must be >= 1", file=sys.stderr)
+                return 2
             ga_cfg["hall_size"] = args.hall_size
+        elif "hall_size" not in ga_cfg:
+            ga_cfg["hall_size"] = 20
+        hall_limit = int(ga_cfg["hall_size"])
+        if hall_limit < 1:
+            print("[get_shuttle] ga.hall_size must be >= 1", file=sys.stderr)
+            return 2
+        print(f"[get_shuttle] GA много алгоритмов → {out}  (hall_size={hall_limit})")
         if args.no_robust:
             # убрать остров R
             ga_cfg["islands"] = [i for i in ga_cfg.get("islands",[]) if i.get("strategy")!="R"]
@@ -167,7 +171,7 @@ def main():
 
             # сохраняем га_холл в удобном формате
             hall_json = []
-            for rank, g in enumerate(hall[:args.hall_size]):
+            for rank, g in enumerate(hall[:hall_limit]):
                 # baseline острова
                 baseline = "sta"
                 try:
@@ -216,7 +220,7 @@ def main():
 
             (out / "ga_hall.json").write_text(json.dumps(hall_json, indent=2, ensure_ascii=False), encoding="utf-8")
 
-            # итоговый best — для прошивки
+            # сохраняем метаданные лучшего симуляционного кандидата
             best = hall[0]
             baseline0 = hall_json[0]["baseline"]
             try:
@@ -231,8 +235,8 @@ def main():
             md.append("|---:|---|---|---:|---:|---:|---:|---|")
             for r in hall_json[:min(12, len(hall_json))]:
                 md.append(f"| {r['rank']} | {r['island']} | {r['baseline']} | {r['fitness']:.4f} | {r['n_total']:.3g} | {r['pos_err_m']*1e6:.2f} | {(r['fmin_hz'] or 0)/1e6:.2f} | `{','.join(f'{x:.2f}' for x in r['theta'][:4])}...` |")
-            md += ["", "## Как прошить", "```bash", f"# лучший (rank 0) — из {out}/algorithms/algo_000.json", f"python -m shuttle_sim --config {out}/input_config.json --out output/flash --full-field  # проверка", "```", ""]
-            md += ["## Дашборд", f"Если запускал с --dashboard — открой http://localhost:{args.port} → вкладки Setup/Training/GA/Trap (анимация)", ""]
+            md += ["", "## Лучший кандидат — только симуляция", f"Параметры: `{out}/algorithms/algo_000.json`.", f"Командная форма для анализа: `{out}/algorithms/algo_000_waveform.csv`.", "Эти файлы не являются форматом прошивки; физический экспорт в проекте отключён.", ""]
+            md += ["## Дашборд", f"Если запускался с --dashboard — открой http://localhost:{args.port} → вкладки Setup/Training/GA/Trap (анимация)", ""]
             (out / "summary.md").write_text("\n".join(md), encoding="utf-8")
             print(f"[get_shuttle] записал {out}/ga_hall.json  + {hall_dir}/*  + summary.md")
             print(f"[get_shuttle] лучший: island={best.island} baseline={baseline0} f={best.fitness:.4g} n={hall_json[0]['n_total']:.3g}")
@@ -244,7 +248,12 @@ def main():
             if dash_proc: dash_proc.terminate()
             return 1
 
-    print(f"[get_shuttle] готово → {out}  (куча алгоритмов в ga_hall.json и algorithms/)")
+    if args.mode == "pipeline":
+        print(f"[get_shuttle] pipeline завершён → {out}/pipeline_run")
+    elif args.mode == "both":
+        print(f"[get_shuttle] pipeline и GA завершены → {out}")
+    else:
+        print(f"[get_shuttle] GA завершён → {out}  (кандидаты в ga_hall.json и algorithms/)")
     if dash_proc:
         print(f"[get_shuttle] дашборд всё ещё висит на http://localhost:{args.port} — Ctrl+C чтобы остановить (или оставь)")
         try:

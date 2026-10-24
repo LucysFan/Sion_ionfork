@@ -4,7 +4,7 @@
 оставляется для итогового зала кандидатов. Компоненты сохраняются отдельно.
 """
 import numpy as np
-from ..field import Rejected, finite
+from ..field import Rejected, finite, rejection_penalty
 from ..observables import scalar_loss_from_observables, dimensionless_control_penalty
 
 def scalar_fitness(metrics, task, distortion=None, theta=None, control_bounds=None,
@@ -20,15 +20,17 @@ def scalar_fitness(metrics, task, distortion=None, theta=None, control_bounds=No
     if theta is not None and control_bounds is not None:
         val += dimensionless_control_penalty(theta, control_bounds,
                                              control_regularization_weight)
-    # This is a hard confinement gate in Runner; retain a soft term only for
-    # callers that supply an already-computed below-floor metric.
+    # Confinement is a hard constraint in Runner and the safety layer, not a
+    # second soft term. Reject stale or externally supplied below-floor metrics.
     fmin = float(metrics.get('minimum_frequency_hz', task.get('min_frequency_hz', 400e3)))
     f0 = float(task.get('min_frequency_hz', 400e3))
     if fmin < f0:
-        val += 2*np.log1p((f0-fmin)/0.1e6)
+        raise Rejected('weak_confinement', 'fitness received a below-floor frequency metric',
+                       violation=(f0-fmin)/f0)
     return float(val)
 
-def evaluate_genome(genome, runner, baseline='sta', exact_nodes=None, hardware=None, stray=None, freq_scale=1.0):
+def evaluate_genome(genome, runner, baseline='sta', exact_nodes=None, hardware=None, stray=None,
+                    freq_scale=1.0, subdivisions=None):
     """Evaluate one genome with cheap ROM (or exact if requested).
 
     Populates genome.fitness, genome.metrics, genome.status.
@@ -43,25 +45,36 @@ def evaluate_genome(genome, runner, baseline='sta', exact_nodes=None, hardware=N
     # Keep legacy frequency_mode intact; if task was variable, its coeffs remain as configured
     try:
         # cheap: exact_nodes=None → ROM linear response; expensive: pass exact_nodes
+        use_subdivisions = (runner.cfg.get('subdivisions',4) if subdivisions is None
+                            else int(subdivisions))
         metrics = runner.evaluate(theta, baseline=baseline, hardware=hardware, stray=stray,
-                                  frequency_scale=freq_scale, exact_nodes=exact_nodes, subdivisions=runner.cfg.get('subdivisions',4))
-        fit = scalar_fitness(metrics, runner.task, distortion=metrics.get('distortion'),
+                                  frequency_scale=freq_scale, exact_nodes=exact_nodes,
+                                  subdivisions=use_subdivisions)
+        hardware_penalty = (metrics.get('distortion')
+                            if genome.island in ('H', 'hardware') else None)
+        fit = scalar_fitness(metrics, runner.task, distortion=hardware_penalty,
                              theta=theta, control_bounds=genome.bounds,
                              control_regularization_weight=runner.cfg.get('control_regularization_weight',1e-4),
                              loss_weights=runner.loss_weights)
-        # robust aggregation if island R: evaluate on 2 train scenarios and take worst
+        # Robust island R combines nominal + training-scenario losses using a weighted mean/max.
         if genome.island in ('R','robust'):
             from ..hardware import Hardware
             train = runner.scenarios(runner.cfg.get('robust_training_samples',2), runner.cfg['uncertainty']['seed']+1)
             vals=[fit]
             for sc in train:
                 try:
-                    m2=runner.evaluate(theta,'sta', hardware=Hardware(**sc['hardware']), stray=sc['stray_V_m'], frequency_scale=sc['frequency_scale'], exact_nodes=exact_nodes)
+                    m2=runner.evaluate(theta,baseline, hardware=Hardware(**sc['hardware']),
+                                        stray=sc['stray_V_m'], frequency_scale=sc['frequency_scale'],
+                                        exact_nodes=exact_nodes, subdivisions=use_subdivisions)
+                    scenario_distortion = (m2.get('distortion')
+                                           if genome.island in ('H', 'hardware') else None)
                     vals.append(scalar_fitness(
-                        m2, runner.task, m2.get('distortion'), theta, genome.bounds,
+                        m2, runner.task, scenario_distortion, theta, genome.bounds,
                         runner.cfg.get('control_regularization_weight',1e-4),
                         loss_weights=runner.loss_weights))
-                except Exception:
+                except Rejected as ex:
+                    vals.append(rejection_penalty(ex))
+                except (np.linalg.LinAlgError, FloatingPointError):
                     vals.append(1e6)
             fit = float(0.35*np.mean(vals)+0.65*np.max(vals))
             metrics['robust_train_vals']=vals
@@ -71,8 +84,9 @@ def evaluate_genome(genome, runner, baseline='sta', exact_nodes=None, hardware=N
         if metrics.get('quality_failures'):
             genome.status = ','.join(metrics['quality_failures'])
     except Rejected as ex:
-        genome.fitness = 1e6
-        genome.metrics = {'error':str(ex), 'code':ex.code}
+        genome.fitness = rejection_penalty(ex)
+        genome.metrics = {'error':str(ex), 'code':ex.code,
+                          'constraint_violation':ex.violation}
         genome.status = ex.code
     except Exception as ex:
         genome.fitness = 1e6
