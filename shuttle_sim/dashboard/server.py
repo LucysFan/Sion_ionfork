@@ -731,35 +731,86 @@ class Handler(SimpleHTTPRequestHandler):
                                 tg_cfg = int(cfg.get("ga", {}).get("generations", 0) or cfg.get("total_generations", 0) or 0)
                             except Exception:
                                 tg_cfg = 0
+                        # merge live.json for real-time fractional progress (robust against heavy state stalls)
+                        live = None
+                        live_path = pathlib.Path(running_out) / "live.json"
+                        if live_path.exists():
+                            try:
+                                live = json.loads(live_path.read_text(encoding="utf-8"))
+                            except Exception:
+                                live = None
                         if p.exists():
                             st = json.loads(p.read_text(encoding="utf-8"))
                             gg = st.get("global_generation", 0)
                             tg = st.get("total_generations", 0) or st.get("ga", {}).get("generations", 0) or tg_cfg or 12
                             elapsed = st.get("elapsed_s", time.time() - (running_start or time.time()))
-                            perc = (gg / tg * 100) if tg else 0
+                            perc_state = (gg / tg * 100) if tg else 0
+                            perc = perc_state
+                            best = (st.get("hall_of_fame", [{}])[0].get("fitness") if st.get("hall_of_fame") else None)
+                            status = "running"
+                            progress_extra = {}
+                            if live is not None:
+                                try:
+                                    lg = live.get("live_generation")
+                                    op = live.get("overall_progress")
+                                    if lg is not None and op is not None and tg:
+                                        live_perc = op * 100
+                                        if live_perc > perc_state - 0.5:
+                                            perc = live_perc
+                                            progress_extra = {
+                                                "live_generation": lg,
+                                                "live_generation_raw": live.get("live_generation_raw", lg),
+                                                "gen_progress": live.get("gen_progress", 0),
+                                                "overall_progress": op,
+                                                "evaluated_in_gen": live.get("evaluated_in_gen", 0),
+                                                "total_in_gen": live.get("total_in_gen", 0),
+                                                "current_island": live.get("current_island"),
+                                            }
+                                except Exception:
+                                    progress_extra = {}
                             progress = {
                                 "global_generation": gg,
                                 "total_generations": tg,
                                 "percent": perc,
-                                "elapsed_s": elapsed,
-                                "best": (st.get("hall_of_fame", [{}])[0].get("fitness") if st.get("hall_of_fame") else None),
+                                "elapsed_s": live.get("elapsed_s", elapsed) if live else elapsed,
+                                "best": live.get("live_best", best) if live and live.get("live_best") is not None else best,
                                 "status": "running",
                             }
+                            progress.update(progress_extra)
                         else:
                             elapsed = time.time() - (running_start or time.time()) if running_start else 0
-                            gg_hist = 0
-                            hist_dir = pathlib.Path(running_out) / "history"
-                            if hist_dir.exists():
-                                gg_hist = len(list(hist_dir.glob("gen_*.json")))
-                            tg = tg_cfg or 12
-                            perc = (gg_hist / tg * 100) if tg else 0
-                            progress = {
-                                "global_generation": gg_hist,
-                                "total_generations": tg,
-                                "percent": perc,
-                                "elapsed_s": elapsed,
-                                "status": "initializing",
-                            }
+                            # prefer live if available even when state.json missing (early gen)
+                            if live is not None and live.get("overall_progress") is not None:
+                                tg = tg_cfg or live.get("total_generations", 12) or 12
+                                lg = live.get("live_generation", 0)
+                                op = live.get("overall_progress", 0)
+                                progress = {
+                                    "global_generation": int(lg) if lg is not None else 0,
+                                    "live_generation": lg,
+                                    "total_generations": tg,
+                                    "percent": op*100 if op else 0,
+                                    "overall_progress": op,
+                                    "gen_progress": live.get("gen_progress", 0),
+                                    "evaluated_in_gen": live.get("evaluated_in_gen", 0),
+                                    "total_in_gen": live.get("total_in_gen", 0),
+                                    "elapsed_s": live.get("elapsed_s", elapsed),
+                                    "best": live.get("live_best"),
+                                    "status": "initializing",
+                                }
+                            else:
+                                gg_hist = 0
+                                hist_dir = pathlib.Path(running_out) / "history"
+                                if hist_dir.exists():
+                                    gg_hist = len(list(hist_dir.glob("gen_*.json")))
+                                tg = tg_cfg or 12
+                                perc = (gg_hist / tg * 100) if tg else 0
+                                progress = {
+                                    "global_generation": gg_hist,
+                                    "total_generations": tg,
+                                    "percent": perc,
+                                    "elapsed_s": elapsed,
+                                    "status": "initializing",
+                                }
                     except Exception:
                         progress = {
                             "global_generation": 0,

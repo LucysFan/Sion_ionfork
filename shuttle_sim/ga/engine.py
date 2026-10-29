@@ -43,9 +43,28 @@ class GAEngine:
             _cuda_tmp={"has_cupy":False,"has_numba":False}
         # сохраняем cuda_info для дашборда, но позже перезапишем self.cuda
         self._cuda_tmp = _cuda_tmp
-        self.use_cuda = bool(config.get('use_cuda', True)) and bool(_cuda_tmp.get('has_cupy') or _cuda_tmp.get('has_numba') or _cuda_tmp.get('numba_cuda_available'))
+        # correctly read use_cuda from ga section or top-level, and only enable if real CUDA device exists
+        _cfg_use = config.get('use_cuda', None)
+        if _cfg_use is None:
+            _cfg_use = config.get('ga', {}).get('use_cuda', True) if isinstance(config.get('ga'), dict) else True
+        _has_real_cuda = bool(_cuda_tmp.get('has_cupy') or _cuda_tmp.get('numba_cuda_available'))
+        self.use_cuda = bool(_cfg_use) and _has_real_cuda
         try:
-            self.xp = get_xp() if self.use_cuda else np
+            if self.use_cuda and _cuda_tmp.get('has_cupy'):
+                self.xp = get_xp()
+                # sanity: get_xp should return cupy if has_cupy
+                if getattr(self.xp, '__name__', 'numpy') != 'cupy':
+                    # cupy import failed despite has_cupy flag (race) — fallback to numpy but keep use_cuda if numba cuda available
+                    if not _cuda_tmp.get('numba_cuda_available'):
+                        self.use_cuda = False
+                    self.xp = np if getattr(self.xp, '__name__', 'numpy') != 'cupy' and not _cuda_tmp.get('numba_cuda_available') else self.xp
+            elif self.use_cuda and _cuda_tmp.get('numba_cuda_available'):
+                # numba CUDA available but cupy not — use numpy for xp, but flag CUDA true (kernel-level)
+                self.xp = np
+            else:
+                self.xp = np
+                if not _has_real_cuda:
+                    self.use_cuda = False
         except Exception:
             self.xp = np
             self.use_cuda = False
@@ -914,7 +933,16 @@ class GAEngine:
         # lightweight live update inside generation — не тяжёлый как _write_state (без trap траекторий)
         try:
             frac = evaluated/total if total else 0
-            live_gen = self.global_gen + frac
+            # fractional completed: for gen>0, completed = gen-1 + frac (0..generations)
+            # keeps progress monotonic 0->generations and ensures after gen1 done live=1.0 not 2.0
+            if self.global_gen > 0:
+                live_gen = (self.global_gen - 1 + frac)
+                # clamp to [0, generations]
+                live_gen = max(0.0, min(float(self.generations), live_gen))
+            else:
+                live_gen = frac
+            # also keep raw for debugging (old behaviour)
+            live_gen_raw = self.global_gen + frac
             # keep recent 40
             if not hasattr(self, '_live_recent'):
                 self._live_recent=[]
@@ -934,10 +962,12 @@ class GAEngine:
             live_state=dict(
                 global_generation=self.global_gen,
                 live_generation=live_gen,
+                live_generation_raw=live_gen_raw,
+                total_generations=int(self.generations),
                 evaluated_in_gen=evaluated,
                 total_in_gen=total,
                 gen_progress=frac,
-                overall_progress=(self.global_gen+frac)/self.generations if self.generations else 0,
+                overall_progress=(live_gen/self.generations) if self.generations else 0,
                 elapsed_s=time.time()-self.start_time,
                 current_island=island_strategy,
                 current_fitness=current_fitness,

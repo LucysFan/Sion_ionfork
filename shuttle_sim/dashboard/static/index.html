@@ -323,7 +323,7 @@ input[type=range]{accent-color:var(--accent)}
         <span style="margin-left:auto;font-size:11px;color:var(--muted);display:inline-flex;align-items:center;gap:6px"><span style="width:28px;height:3px;border-radius:99px;background:linear-gradient(90deg,#5ac8ff,#7af0a0);display:inline-block;opacity:0.9"></span> ось X — дробное поколение · Y — log fitness (ниже лучше)</span>
       </div>
       <div style="position:relative;border-radius:12px;overflow:hidden;border:1px solid #24324d;background:#07101f;box-shadow:inset 0 0 0 1px rgba(255,255,255,0.03), inset 0 6px 18px rgba(0,0,0,0.35)">
-        <canvas id="cLive" width="1100" height="260" style="height:260px;width:100%;display:block"></canvas>
+        <canvas id="cLive" width="1100" height="320" style="height:320px;width:100%;display:block"></canvas>
         <div style="position:absolute;inset:0;pointer-events:none;border-radius:12px;box-shadow:inset 0 1px 0 rgba(255,255,255,0.06), inset 0 0 24px rgba(90,200,255,0.05)"></div>
       </div>
       <div class="legend" id="liveLegend" style="margin-top:9px;justify-content:space-between;gap:10px"></div>
@@ -334,16 +334,16 @@ input[type=range]{accent-color:var(--accent)}
   <div class="grid">
     <div class="card">
       <h3>Fitness vs generation <small>по островам и глобальный минимум</small></h3>
-      <canvas id="cFitness" width="1100" height="320"></canvas>
+      <canvas id="cFitness" width="1100" height="380"></canvas>
       <div id="fitnessLegend" class="legend"></div>
     </div>
     <div class="card">
       <h3>Diversity vs generation <small>нормированное расстояние</small></h3>
-      <canvas id="cDivers" width="1100" height="320"></canvas>
+      <canvas id="cDivers" width="1100" height="380"></canvas>
     </div>
     <div class="card">
       <h3>Population histogram <small>распределение fitness</small></h3>
-      <canvas id="cHist" width="1100" height="320"></canvas>
+      <canvas id="cHist" width="1100" height="380"></canvas>
       <div id="histStats" class="kv mono" style="margin-top:8px"></div>
     </div>
     <div class="card">
@@ -362,12 +362,12 @@ input[type=range]{accent-color:var(--accent)}
     </div>
     <div class="card">
       <h3>Pareto <small>n_total / ошибка позиции / искажение</small></h3>
-      <canvas id="cPareto" width="1100" height="360" class="pareto"></canvas>
+      <canvas id="cPareto" width="1100" height="380" class="pareto"></canvas>
       <div class="legend" id="paretoLegend"></div>
     </div>
     <div class="card" style="grid-column:1/-1">
       <h3>Траектории лучшего решения <small>мкм / мкс</small></h3>
-      <canvas id="cTraj" width="1300" height="360" style="height:360px;background:#121c2e;border-radius:10px;display:block"></canvas>
+      <canvas id="cTraj" width="1300" height="400" style="height:400px;background:#121c2e;border-radius:10px;display:block"></canvas>
       <div class="legend" id="trajLegend"></div>
       <div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap;align-items:center">
         <label class="kv"><input type="checkbox" id="chkWell" checked> яма</label>
@@ -386,7 +386,7 @@ input[type=range]{accent-color:var(--accent)}
     </div>
     <div class="card" style="grid-column:1/-1;border-left:4px solid #ff6b7a">
       <h3>Робастность <small>проверка на вариациях hardware — gain/offset/stray/freq, порог n₀</small> <span id="robustBadge" class="badge" style="margin-left:8px">—</span></h3>
-      <canvas id="cRobust" width="1100" height="280" style="height:280px"></canvas>
+      <canvas id="cRobust" width="1100" height="340" style="height:280px"></canvas>
       <div class="legend" id="robustLegend" style="margin-top:8px"></div>
       <div id="robustTable" class="mono" style="margin-top:8px;overflow:auto"></div>
       <div class="kv mono" id="robustStats" style="margin-top:6px;color:var(--muted);font-size:11px"></div>
@@ -467,7 +467,7 @@ input[type=range]{accent-color:var(--accent)}
     <div class="grid" style="grid-template-columns:1fr 1fr;gap:16px">
       <div class="card">
         <h3>Напряжения на электродах <small>во времени — лучшие per island</small></h3>
-        <canvas id="cVoltage" width="1100" height="320" style="height:320px"></canvas>
+        <canvas id="cVoltage" width="1100" height="360" style="height:360px"></canvas>
         <div class="legend" id="voltageLegend" style="margin-top:8px"></div>
         <div class="kv mono" id="voltageStats" style="margin-top:6px;color:var(--muted);font-size:11px"></div>
         <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
@@ -478,7 +478,7 @@ input[type=range]{accent-color:var(--accent)}
       </div>
       <div class="card">
         <h3>Секулярная частота <small>ω(t)/2π, МГц — по времени шаттлинга</small></h3>
-        <canvas id="cFrequency" width="1100" height="320" style="height:320px"></canvas>
+        <canvas id="cFrequency" width="1100" height="360" style="height:360px"></canvas>
         <div class="legend" id="frequencyLegend" style="margin-top:8px"></div>
         <div class="kv mono" id="frequencyStats" style="margin-top:6px;color:var(--muted);font-size:11px"></div>
         <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
@@ -525,13 +525,13 @@ input[type=range]{accent-color:var(--accent)}
     <div class="grid" style="grid-template-columns:1fr 1fr">
       <div class="card">
         <h3>Вклад в loss — лучшие решения <small>stacked, чем ниже тем лучше</small></h3>
-        <canvas id="cLossStack" width="900" height="320" style="height:320px"></canvas>
+        <canvas id="cLossStack" width="900" height="360" style="height:380px"></canvas>
         <div class="legend" id="lossStackLegend"></div>
         <div class="mono" id="lossStackStats" style="margin-top:6px;color:var(--muted);font-size:11px"></div>
       </div>
       <div class="card">
         <h3>Динамика вкладов по поколениям <small>лучший hall[0]</small></h3>
-        <canvas id="cLossHistory" width="900" height="320" style="height:320px"></canvas>
+        <canvas id="cLossHistory" width="900" height="360" style="height:380px"></canvas>
         <div class="legend" id="lossHistoryLegend"></div>
         <div class="mono" id="lossHistoryStats" style="margin-top:6px;color:var(--muted);font-size:11px"></div>
       </div>
@@ -1712,12 +1712,18 @@ function centerViewOnIon(){
 // =========================================================================
 function drawAxes(ctx,w,h,opts){
   ctx.clearRect(0,0,w,h)
-  ctx.fillStyle="#121c2e"; ctx.fillRect(0,0,w,h)
-  ctx.strokeStyle="#1e2e4e"; ctx.lineWidth=1; ctx.setLineDash([3,4])
-  for(let i=0;i<4;i++){ let y=20+i*(h-40)/3; ctx.beginPath();ctx.moveTo(40,y);ctx.lineTo(w-10,y);ctx.stroke()}
-  ctx.setLineDash([]); ctx.strokeStyle="#243556"; ctx.strokeRect(0.5,0.5,w-1,h-1)
-  if(opts.xlabel){ ctx.fillStyle="#8aa0c8"; ctx.font="10px sans-serif"; ctx.fillText(opts.xlabel, 42, h-6)}
-  if(opts.ylabel){ ctx.save(); ctx.translate(12, h/2); ctx.rotate(-Math.PI/2); ctx.fillStyle="#8aa0c8"; ctx.font="10px sans-serif"; ctx.fillText(opts.ylabel, -30, 0); ctx.restore()}
+  // gradient bg
+  let bg=ctx.createLinearGradient(0,0,0,h)
+  bg.addColorStop(0,"#121c2e"); bg.addColorStop(1,"#0e172a")
+  ctx.fillStyle=bg; ctx.fillRect(0,0,w,h)
+  // grid: 4 horizontal + 5 vertical, subtle dashed
+  ctx.strokeStyle="rgba(30,46,78,0.85)"; ctx.lineWidth=1; ctx.setLineDash([3,5])
+  for(let i=0;i<4;i++){ let y=22+i*(h-48)/3; ctx.beginPath();ctx.moveTo(46,y);ctx.lineTo(w-14,y);ctx.stroke()}
+  for(let i=0;i<5;i++){ let x=46+i*(w-60)/4; ctx.beginPath();ctx.moveTo(x,22);ctx.lineTo(x,h-26);ctx.stroke()}
+  ctx.setLineDash([]); ctx.strokeStyle="#25365a"; ctx.lineWidth=1; ctx.strokeRect(0.5,0.5,w-1,h-1)
+  // labels with better typography
+  if(opts.xlabel){ ctx.fillStyle="#8aa0c8"; ctx.font="11px Inter, sans-serif"; ctx.textAlign="center"; ctx.fillText(opts.xlabel, w/2, h-7); ctx.textAlign="start"}
+  if(opts.ylabel){ ctx.save(); ctx.translate(14, h/2); ctx.rotate(-Math.PI/2); ctx.fillStyle="#8aa0c8"; ctx.font="11px Inter, sans-serif"; ctx.textAlign="center"; ctx.fillText(opts.ylabel, 0, 0); ctx.restore()}
 }
 
 function drawFitness(state){
@@ -2379,21 +2385,22 @@ function drawIslands(state){
 
 function drawAxes(ctx,W,H,opts){
   ctx.clearRect(0,0,W,H)
-  ctx.fillStyle="#121c2e"; ctx.fillRect(0,0,W,H)
-  // grid — 4 horizontal + 5 vertical, faint dashed
-  ctx.strokeStyle="rgba(30,46,78,0.65)"; ctx.lineWidth=1; ctx.setLineDash([3,5])
-  for(let i=0;i<4;i++){ let y=16+i*(H-40)/3; ctx.beginPath(); ctx.moveTo(44,y); ctx.lineTo(W-12,y); ctx.stroke() }
-  for(let i=0;i<5;i++){ let x=44+i*(W-56)/4; ctx.beginPath(); ctx.moveTo(x,16); ctx.lineTo(x,H-24); ctx.stroke() }
+  let bg=ctx.createLinearGradient(0,0,0,H)
+  bg.addColorStop(0,"#121c2e"); bg.addColorStop(1,"#0e172a")
+  ctx.fillStyle=bg; ctx.fillRect(0,0,W,H)
+  ctx.strokeStyle="rgba(30,46,78,0.85)"; ctx.lineWidth=1; ctx.setLineDash([3,5])
+  for(let i=0;i<4;i++){ let y=22+i*(H-48)/3; ctx.beginPath(); ctx.moveTo(46,y); ctx.lineTo(W-14,y); ctx.stroke() }
+  for(let i=0;i<5;i++){ let x=46+i*(W-60)/4; ctx.beginPath(); ctx.moveTo(x,22); ctx.lineTo(x,H-26); ctx.stroke() }
   ctx.setLineDash([])
-  ctx.strokeStyle="#243556"; ctx.strokeRect(0.5,0.5,W-1,H-1)
+  ctx.strokeStyle="#25365a"; ctx.strokeRect(0.5,0.5,W-1,H-1)
   if(opts && opts.xlabel){
-    ctx.fillStyle="#8aa0c8"; ctx.font="10px sans-serif"; ctx.textAlign="center"
-    ctx.fillText(opts.xlabel, W/2, H-6)
-    ctx.save(); ctx.translate(12, H/2); ctx.rotate(-Math.PI/2); ctx.fillText(opts.ylabel||"",0,0); ctx.restore()
+    ctx.fillStyle="#8aa0c8"; ctx.font="11px Inter, sans-serif"; ctx.textAlign="center"
+    ctx.fillText(opts.xlabel, W/2, H-7)
+    ctx.save(); ctx.translate(14, H/2); ctx.rotate(-Math.PI/2); ctx.fillText(opts.ylabel||"",0,0); ctx.restore()
     ctx.textAlign="start"
   } else if(opts && opts.ylabel){
-    ctx.fillStyle="#8aa0c8"; ctx.font="10px sans-serif"
-    ctx.save(); ctx.translate(12, H/2); ctx.rotate(-Math.PI/2); ctx.fillText(opts.ylabel||"",0,0); ctx.restore()
+    ctx.fillStyle="#8aa0c8"; ctx.font="11px Inter, sans-serif"
+    ctx.save(); ctx.translate(14, H/2); ctx.rotate(-Math.PI/2); ctx.fillText(opts.ylabel||"",0,0); ctx.restore()
   }
 }
 const LOSS_COLORS = {n:"#7af0a0", pos:"#ffbe55", well:"#c58aff", lag:"#5affda", distortion:"#ff7a7a", control:"#f0883e", freq:"#ff6b9e", robust:"#ffd05a", sum:"#ffffff"}
@@ -2894,17 +2901,39 @@ function updateKVs(state){
     if(tText) tText.textContent = prog.toFixed(1)+"% ("+(state.global_generation||0)+"/"+(state.total_generations||"—")+")";
   }
   let cuda=state.cuda||{}
-  let cudaTxt = cuda.has_cupy? `CUDA ${cuda.cupy_version||""}`.trim() : (cuda.has_numba && cuda.numba_cuda_available ? `Numba CUDA` : (state.use_cuda===false? "CPU (выкл.)" : (cuda.xp==="cupy"?"CUDA":"CPU")))
-  if(state.use_cuda===true && cuda.xp==="cupy") cudaTxt += " ✓"
-  else if(state.use_cuda===true && !(cuda.has_cupy)) cudaTxt += " →CPU"
+  // clearer CUDA badge: distinguish real device vs user toggle
+  let hasRealCuda = !!(cuda.has_cupy || cuda.numba_cuda_available)
+  let cudaTxt = ""
+  if(hasRealCuda){
+    if(cuda.has_cupy){
+      if(state.use_cuda===false) cudaTxt = `CuPy ${cuda.cupy_version||""} → CPU (выкл.)`
+      else cudaTxt = `CUDA ✓ CuPy ${cuda.cupy_version||""}`.trim()
+    } else if(cuda.numba_cuda_available){
+      if(state.use_cuda===false) cudaTxt = `Numba CUDA → CPU (выкл.)`
+      else cudaTxt = `CUDA ✓ Numba`
+    }
+    if(cuda.xp) cudaTxt += ` · ${cuda.xp}`
+  } else {
+    if(state.use_cuda===false) cudaTxt = "CPU (выкл.)"
+    else cudaTxt = `CPU · ${cuda.xp||"numpy"}`
+    if(cuda.cupy_error) cudaTxt += " (CuPy ошибка)"
+  }
   document.getElementById('cudaBadge').textContent = cudaTxt.trim()
   let availEl=document.getElementById('cudaAvailBadge')
   if(availEl){
-    if(cuda.has_cupy) availEl.textContent = `есть CuPy ${cuda.cupy_version||""} · ${state.use_cuda!==false? "вкл.":"выкл."} (${cuda.xp||"cupy"})`
-    else if(cuda.has_numba && cuda.numba_cuda_available) availEl.textContent = `Numba CUDA · ${state.use_cuda!==false? "вкл.":"CPU"}`
-    else availEl.textContent = cuda.has_cupy===false && !cuda.has_numba ? "нет CUDA — CPU" : `CPU fallback (${cuda.xp||"numpy"})`
-    availEl.style.background = (cuda.has_cupy||cuda.numba_cuda_available) && state.use_cuda!==false ? "#0d2816" : "#2a1d0a"
-    availEl.style.borderColor = (cuda.has_cupy||cuda.numba_cuda_available) && state.use_cuda!==false ? "#1a5c2a" : "#5c3a1a"
+    if(cuda.has_cupy){
+      let on = state.use_cuda!==false
+      availEl.textContent = `CuPy ${cuda.cupy_version||""} · ${on? "вкл ✓":"выкл →CPU"} (${cuda.xp||"cupy"})`
+    } else if(cuda.numba_cuda_available){
+      let on = state.use_cuda!==false
+      availEl.textContent = `Numba CUDA · ${on? "вкл ✓":"выкл →CPU"} (${cuda.xp||"numpy"})`
+    } else {
+      if(cuda.cupy_error) availEl.textContent = `CuPy ошибка: ${String(cuda.cupy_error).slice(0,60)} → CPU`
+      else if(cuda.has_cupy===false && !cuda.has_numba) availEl.textContent = "нет CUDA — CPU"
+      else availEl.textContent = `CPU (${cuda.xp||"numpy"}) — нет устройства`
+    }
+    availEl.style.background = hasRealCuda && state.use_cuda!==false ? "#0d2816" : "#2a1d0a"
+    availEl.style.borderColor = hasRealCuda && state.use_cuda!==false ? "#1a5c2a" : "#5c3a1a"
   }
   if(state.pop_size && document.activeElement?.id!=="inpPop"){
     let pp=document.getElementById('inpPop'); if(pp && pp.dataset.userEdited!=="1") pp.value=state.pop_size
@@ -3179,6 +3208,11 @@ function drawTrap(state){
     sideCtx.fillStyle="#8aa0c8"; sideCtx.font="9px monospace"
     sideCtx.fillText(xMin.toFixed(0), 42, sH-8); sideCtx.fillText(xMax.toFixed(0), sW-48, sH-8)
     sideCtx.fillText(zMin.toFixed(0), 4, sH-26); sideCtx.fillText(zMax.toFixed(0), 4, 28)
+    // axis labels for side view
+    sideCtx.fillStyle="#8aa0c8"; sideCtx.font="10px Inter, sans-serif"; sideCtx.textAlign="center"
+    sideCtx.fillText("x, мкм (шаттлинг)", sW/2, sH-2)
+    sideCtx.save(); sideCtx.translate(12, sH/2); sideCtx.rotate(-Math.PI/2); sideCtx.fillText("z, мкм (высота)",0,0); sideCtx.restore()
+    sideCtx.textAlign="start"
   }
   let lbl=document.getElementById('trapTimeLabel')
   if(lbl) lbl.textContent=`t=${curTus.toFixed(2)} мкс · ${(prog*100).toFixed(0)}%`
@@ -3554,13 +3588,34 @@ function init(){
       if(btnGA) btnGA.disabled=true
       if(btnSave) btnSave.disabled=true
       if(btnStop){ btnStop.disabled=false; btnStop.style.opacity="1" }
-      let isInit = progInfo.status==="initializing" || (progInfo.total_generations>0 && progInfo.global_generation===0 && (progInfo.percent||0)===0)
-      if(statusText) statusText.textContent = isInit ? `Инициализация · ${progInfo.mode||"GA"}` : `Расчёт · ${progInfo.mode||"GA"}`
+      let isInit = progInfo.status==="initializing" || (progInfo.total_generations>0 && (progInfo.global_generation||0)===0 && (progInfo.percent||0)<2)
+      // show live island & eval if available
+      let curIsl = progInfo.current_island
+      let evalIn = progInfo.evaluated_in_gen, totIn = progInfo.total_in_gen
+      let liveGen = progInfo.live_generation
+      let genProg = progInfo.gen_progress
+      let hasLive = liveGen!=null && progInfo.overall_progress!=null
+      if(hasLive){
+        // during init, liveGen is 0..1 fractional of gen0
+        if(isInit && liveGen<0.05) isInit = true
+        else if(liveGen>0.05) isInit = false
+      }
+      if(statusText) statusText.textContent = isInit ? `Инициализация · ${progInfo.mode||"GA"}${curIsl? " · "+curIsl:""}` : `Расчёт · ${progInfo.mode||"GA"}${curIsl? " · "+curIsl:""}${evalIn!=null&&totIn? " "+evalIn+"/"+totIn:""}`
       if(jobIdEl) jobIdEl.textContent = jobId ? `(${jobId})` : ""
       let pct = progInfo.percent||0
       if(progBar){ progBar.style.width = Math.max(pct, isInit?4:0).toFixed(1)+"%"; progBar.style.opacity = isInit?"0.7":"1" }
       let tot = progInfo.total_generations||"—"
-      if(progText) progText.textContent = `${pct.toFixed(1)}% (${progInfo.global_generation||0}/${tot})`
+      if(hasLive){
+        let genDisp = liveGen.toFixed(2)
+        // also show gen progress intra
+        if(evalIn!=null && totIn){
+          if(progText) progText.textContent = `${pct.toFixed(1)}% (${genDisp}/${tot}) · ${evalIn}/${totIn}${genProg!=null? " ("+(genProg*100).toFixed(0)+"%)":""}`
+        } else {
+          if(progText) progText.textContent = `${pct.toFixed(1)}% (${genDisp}/${tot})`
+        }
+      } else {
+        if(progText) progText.textContent = `${pct.toFixed(1)}% (${progInfo.global_generation||0}/${tot})`
+      }
       if(elapsedEl) elapsedEl.textContent = progInfo.elapsed_s!=null ? fmtSec(progInfo.elapsed_s) : "—"
       if(logWrap) logWrap.style.display="block"
     } else {
@@ -3621,8 +3676,9 @@ function init(){
     const ctx=c.getContext('2d')
     ctx.setTransform(dpr,0,0,dpr,0,0)
 
-    let isNoLive = !live || live.status==="no live yet" || (!live.total_in_gen && !live.evaluated_in_gen && !live.live_generation)
-    let genFloat=live?.live_generation ?? live?.global_generation ?? 0
+    let isNoLive = !live || live.status==="no live yet" || (!live.total_in_gen && !live.evaluated_in_gen && !live.live_generation && live.live_generation!==0)
+    // live_generation is fractional completed (0..total) for overall percent; raw is current gen + frac for display (1.5 = gen1 half)
+    let genFloat=live?.live_generation_raw ?? live?.live_generation ?? live?.global_generation ?? 0
     let evalIn=live?.evaluated_in_gen ?? 0, totIn=live?.total_in_gen ?? 0
     let frac=live?.gen_progress ?? 0
     let totGens = live?.total_generations ?? document.getElementById('inpGens').value ?? 12
