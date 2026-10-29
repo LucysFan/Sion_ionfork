@@ -17,6 +17,16 @@ import time
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 
+# --- fix for `python shuttle_sim/dashboard/server.py` on Windows/macOS/Linux ---
+# When run as a script, sys.path[0] is .../shuttle_sim/dashboard, not the repo root,
+# so `import tools` and `import shuttle_sim` fail. Insert repo root automatically.
+try:
+    _ROOT = pathlib.Path(__file__).resolve().parents[2]
+    if str(_ROOT) not in sys.path:
+        sys.path.insert(0, str(_ROOT))
+except Exception:
+    pass
+
 # Global job tracker for unified dashboard
 _JOBS = {}
 _JOBS_lock = threading.Lock()

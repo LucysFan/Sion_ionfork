@@ -34,12 +34,50 @@ class GAEngine:
         (self.out/"history").mkdir(exist_ok=True)
         self.rng=np.random.default_rng(config.get('seed', 42))
         self.islands=[]
+        # процентный карантин: isolated_until можно задать как 12 (абсолют), "40%" или 0.4 / isolated_until_ratio
+        def _resolve_isolated_until(raw, total_gens):
+            if raw is None or raw == "":
+                return 0
+            if isinstance(raw, str):
+                s = raw.strip()
+                if s.endswith('%'):
+                    try:
+                        pct = float(s[:-1])
+                        return int(round(pct/100.0 * total_gens))
+                    except: 
+                        return 0
+                # строка-число
+                try:
+                    # "0.4" как дробь → процент, иначе абсолют
+                    fv = float(s)
+                    if 0 < fv < 1 and '.' in s:
+                        return int(round(fv * total_gens))
+                    return int(round(fv))
+                except:
+                    return 0
+            if isinstance(raw, float):
+                if 0 < raw < 1:
+                    return int(round(raw * total_gens))
+                return int(round(raw))
+            # int или иное
+            try:
+                return int(raw)
+            except:
+                return 0
+        total_gens = int(config.get('generations', 20))
         for i, icfg in enumerate(config.get('islands', [])):
             strat=icfg.get('strategy','S')
             pop=icfg.get('pop',20)
             base=icfg.get('baseline','sta')
-            isolated_until=int(icfg.get('isolated_until', 0))
+            raw_iso = icfg.get('isolated_until', icfg.get('isolated_until_ratio', 0))
+            # поддержка обоих ключей: isolated_until и isolated_until_ratio (0..1 или "40%")
+            if 'isolated_until_ratio' in icfg and 'isolated_until' not in icfg:
+                raw_iso = icfg['isolated_until_ratio']
+            isolated_until = _resolve_isolated_until(raw_iso, total_gens)
             isl=Island(i, strat, pop, rng=self.rng.integers(0,1<<31), baseline=base, isolated_until=isolated_until)
+            # сохраним исходное значение для дашборда/дебага
+            isl.isolated_until_raw = raw_iso
+            isl.isolated_until_percent = (isolated_until/total_gens*100) if total_gens else 0
             isl.initialize()
             self.islands.append(isl)
         if not self.islands:
