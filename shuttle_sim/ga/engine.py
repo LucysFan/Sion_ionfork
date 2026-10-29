@@ -122,17 +122,6 @@ class GAEngine:
         self.migration=RingMigration(self.islands, interval=config.get('migration_interval',5), n_migrants=config.get('n_migrants',2))
         self.generations=config.get('generations', 20)
         self.hall_size=config.get('hall_size', 10)
-        # fast-mode for small quick tests (gens<=3) — reduce fidelity to meet 90s timeout
-        if self.generations <= 3:
-            try:
-                # fewer hardware subdivisions and robust samples for speed
-                if self.runner.cfg.get('subdivisions', 4) > 2:
-                    self.runner.cfg['subdivisions'] = 2
-                if self.runner.cfg.get('robust_training_samples', 2) > 1:
-                    self.runner.cfg['robust_training_samples'] = 1
-                if self.runner.cfg.get('robust_samples', 4) > 3:
-                    self.runner.cfg['robust_samples'] = 3
-            except: pass
         self.hall_of_fame=[]  # list of Genome sorted
         self.global_gen=0
         self.start_time=time.time()
@@ -642,18 +631,13 @@ class GAEngine:
         except Exception:
             pass
 
-        # --- robustness snapshot for dashboard (hall top 1-2, per-island best) ---  fast: 4+3 scens, 81 nodes
+        # --- robustness snapshot for dashboard (hall top 1-2, per-island best) ---  full robustness, no simplifications
         robustness = None
         try:
-            # light per-island updates should not trigger expensive robustness recompute; also skip gen0 heavy robustness (takes 30s, delays first dashboard)
             if not heavy:
                 should_recompute = False
             else:
-                # skip gen0 robustness to keep initial state fast; first robustness at gen3 or final
-                if self.global_gen == 0:
-                    should_recompute = False
-                else:
-                    should_recompute = (self.global_gen % 3 == 0) or (self.global_gen == self.generations) or (not self._robustness_cache)
+                should_recompute = (self.global_gen % 3 == 0) or (self.global_gen == self.generations) or (not self._robustness_cache)
             if should_recompute:
                 t0_rob = time.time()
                 hall_rob = []
@@ -666,8 +650,8 @@ class GAEngine:
                                 baseline = isl.baseline
                                 break
                         from ..hardware import Hardware
-                        count = int(self.runner.cfg.get('robust_samples', 2))
-                        count = min(count, 3)
+                        count = int(self.runner.cfg.get('robust_samples', 4))
+                        count = min(count, 6)
                         scenarios = self.runner.scenarios(count, self.runner.cfg['uncertainty']['seed'] + 100 + rank)
                         vals = []
                         for sc in scenarios:
@@ -682,7 +666,7 @@ class GAEngine:
                                         if hasattr(self.runner, attr):
                                             stashed[attr]=getattr(self.runner, attr)
                                     _prepare_for_W(self.runner, freq_c)
-                                    m = self.runner.evaluate(theta_v, baseline=baseline, hardware=Hardware(**sc['hardware']), stray=sc['stray_V_m'], frequency_scale=sc['frequency_scale'], exact_nodes=41)
+                                    m = self.runner.evaluate(theta_v, baseline=baseline, hardware=Hardware(**sc['hardware']), stray=sc['stray_V_m'], frequency_scale=sc['frequency_scale'], exact_nodes=81)
                                     # restore immediately
                                     self.runner.task['frequency_mode']=stashed['task_mode'] or 'fixed'
                                     self.runner.task['frequency_coeffs']=stashed['task_coeffs'] or [0.0,0.0]
@@ -693,7 +677,7 @@ class GAEngine:
                                         self.runner.prepare()
                                     except: pass
                                 else:
-                                    m = self.runner.evaluate(g.theta, baseline=baseline, hardware=Hardware(**sc['hardware']), stray=sc['stray_V_m'], frequency_scale=sc['frequency_scale'], exact_nodes=41)
+                                    m = self.runner.evaluate(g.theta, baseline=baseline, hardware=Hardware(**sc['hardware']), stray=sc['stray_V_m'], frequency_scale=sc['frequency_scale'], exact_nodes=81)
                                 vals.append(float(m.get('n_total', 1e6)))
                             except Exception:
                                 vals.append(1e6)
@@ -703,31 +687,26 @@ class GAEngine:
                     except Exception as e:
                         hall_rob.append(dict(rank=rank, error=str(e)[:200]))
                 island_rob = []
-                # skip per-island robustness for small runs (<=3 gens) to keep dashboard fast; hall robustness is enough for gate
-                if self.generations > 3:
-                    for isl in self.islands:
-                        if time.time()-t0_rob > 8: break
-                        try:
-                            pop_valid = [g for g in isl.population if g.fitness is not None]
-                            if not pop_valid: continue
-                            best = min(pop_valid, key=lambda g: g.fitness)
-                            baseline = isl.baseline
-                            count = 1
-                            from ..hardware import Hardware
-                            scenarios = self.runner.scenarios(count, self.runner.cfg['uncertainty']['seed'] + 200 + isl.id)
-                            vals=[]
-                            for sc in scenarios:
-                                try:
-                                    m = self.runner.evaluate(best.theta, baseline=baseline, hardware=Hardware(**sc['hardware']), stray=sc['stray_V_m'], frequency_scale=sc['frequency_scale'], exact_nodes=41)
-                                    vals.append(float(m.get('n_total',1e6)))
-                                except: vals.append(1e6)
-                            max_n = float(self.runner.task.get('max_n_total',0.5))
-                            pass_frac = sum(1 for v in vals if v <= max_n*1.5)/len(vals)
-                            island_rob.append(dict(island=isl.strategy, baseline=baseline, best_fitness=float(best.fitness), mean_n=float(np.mean(vals)), worst_n=float(np.max(vals)), pass_fraction=float(pass_frac)))
-                        except: pass
-                else:
-                    # for small runs, just hall robustness is enough; island list empty but gate still present via hall
-                    island_rob = []
+                for isl in self.islands:
+                    if time.time()-t0_rob > 12: break
+                    try:
+                        pop_valid = [g for g in isl.population if g.fitness is not None]
+                        if not pop_valid: continue
+                        best = min(pop_valid, key=lambda g: g.fitness)
+                        baseline = isl.baseline
+                        count = 3
+                        from ..hardware import Hardware
+                        scenarios = self.runner.scenarios(count, self.runner.cfg['uncertainty']['seed'] + 200 + isl.id)
+                        vals=[]
+                        for sc in scenarios:
+                            try:
+                                m = self.runner.evaluate(best.theta, baseline=baseline, hardware=Hardware(**sc['hardware']), stray=sc['stray_V_m'], frequency_scale=sc['frequency_scale'], exact_nodes=81)
+                                vals.append(float(m.get('n_total',1e6)))
+                            except: vals.append(1e6)
+                        max_n = float(self.runner.task.get('max_n_total',0.5))
+                        pass_frac = sum(1 for v in vals if v <= max_n*1.5)/len(vals)
+                        island_rob.append(dict(island=isl.strategy, baseline=baseline, best_fitness=float(best.fitness), mean_n=float(np.mean(vals)), worst_n=float(np.max(vals)), pass_fraction=float(pass_frac)))
+                    except: pass
                 robustness = dict(hall=hall_rob, islands=island_rob, threshold_n=float(self.runner.task.get('max_n_total',0.5)), gen=self.global_gen, timestamp=time.time())
                 self._robustness_cache[self.global_gen] = robustness
                 self._robustness_cache['latest'] = robustness
