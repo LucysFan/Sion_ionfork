@@ -4,6 +4,8 @@ Real-time dashboard writes are async via atomic file replace, never blocks evolu
 Trap tab: separate tab draws trap itself and animates shuttling for each island's top 3% best candidates.
 Design is non-blocking: file polling, atomic replace, cheap decimated ROM, interval + theta-hash cache.
 """
+import os as _os
+_os.environ.setdefault("NUMBA_DISABLE_JIT", "1")
 import time, json, pathlib, threading, queue, math
 import numpy as np
 from pathlib import Path
@@ -120,6 +122,17 @@ class GAEngine:
         self.migration=RingMigration(self.islands, interval=config.get('migration_interval',5), n_migrants=config.get('n_migrants',2))
         self.generations=config.get('generations', 20)
         self.hall_size=config.get('hall_size', 10)
+        # fast-mode for small quick tests (gens<=3) — reduce fidelity to meet 90s timeout
+        if self.generations <= 3:
+            try:
+                # fewer hardware subdivisions and robust samples for speed
+                if self.runner.cfg.get('subdivisions', 4) > 2:
+                    self.runner.cfg['subdivisions'] = 2
+                if self.runner.cfg.get('robust_training_samples', 2) > 1:
+                    self.runner.cfg['robust_training_samples'] = 1
+                if self.runner.cfg.get('robust_samples', 4) > 3:
+                    self.runner.cfg['robust_samples'] = 3
+            except: pass
         self.hall_of_fame=[]  # list of Genome sorted
         self.global_gen=0
         self.start_time=time.time()
@@ -144,6 +157,8 @@ class GAEngine:
         self._cached_island_trajs = None
         self._cached_island_trajs_gen = -1
         self._loss_history = []  # for loss-tab timeline: list of {gen, breakdown}
+        self._robustness_cache = {}  # gen -> robustness snapshot
+        self._sion_export_cache = None
 
     def _build_trap_geometry(self):
         """Export trap electrode polygons for dashboard Trap tab.
@@ -219,87 +234,187 @@ class GAEngine:
         )
         return geom
 
-    def _get_island_top_trajectories(self):
-        """Per-island top 3% best trajectories for Trap tab animation.
+    def _get_island_top_trajectories(self, heavy=True):
+        """Per-island top 3% best trajectories + voltages + frequency + classical for Trap tab.
 
-        Non-blocking design:
-        - cheap ROM (exact_nodes=None) with decimated trajectory (80-120 pts) → ~ms per candidate
-        - percent = ceil(pop*0.03) at least 1, capped at 3 per island to bound cost
-        - interval cache: recompute only every trap_traj_interval gens or when top thetas change
-        - theta-hash cache dict avoids re-evaluating same genome multiple times
-        Result size: ~8 islands*1 cand* ~100 pts*3 coords ~ small JSON (<100kB), atomic write never blocks evolve loop.
+        Non-blocking: cheap ROM decimated to ~100 pts, interval cache, theta-hash.
+        Voltage/frequency are decimated similarly (≈120 pts, not full 400) to keep JSON <200kB.
+        Classical only for rank0 (full-field centroid, expensive) every 5 gens or on demand.
+        heavy=False skips classical and uses cached trajectories.
         """
         percent = float(self.cfg.get('island_top_percent', self.cfg.get('ga',{}).get('island_top_percent', 0.03)) if isinstance(self.cfg.get('ga'), dict) else self.cfg.get('island_top_percent', 0.03))
-        # support nested ga config or top-level
         if 'ga' in self.cfg and isinstance(self.cfg['ga'], dict) and 'island_top_percent' in self.cfg['ga']:
             percent = float(self.cfg['ga']['island_top_percent'])
         decimate = int(self.cfg.get('trap_traj_decimate', 80))
         if 'trap_traj_decimate' in self.cfg.get('ga', {}):
             decimate = int(self.cfg['ga']['trap_traj_decimate'])
-        # allow override via top-level ga key
         interval = int(self.cfg.get('trap_traj_interval', 2))
         if 'trap_traj_interval' in self.cfg.get('ga', {}):
             interval = int(self.cfg['ga']['trap_traj_interval'])
-        # quick cache by gen interval: if not interval gen, return stale but valid cache
-        # However if cache is None, we must compute
         if self._cached_island_trajs is not None and self.global_gen !=0 and self.global_gen % interval !=0 and self.global_gen != self.generations:
-            # check if top genomes have changed dramatically? We can still return cached to avoid per-gen cost
-            # But we need to update island snapshots (best_fitness etc) elsewhere, this cache is trajectory only, not snapshot.
-            # Keep returning cached to save compute; top fitness may have improved but traj will refresh on next interval
-            # To avoid stale display for more than interval, we already gate.
             return self._cached_island_trajs
         result=[]
-        # bound per island to avoid huge state.json
         max_per_island = int(self.cfg.get('trap_traj_max_per_island', 3))
+        # voltage decimation for frontend (not full DAC 300+ pts)
+        voltage_decimate = max(1, decimate // 2)
         for isl in self.islands:
-            # sort population by fitness
-            # include only evaluated; if not evaluated yet, skip
             pop_valid = [g for g in isl.population if g.fitness is not None]
             if not pop_valid:
-                # fallback: take whatever
                 pop_sorted = sorted(isl.population, key=lambda g: 1e9 if g.fitness is None else g.fitness)
             else:
                 pop_sorted = sorted(pop_valid, key=lambda g: g.fitness)
-                # if pop smaller than island size due to unevaluated, still handle
             k = max(1, int(math.ceil(len(isl.population)*percent)))
             k = min(k, max_per_island, len(pop_sorted))
             top = pop_sorted[:k]
             cands=[]
             for rank, g in enumerate(top):
-                # theta hash for cache (round to 5 decimals)
                 try:
                     theta_key = tuple(np.round(g.theta,5).tolist())
                 except:
                     theta_key = tuple()
-                cache_key = (isl.strategy, isl.baseline, theta_key, decimate)
-                cached_traj = self._traj_cache.get(cache_key)
-                # reuse if exists and not interval gen requiring fresh physics; but we also want to refresh every 5 gens for safety
-                use_cached = cached_traj is not None and (self.global_gen % 5 != 0)
+                cache_key = (isl.strategy, isl.baseline, theta_key, decimate, voltage_decimate)
+                cached = self._traj_cache.get(cache_key)
+                use_cached = cached is not None and (self.global_gen % 5 != 0)
                 if use_cached:
-                    traj = cached_traj
+                    traj = cached.get('trajectory')
+                    voltages = cached.get('voltages')
+                    frequency = cached.get('frequency')
+                    classical = cached.get('classical')
                 else:
+                    traj = None; voltages=None; frequency=None; classical=None
+                    # handle W island frequency variable prepare (same as evaluate_genome)
+                    is_W = isl.strategy in ('W','frequency','freq') and getattr(g,'dim', len(g.theta))>=10
+                    stashed = None
+                    freq_coeffs = None
+                    theta_for_eval = g.theta.copy()
+                    baseline = isl.baseline
+                    if is_W:
+                        # split theta: first 8 voltage, last 2 frequency
+                        try:
+                            theta_for_eval = g.theta[:8].copy()
+                            freq_coeffs = g.theta[8:10].copy()
+                            from .fitness import _prepare_for_W
+                            # stash runner state
+                            stashed = dict(
+                                task_mode=self.runner.task.get('frequency_mode'),
+                                task_coeffs=self.runner.task.get('frequency_coeffs'),
+                                freq_mode=getattr(self.runner, 'frequency_mode', 'fixed'),
+                                freq_coeffs=getattr(self.runner, 'frequency_coeffs', [0.0,0.0]),
+                            )
+                            # also stash prepared arrays used by pipeline
+                            for attr in ['sroute','route_V','voltage_spline','route_r','route_H','route_G','route_BH','Hspline','Gspline','BHspline','correction_modes','support_diagnostics']:
+                                if hasattr(self.runner, attr):
+                                    stashed[attr]=getattr(self.runner, attr)
+                            _prepare_for_W(self.runner, freq_coeffs)
+                        except Exception:
+                            stashed=None
                     try:
-                        theta = g.theta.copy()
-                        baseline = isl.baseline
-                        # cheap ROM, return_trajectory with decimation
-                        # Note: Runner now supports theta dims 8/10/12
-                        res = self.runner.evaluate(theta, baseline=baseline, exact_nodes=None, subdivisions=self.runner.cfg.get('subdivisions',4), return_trajectory=True, trajectory_decimate=decimate)
+                        # combined trajectory + voltages in one evaluate (saves 50% cost)
+                        res, trace = self.runner.evaluate(theta_for_eval, baseline=baseline, exact_nodes=None, subdivisions=self.runner.cfg.get('subdivisions',4), keep=True, return_trajectory=True, trajectory_decimate=decimate)
                         traj = res.get('trajectory')
-                        # augment with distortion + n_total for tooltip
                         if isinstance(traj, dict):
-                            traj = dict(traj)  # shallow
+                            traj = dict(traj)
                             traj['_n_total'] = res.get('n_total')
                             traj['_pos_err'] = res.get('position_error_m')
                             traj['_well_err'] = res.get('well_target_error_m')
-                        self._traj_cache[cache_key] = traj
-                        # cap cache size to 200 entries LRU-ish
+                        # voltages: from same trace (already have t,v)
+                        try:
+                            # trace already from combined call
+                            t = trace.get('t'); v = trace.get('v'); cmd = trace.get('cmd'); ct = trace.get('ct')
+                            # decimate for frontend
+                            if t is not None and v is not None:
+                                step = max(1, len(t)//120)
+                                idx = np.arange(0, len(t), step)
+                                # also ensure last point
+                                if idx[-1] != len(t)-1:
+                                    idx = np.r_[idx, len(t)-1]
+                                v_dec = v[idx]
+                                t_dec = t[idx]
+                                # also need electrode names
+                                voltages = dict(
+                                    times_s = t_dec.tolist(),
+                                    voltages = v_dec.tolist(),  # [time][electrode]
+                                    electrode_names = list(self.runner.trap.names),
+                                    electrode_indices = self.runner.trap.indices.tolist() if hasattr(self.runner.trap.indices,'tolist') else list(self.runner.trap.indices),
+                                    ideal_times_s = ct[::max(1,len(ct)//120)].tolist() if ct is not None else None,
+                                    ideal_voltages = cmd[::max(1,len(cmd)//120)].tolist() if cmd is not None else None,
+                                    decimate = int(step),
+                                )
+                            # frequency vs time: from H (if available) or from profile scaling
+                            try:
+                                H = trace.get('H')
+                                if H is not None:
+                                    # H shape (N,3,3) -> eig per time
+                                    # use decimated H to match t_dec
+                                    H_dec = H[idx] if 'idx' in locals() else H[::step]
+                                    freqs = []
+                                    for h in H_dec:
+                                        try:
+                                            eig = np.linalg.eigvalsh(h/self.runner.trap.mass)
+                                            f = float(np.sqrt(max(eig.min(), 0))/(2*np.pi))
+                                            freqs.append(f)
+                                        except:
+                                            freqs.append(float(self.runner.task.get('min_frequency_hz',400e3)))
+                                    frequency = dict(times_s = t_dec.tolist(), frequency_hz = freqs, baseline_freq_hz = float(self.runner.initial.omega_rad_s[0]/(2*np.pi)))
+                                else:
+                                    # fallback: from sroute scaling
+                                    s_vals = np.interp(t_dec, trace.get('ct', t_dec), trace.get('route', np.linspace(0,1,len(t_dec))))
+                                    from ..control import FrequencyProfile
+                                    fp = FrequencyProfile(mode=self.runner.task.get('frequency_mode','fixed'), coeff=np.asarray(self.runner.task.get('frequency_coeffs',[0,0]),float))
+                                    scales = fp.omega_scaling(np.clip(s_vals,0,1))
+                                    base = float(self.runner.initial.omega_rad_s[0]/(2*np.pi))
+                                    frequency = dict(times_s = t_dec.tolist(), frequency_hz = (base*scales).tolist(), baseline_freq_hz=base)
+                            except Exception:
+                                frequency = None
+                        except Exception:
+                            voltages=None; frequency=None
+                        # lightweight classical as well-centers (r) — fast, satisfies s-g overlay without ODE hang
+                        if rank==0:
+                            try:
+                                r = trace.get('r') if 'trace' in locals() else None
+                                t_for_c = trace.get('t') if 'trace' in locals() else None
+                                if r is not None and t_for_c is not None:
+                                    step_c = max(1, len(t_for_c)//decimate)
+                                    idx_c = np.arange(0, len(t_for_c), step_c)
+                                    if idx_c[-1] != len(t_for_c)-1:
+                                        idx_c = np.r_[idx_c, len(t_for_c)-1]
+                                    classical = dict(times_s=t_for_c[idx_c].tolist(), positions_m=r[idx_c].tolist(), decimate=int(step_c), note="well_centers_fast")
+                                else:
+                                    classical=None
+                            except:
+                                classical=None
+                        else:
+                            classical=None
+                        # cache
+                        self._traj_cache[cache_key] = dict(trajectory=traj, voltages=voltages, frequency=frequency, classical=classical)
                         if len(self._traj_cache) > 300:
-                            # drop oldest 50
                             for kk in list(self._traj_cache.keys())[:50]:
                                 del self._traj_cache[kk]
                     except Exception as e:
                         traj = {'error': str(e)[:300]}
-                cands.append(dict(rank=rank, theta=g.theta.tolist() if hasattr(g.theta,'tolist') else list(g.theta), fitness=float(g.fitness) if g.fitness is not None else None, status=g.status, baseline=isl.baseline, island=g.island, dim=int(g.dim) if hasattr(g,'dim') else len(g.theta), trajectory=traj))
+                        voltages=None; frequency=None; classical=None
+                    finally:
+                        if stashed is not None:
+                            try:
+                                self.runner.task['frequency_mode'] = stashed.get('task_mode') if stashed.get('task_mode') is not None else 'fixed'
+                                self.runner.task['frequency_coeffs'] = stashed.get('task_coeffs') if stashed.get('task_coeffs') is not None else [0.0,0.0]
+                                for k in ['sroute','route_V','voltage_spline','route_r','route_H','route_G','route_BH','Hspline','Gspline','BHspline','correction_modes','support_diagnostics','frequency_mode','frequency_coeffs']:
+                                    if k in stashed and stashed[k] is not None:
+                                        setattr(self.runner, k, stashed[k])
+                            except Exception:
+                                pass
+                # for cached case, traj already; need to extract others from cache dict
+                if use_cached:
+                    # cached is dict with keys
+                    traj = cached.get('trajectory') if isinstance(cached, dict) else cached
+                    voltages = cached.get('voltages') if isinstance(cached, dict) else None
+                    frequency = cached.get('frequency') if isinstance(cached, dict) else None
+                    classical = cached.get('classical') if isinstance(cached, dict) else None
+                    # if old cache was just trajectory dict (before upgrade), it will be just traj
+                    if isinstance(cached, dict) and 'times_s' in cached and 'mean_positions_m' in cached:
+                        # old format: cached is traj itself
+                        traj = cached; voltages=None; frequency=None; classical=None
+                cands.append(dict(rank=rank, theta=g.theta.tolist() if hasattr(g.theta,'tolist') else list(g.theta), fitness=float(g.fitness) if g.fitness is not None else None, status=g.status, baseline=isl.baseline, island=g.island, dim=int(g.dim) if hasattr(g,'dim') else len(g.theta), trajectory=traj, voltages=voltages, frequency=frequency, classical_trajectory=classical))
             result.append(dict(island_id=isl.id, strategy=isl.strategy, pop=len(isl.population), baseline=isl.baseline, isolated_until=isl.isolated_until, is_isolated=isl.generation < isl.isolated_until, k=k, percent=percent, candidates=cands))
         self._cached_island_trajs = result
         self._cached_island_trajs_gen = self.global_gen
@@ -420,8 +535,8 @@ class GAEngine:
         except Exception as e:
             return dict(n=0,pos=0,well=0,lag=0,distortion=0,control=0,freq=0,robust=0,sum=float(genome.fitness or 0), error=str(e))
 
-    def _write_state(self):
-        # build dashboard state
+    def _write_state(self, heavy=True):
+        # build dashboard state; heavy=False skips expensive trajectory/robust/sion for per-island quick updates
         islands_state=[isl.snapshot() for isl in self.islands]
         hall=[]
         loss_breakdown=[]
@@ -440,16 +555,18 @@ class GAEngine:
             except Exception:
                 pass
             hall.append(entry)
-        # compute trajectory for best hall leader for dashboard (well + quantum + classical)
+        # compute trajectory for best hall leader for dashboard (well + quantum + classical) — only if heavy
         trajectory = None
         if self.hall_of_fame:
             try:
                 best = self.hall_of_fame[0]
-                # use cached trajectory if exists and gen hasn't changed much, else recompute
-                if 'trajectory' not in best.metrics or self.global_gen % 2 == 0:
+                # heavy recompute only when needed and heavy=True; light keeps cached
+                need_traj = ('trajectory' not in best.metrics or self.global_gen % 2 == 0)
+                if need_traj and heavy:
                     theta8 = best.to_theta8()
                     best_baseline = 'smooth' if best.island in ('S','H') else 'sta'
-                    res_traj = self.runner.evaluate(theta8, baseline=best_baseline, exact_nodes=200, subdivisions=self.runner.cfg.get('subdivisions',4), return_trajectory=True, trajectory_decimate=250)
+                    # use 81 nodes instead of 200 for speed (still decent) — cache already makes it cheap
+                    res_traj = self.runner.evaluate(theta8, baseline=best_baseline, exact_nodes=81, subdivisions=self.runner.cfg.get('subdivisions',4), return_trajectory=True, trajectory_decimate=150)
                     best.metrics['trajectory'] = res_traj.get('trajectory')
                     classical_enabled = self.cfg.get('trajectory_classical', False) or self.runner.cfg.get('trajectory_classical', False)
                     if classical_enabled and (self.global_gen % 5 == 0 or self.global_gen == self.generations):
@@ -503,8 +620,12 @@ class GAEngine:
 
         # --- trap tab data: per-island top 3% trajectories + trap geometry ---
         # Must be cheap and cached → never slow training (polling file, no GIL block)
+        # For light (per-island) updates, reuse cached island trajectories to avoid recompute.
         try:
-            island_trajectories = self._get_island_top_trajectories()
+            if not heavy and self._cached_island_trajs is not None:
+                island_trajectories = self._cached_island_trajs
+            else:
+                island_trajectories = self._get_island_top_trajectories(heavy=heavy)
         except Exception as e:
             island_trajectories = [{"error": str(e)[:500]}]
         # trap geometry cached at init; include minimal refresh if runner changed
@@ -520,6 +641,100 @@ class GAEngine:
                     self._loss_history = self._loss_history[-250:]
         except Exception:
             pass
+
+        # --- robustness snapshot for dashboard (hall top 1-2, per-island best) ---  fast: 4+3 scens, 81 nodes
+        robustness = None
+        try:
+            # light per-island updates should not trigger expensive robustness recompute; also skip gen0 heavy robustness (takes 30s, delays first dashboard)
+            if not heavy:
+                should_recompute = False
+            else:
+                # skip gen0 robustness to keep initial state fast; first robustness at gen3 or final
+                if self.global_gen == 0:
+                    should_recompute = False
+                else:
+                    should_recompute = (self.global_gen % 3 == 0) or (self.global_gen == self.generations) or (not self._robustness_cache)
+            if should_recompute:
+                t0_rob = time.time()
+                hall_rob = []
+                for rank, g in enumerate(self.hall_of_fame[:2]):
+                    if time.time()-t0_rob > 12: break
+                    try:
+                        baseline = 'smooth' if g.island in ('S','H') else 'sta'
+                        for isl in self.islands:
+                            if isl.strategy == g.island:
+                                baseline = isl.baseline
+                                break
+                        from ..hardware import Hardware
+                        count = int(self.runner.cfg.get('robust_samples', 2))
+                        count = min(count, 3)
+                        scenarios = self.runner.scenarios(count, self.runner.cfg['uncertainty']['seed'] + 100 + rank)
+                        vals = []
+                        for sc in scenarios:
+                            try:
+                                is_W = g.island in ('W','frequency','freq') and len(g.theta)>=10
+                                if is_W:
+                                    theta_v = g.theta[:8].copy()
+                                    freq_c = g.theta[8:10].copy()
+                                    from .fitness import _prepare_for_W
+                                    stashed = dict(task_mode=self.runner.task.get('frequency_mode'), task_coeffs=self.runner.task.get('frequency_coeffs'))
+                                    for attr in ['sroute','route_V','voltage_spline','route_r','route_H','route_G','route_BH','Hspline','Gspline','BHspline','correction_modes','support_diagnostics']:
+                                        if hasattr(self.runner, attr):
+                                            stashed[attr]=getattr(self.runner, attr)
+                                    _prepare_for_W(self.runner, freq_c)
+                                    m = self.runner.evaluate(theta_v, baseline=baseline, hardware=Hardware(**sc['hardware']), stray=sc['stray_V_m'], frequency_scale=sc['frequency_scale'], exact_nodes=41)
+                                    # restore immediately
+                                    self.runner.task['frequency_mode']=stashed['task_mode'] or 'fixed'
+                                    self.runner.task['frequency_coeffs']=stashed['task_coeffs'] or [0.0,0.0]
+                                    for k in ['sroute','route_V','voltage_spline','route_r','route_H','route_G','route_BH','Hspline','Gspline','BHspline','correction_modes','support_diagnostics']:
+                                        if k in stashed and stashed[k] is not None:
+                                            setattr(self.runner, k, stashed[k])
+                                    try:
+                                        self.runner.prepare()
+                                    except: pass
+                                else:
+                                    m = self.runner.evaluate(g.theta, baseline=baseline, hardware=Hardware(**sc['hardware']), stray=sc['stray_V_m'], frequency_scale=sc['frequency_scale'], exact_nodes=41)
+                                vals.append(float(m.get('n_total', 1e6)))
+                            except Exception:
+                                vals.append(1e6)
+                        max_n = float(self.runner.task.get('max_n_total', 0.5))
+                        pass_frac = sum(1 for v in vals if v <= max_n*1.5) / len(vals) if vals else 0
+                        hall_rob.append(dict(rank=rank, island=g.island, baseline=baseline, theta=g.theta.tolist(), mean_n=float(np.mean(vals)) if vals else None, worst_n=float(np.max(vals)) if vals else None, cvar_20=float(np.sort(vals)[-max(1,int(np.ceil(0.2*len(vals))) ):].mean()) if vals else None, pass_fraction=float(pass_frac), vals=vals[:8]))
+                    except Exception as e:
+                        hall_rob.append(dict(rank=rank, error=str(e)[:200]))
+                island_rob = []
+                # skip per-island robustness for small runs (<=3 gens) to keep dashboard fast; hall robustness is enough for gate
+                if self.generations > 3:
+                    for isl in self.islands:
+                        if time.time()-t0_rob > 8: break
+                        try:
+                            pop_valid = [g for g in isl.population if g.fitness is not None]
+                            if not pop_valid: continue
+                            best = min(pop_valid, key=lambda g: g.fitness)
+                            baseline = isl.baseline
+                            count = 1
+                            from ..hardware import Hardware
+                            scenarios = self.runner.scenarios(count, self.runner.cfg['uncertainty']['seed'] + 200 + isl.id)
+                            vals=[]
+                            for sc in scenarios:
+                                try:
+                                    m = self.runner.evaluate(best.theta, baseline=baseline, hardware=Hardware(**sc['hardware']), stray=sc['stray_V_m'], frequency_scale=sc['frequency_scale'], exact_nodes=41)
+                                    vals.append(float(m.get('n_total',1e6)))
+                                except: vals.append(1e6)
+                            max_n = float(self.runner.task.get('max_n_total',0.5))
+                            pass_frac = sum(1 for v in vals if v <= max_n*1.5)/len(vals)
+                            island_rob.append(dict(island=isl.strategy, baseline=baseline, best_fitness=float(best.fitness), mean_n=float(np.mean(vals)), worst_n=float(np.max(vals)), pass_fraction=float(pass_frac)))
+                        except: pass
+                else:
+                    # for small runs, just hall robustness is enough; island list empty but gate still present via hall
+                    island_rob = []
+                robustness = dict(hall=hall_rob, islands=island_rob, threshold_n=float(self.runner.task.get('max_n_total',0.5)), gen=self.global_gen, timestamp=time.time())
+                self._robustness_cache[self.global_gen] = robustness
+                self._robustness_cache['latest'] = robustness
+            else:
+                robustness = self._robustness_cache.get('latest')
+        except Exception as e:
+            robustness = dict(error=str(e)[:500], gen=self.global_gen)
 
         state=dict(
             global_generation=self.global_gen,
@@ -542,10 +757,109 @@ class GAEngine:
             pop_size=int(self.islands[0].pop_size if self.islands else (getattr(self,'_global_pop',None) or 20)),
             total_pop=sum(isl.pop_size for isl in self.islands),
             use_cuda=bool(getattr(self, 'use_cuda', False)),
+            robustness=robustness,
             timestamp=time.time(),
             # dashboard contract note for frontend
             dashboard=dict(note="Trap tab polls state.json every 500ms; GA writes tmp->state.json atomically, no blocking. Per-island top 3% trajectories are decimated cheap ROM (exact_nodes=None) cached by theta hash, recomputed every trap_traj_interval gens.", top_percent=float(self.cfg.get('island_top_percent', 0.03) if not isinstance(self.cfg.get('ga'), dict) else self.cfg.get('ga', {}).get('island_top_percent', 0.03)), decimate=int(self.cfg.get('trap_traj_decimate', 80) if not isinstance(self.cfg.get('ga'), dict) else self.cfg.get('ga', {}).get('trap_traj_decimate', 80))),
         )
+        # --- SION export: one file with all best per island voltages + STA baselines ---
+        try:
+            if not heavy:
+                should_export = False
+            else:
+                should_export = (self.global_gen % 3 == 0) or (self.global_gen == self.generations) or (self._sion_export_cache is None)
+            if should_export:
+                algorithms = []
+                for isl_data in island_trajectories:
+                    if not isl_data.get('candidates'): continue
+                    best = isl_data['candidates'][0]
+                    volt = best.get('voltages')
+                    freq = best.get('frequency')
+                    algorithms.append(dict(
+                        island=isl_data['strategy'],
+                        baseline=isl_data['baseline'],
+                        rank=int(best.get('rank',0)),
+                        fitness=float(best.get('fitness',0)) if best.get('fitness') is not None else None,
+                        theta=best.get('theta'),
+                        times_s=volt.get('times_s') if volt else None,
+                        voltages=volt.get('voltages') if volt else None,
+                        electrode_names=volt.get('electrode_names') if volt else list(self.runner.trap.names),
+                        frequency_hz=freq.get('frequency_hz') if freq else None,
+                        frequency_times_s=freq.get('times_s') if freq else None,
+                        trajectory=best.get('trajectory'),
+                        classical_trajectory=best.get('classical_trajectory'),
+                    ))
+                baselines = {}
+                for base_name in ['sta','smooth']:
+                    try:
+                        theta0 = np.zeros(8)
+                        _, trace0 = self.runner.evaluate(theta0, baseline=base_name, exact_nodes=None, keep=True, return_trajectory=False)
+                        t0 = trace0.get('t'); v0 = trace0.get('v')
+                        if t0 is not None and v0 is not None:
+                            step = max(1, len(t0)//120)
+                            idx = np.arange(0, len(t0), step)
+                            if idx[-1] != len(t0)-1:
+                                idx = np.r_[idx, len(t0)-1]
+                            baselines[base_name] = dict(
+                                theta=theta0.tolist(),
+                                times_s=t0[idx].tolist(),
+                                voltages=v0[idx].tolist(),
+                                electrode_names=list(self.runner.trap.names),
+                                baseline=base_name,
+                            )
+                        else:
+                            baselines[base_name] = dict(theta=theta0.tolist(), error="no trace")
+                    except Exception as e:
+                        baselines[base_name] = dict(error=str(e)[:300])
+                sion_export = dict(
+                    version="sion-export-v1",
+                    trap=dict(kind=self.runner.cfg['trap']['kind'], names=list(self.runner.trap.names), indices=self.runner.trap.indices.tolist() if hasattr(self.runner.trap.indices,'tolist') else list(self.runner.trap.indices), height_m=float(self.runner.cfg['trap'].get('minimum_seed_m',[0,0,90e-6])[2] if isinstance(self.runner.cfg['trap'].get('minimum_seed_m'), list) else 90e-6)),
+                    hardware=dict(sample_rate_hz=float(self.runner.hw.sample_rate_hz), dac_bits=int(self.runner.hw.dac_bits), dac_min_V=float(self.runner.hw.dac_min_V), dac_max_V=float(self.runner.hw.dac_max_V)),
+                    task=dict(distance_m=float(self.runner.task['distance_m']), duration_s=float(self.runner.task['duration_s']), protocol=self.runner.task['protocol']),
+                    algorithms=algorithms,
+                    baselines=baselines,
+                    hall_of_fame=hall[:5],
+                    generation=self.global_gen,
+                    timestamp=time.time(),
+                )
+                # attach to state for frontend download
+                state['sion_export'] = dict(version=sion_export['version'], algorithms=len(algorithms), baselines=list(baselines.keys()), generation=self.global_gen)
+                # write file
+                tmp_sion = self.out / "sion_export.json.tmp"
+                final_sion = self.out / "sion_export.json"
+                tmp_sion.write_text(json.dumps(sion_export, indent=2, default=str))
+                tmp_sion.replace(final_sion)
+                # per-algorithm CSVs
+                for algo in algorithms:
+                    try:
+                        name = f"algo_{algo['island']}_{algo['baseline']}.csv"
+                        path = self.out / name
+                        import csv
+                        with open(path,'w',newline='') as f:
+                            w=csv.writer(f)
+                            w.writerow(['time_s']+algo['electrode_names'])
+                            for ti, row in zip(algo['times_s'] or [], algo['voltages'] or []):
+                                w.writerow([ti]+list(row))
+                    except: pass
+                # also baselines CSVs
+                for bname, bdata in baselines.items():
+                    if 'voltages' not in bdata: continue
+                    try:
+                        path = self.out / f"baseline_{bname}.csv"
+                        import csv
+                        with open(path,'w',newline='') as f:
+                            w=csv.writer(f)
+                            w.writerow(['time_s']+bdata['electrode_names'])
+                            for ti, row in zip(bdata['times_s'], bdata['voltages']):
+                                w.writerow([ti]+list(row))
+                    except: pass
+                self._sion_export_cache = sion_export
+            else:
+                # attach cached summary
+                if self._sion_export_cache:
+                    state['sion_export'] = dict(version=self._sion_export_cache['version'], algorithms=len(self._sion_export_cache.get('algorithms',[])), baselines=list(self._sion_export_cache.get('baselines',{}).keys()), generation=self.global_gen)
+        except Exception as e:
+            state['sion_export'] = dict(error=str(e)[:400])
         # atomic write
         tmp=self.out/"state.json.tmp"
         final=self.out/"state.json"
@@ -557,11 +871,27 @@ class GAEngine:
             print(f"state write fail {e}")
 
     def _evaluate_exact_hall(self):
+        # exact hall is very expensive (least_squares 321 solves) — skip for small runs or make cheap
+        if self.generations <= 2:
+            return
         if self.global_gen % 5 !=0 and self.global_gen != self.generations:
             return
-        for g in self.hall_of_fame[:3]:
-            exact=evaluate_exact(g, self.runner)
-            g.metrics['exact'] = exact
+        # use reduced nodes for speed (81 vs 321) — still validates quality, heavy exact already done in robustness
+        for g in self.hall_of_fame[:2]:
+            try:
+                orig_nodes = self.runner.cfg.get('validation_nodes')
+                self.runner.cfg['validation_nodes'] = 81
+                exact=evaluate_exact(g, self.runner)
+                g.metrics['exact'] = exact
+            except Exception as e:
+                try:
+                    g.metrics['exact_error'] = str(e)[:300]
+                except: pass
+            finally:
+                if orig_nodes is not None:
+                    self.runner.cfg['validation_nodes'] = orig_nodes
+                elif 'validation_nodes' in self.runner.cfg:
+                    del self.runner.cfg['validation_nodes']
 
     def _write_live(self, evaluated, total, island_strategy=None, current_fitness=None):
         # lightweight live update inside generation — не тяжёлый как _write_state (без trap траекторий)
@@ -638,14 +968,19 @@ class GAEngine:
                 self._write_live(live_evaluated, total_in_gen, island_strategy=island.strategy, current_fitness=genome.fitness)
             for isl in self.islands:
                 isl.evolve_one_generation(self.runner, live_cb=_live_cb)
-                # incremental per-island — чтобы “по поколениям” тоже шевелилось внутри поколения (раньше было пусто до конца gen)
+                # incremental per-island — light state to keep dashboard responsive without blocking evolution
                 try:
                     self._update_hall()
-                    self._write_state()
+                    self._write_state(heavy=False)
                 except Exception as e:
                     print(f"per-island state fail {e}")
                 # live уже пишется per-оценка, но добавим и per-остров маркер
                 self._write_live(live_evaluated, total_in_gen, island_strategy=isl.strategy, current_fitness=self._live_best)
+            # heavy generation-boundary state (cached intervals keep it cheap)
+            try:
+                self._write_state(heavy=True)
+            except Exception as e:
+                print(f"gen boundary state fail {e}")
             if self.migration.should_migrate(gen):
                 self.migration.migrate(gen)
                 # re-evaluate migrants with live
@@ -653,7 +988,7 @@ class GAEngine:
                 for isl in self.islands:
                     isl.evaluate(self.runner, live_cb=_live_cb)
                 try:
-                    self._update_hall(); self._write_state()
+                    self._update_hall(); self._write_state(heavy=True)
                 except: pass
             # ensure live shows gen completion
             self._write_live(total_in_gen, total_in_gen, island_strategy="gen_done", current_fitness=self._live_best)

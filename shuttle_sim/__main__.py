@@ -1,3 +1,5 @@
+import os as _os
+_os.environ.setdefault("NUMBA_DISABLE_JIT", "1")
 import argparse, json, sys
 from pathlib import Path
 from .pipeline import Runner, write_json

@@ -323,7 +323,7 @@ input[type=range]{accent-color:var(--accent)}
         <span style="margin-left:auto;font-size:11px;color:var(--muted);display:inline-flex;align-items:center;gap:6px"><span style="width:28px;height:3px;border-radius:99px;background:linear-gradient(90deg,#5ac8ff,#7af0a0);display:inline-block;opacity:0.9"></span> ось X — дробное поколение · Y — log fitness (ниже лучше)</span>
       </div>
       <div style="position:relative;border-radius:12px;overflow:hidden;border:1px solid #24324d;background:#07101f;box-shadow:inset 0 0 0 1px rgba(255,255,255,0.03), inset 0 6px 18px rgba(0,0,0,0.35)">
-        <canvas id="cLive" width="900" height="200" style="height:200px;width:100%;display:block"></canvas>
+        <canvas id="cLive" width="1100" height="260" style="height:260px;width:100%;display:block"></canvas>
         <div style="position:absolute;inset:0;pointer-events:none;border-radius:12px;box-shadow:inset 0 1px 0 rgba(255,255,255,0.06), inset 0 0 24px rgba(90,200,255,0.05)"></div>
       </div>
       <div class="legend" id="liveLegend" style="margin-top:9px;justify-content:space-between;gap:10px"></div>
@@ -334,16 +334,16 @@ input[type=range]{accent-color:var(--accent)}
   <div class="grid">
     <div class="card">
       <h3>Fitness vs generation <small>по островам и глобальный минимум</small></h3>
-      <canvas id="cFitness" width="900" height="220"></canvas>
+      <canvas id="cFitness" width="1100" height="320"></canvas>
       <div id="fitnessLegend" class="legend"></div>
     </div>
     <div class="card">
       <h3>Diversity vs generation <small>нормированное расстояние</small></h3>
-      <canvas id="cDivers" width="900" height="220"></canvas>
+      <canvas id="cDivers" width="1100" height="320"></canvas>
     </div>
     <div class="card">
       <h3>Population histogram <small>распределение fitness</small></h3>
-      <canvas id="cHist" width="900" height="220"></canvas>
+      <canvas id="cHist" width="1100" height="320"></canvas>
       <div id="histStats" class="kv mono" style="margin-top:8px"></div>
     </div>
     <div class="card">
@@ -362,12 +362,12 @@ input[type=range]{accent-color:var(--accent)}
     </div>
     <div class="card">
       <h3>Pareto <small>n_total / ошибка позиции / искажение</small></h3>
-      <canvas id="cPareto" width="900" height="260" class="pareto"></canvas>
+      <canvas id="cPareto" width="1100" height="360" class="pareto"></canvas>
       <div class="legend" id="paretoLegend"></div>
     </div>
     <div class="card" style="grid-column:1/-1">
       <h3>Траектории лучшего решения <small>мкм / мкс</small></h3>
-      <canvas id="cTraj" width="1200" height="280" style="height:280px;background:#121c2e;border-radius:10px;display:block"></canvas>
+      <canvas id="cTraj" width="1300" height="360" style="height:360px;background:#121c2e;border-radius:10px;display:block"></canvas>
       <div class="legend" id="trajLegend"></div>
       <div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap;align-items:center">
         <label class="kv"><input type="checkbox" id="chkWell" checked> яма</label>
@@ -382,6 +382,18 @@ input[type=range]{accent-color:var(--accent)}
           </select>
         </label>
         <span class="kv mono" id="trajStats" style="margin-left:auto"></span>
+      </div>
+    </div>
+    <div class="card" style="grid-column:1/-1;border-left:4px solid #ff6b7a">
+      <h3>Робастность <small>проверка на вариациях hardware — gain/offset/stray/freq, порог n₀</small> <span id="robustBadge" class="badge" style="margin-left:8px">—</span></h3>
+      <canvas id="cRobust" width="1100" height="280" style="height:280px"></canvas>
+      <div class="legend" id="robustLegend" style="margin-top:8px"></div>
+      <div id="robustTable" class="mono" style="margin-top:8px;overflow:auto"></div>
+      <div class="kv mono" id="robustStats" style="margin-top:6px;color:var(--muted);font-size:11px"></div>
+      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+        <label class="kv"><input type="checkbox" id="chkRobustHall" checked> hall топ-3</label>
+        <label class="kv"><input type="checkbox" id="chkRobustIslands" checked> per-island best</label>
+        <span class="kv mono" id="robustThreshold" style="margin-left:auto;color:var(--muted)">порог —</span>
       </div>
     </div>
   </div>
@@ -448,8 +460,32 @@ input[type=range]{accent-color:var(--accent)}
 
     <div class="card" id="cardTrapSide">
       <h3>Вид сбоку <small>x (шаттлинг) / z (высота над чипом, мкм)</small></h3>
-      <canvas id="cTrapSide" width="1200" height="200" class="trap-side"></canvas>
+      <canvas id="cTrapSide" width="1200" height="260" class="trap-side"></canvas>
       <div class="legend" id="trapSideLegend"></div>
+    </div>
+
+    <div class="grid" style="grid-template-columns:1fr 1fr;gap:16px">
+      <div class="card">
+        <h3>Напряжения на электродах <small>во времени — лучшие per island</small></h3>
+        <canvas id="cVoltage" width="1100" height="320" style="height:320px"></canvas>
+        <div class="legend" id="voltageLegend" style="margin-top:8px"></div>
+        <div class="kv mono" id="voltageStats" style="margin-top:6px;color:var(--muted);font-size:11px"></div>
+        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+          <button class="btn" id="btnSaveVoltages">⬇ Сохранить все напряжения (SION — sion_export.json)</button>
+          <button class="btn" id="btnSaveSTA">⬇ STA / smooth (baseline_*.csv)</button>
+          <button class="btn" id="btnDownloadVoltagesCSV">⬇ CSV всех островов</button>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Секулярная частота <small>ω(t)/2π, МГц — по времени шаттлинга</small></h3>
+        <canvas id="cFrequency" width="1100" height="320" style="height:320px"></canvas>
+        <div class="legend" id="frequencyLegend" style="margin-top:8px"></div>
+        <div class="kv mono" id="frequencyStats" style="margin-top:6px;color:var(--muted);font-size:11px"></div>
+        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+          <label class="kv"><input type="checkbox" id="chkFrequencyAll" checked> все острова</label>
+          <label class="kv"><input type="checkbox" id="chkFrequencyBaseline" checked> STA baseline</label>
+        </div>
+      </div>
     </div>
 
     <div class="card">
@@ -2018,6 +2054,34 @@ function drawTrajectories(state){
     ctx.strokeStyle="#ffbe55"; ctx.lineWidth=1.8; ctx.setLineDash([7,3]); ctx.beginPath();
     cX.forEach((y,i)=>{ let x=xTo(cT[i]); if(i===0) ctx.moveTo(x,yTo(y)); else ctx.lineTo(x,yTo(y));}); ctx.stroke(); ctx.setLineDash([]);
   }
+  // per-island best overlay — каждый остров своим цветом
+  try{
+    let islandTrajs = state?.island_trajectories || []
+    for(let isl of islandTrajs){
+      if(trapAnim.islandVisibility[isl.strategy]===false) continue
+      let cand = isl.candidates[0]; if(!cand?.trajectory) continue
+      // avoid double-drawing hall best if it совпадает с островным
+      let col = islandColor(isl.strategy)
+      let tt = cand.trajectory.times_s || cand.trajectory.well_times_s
+      let pp = cand.trajectory.mean_positions_m
+      if(!tt || !pp) continue
+      // project using same dir
+      let tUs = tt.map(v=>v*1e6)
+      let pUs = pp.map(p=>proj(p)*1e6)
+      if(pUs.length !== tUs.length) continue
+      ctx.strokeStyle=col; ctx.lineWidth=1.4; ctx.setLineDash([5,4]); ctx.globalAlpha=0.75
+      ctx.beginPath(); pUs.forEach((y,i)=>{ let x=xTo(tUs[i]); if(i===0) ctx.moveTo(x,yTo(y)); else ctx.lineTo(x,yTo(y))}); ctx.stroke()
+      ctx.globalAlpha=1; ctx.setLineDash([])
+      // classical per island тонким пунктиром
+      if(document.getElementById('chkClassical')?.checked && cand.classical_trajectory?.mean_positions_m){
+        let ct=cand.classical_trajectory.times_s.map(v=>v*1e6)
+        let cp=cand.classical_trajectory.mean_positions_m.map(p=>proj(p)*1e6)
+        ctx.strokeStyle=col; ctx.lineWidth=1; ctx.setLineDash([7,5]); ctx.globalAlpha=0.45
+        ctx.beginPath(); cp.forEach((y,i)=>{ let x=xTo(ct[i]); if(i===0) ctx.moveTo(x,yTo(y)); else ctx.lineTo(x,yTo(y))}); ctx.stroke()
+        ctx.globalAlpha=1; ctx.setLineDash([])
+      }
+    }
+  }catch(e){}
   if(zoom==='error' && wellX && qX){
     ctx.strokeStyle="#ff6b7a"; ctx.lineWidth=1.4; ctx.beginPath();
     qX.forEach((y,i)=>{ let wi = wellX[Math.min(i, wellX.length-1)]; let err = (y - wi)*10; let x=xTo(qT[i]); if(i===0) ctx.moveTo(x,yTo(err)); else ctx.lineTo(x,yTo(err));}); ctx.stroke();
@@ -2026,11 +2090,20 @@ function drawTrajectories(state){
   ctx.fillText(tMin.toFixed(1), 62, H-7); ctx.fillText(tMax.toFixed(1), W-40, H-7);
   ctx.fillText(yMin.toFixed(1), 4, H-22); ctx.fillText(yMax.toFixed(1), 4, 26);
   let leg = document.getElementById('trajLegend');
-  if(leg) leg.innerHTML =
-    `<span><i style="width:14px;height:3px;background:#5ac8ff;display:inline-block;border-radius:99px"></i> яма</span>` +
-    `<span><i style="width:14px;height:3px;background:#7af0a0;display:inline-block;border-radius:99px"></i> квантовый &lt;r&gt;</span>` +
-    `<span><i style="width:14px;height:3px;background:#ffbe55;display:inline-block"></i> классический</span>` +
+  if(leg){
+    let base=`<span><i style="width:14px;height:3px;background:#5ac8ff;display:inline-block;border-radius:99px"></i> яма (hall)</span>` +
+    `<span><i style="width:14px;height:3px;background:#7af0a0;display:inline-block;border-radius:99px"></i> квантовый &lt;r&gt; (hall)</span>` +
+    `<span><i style="width:14px;height:3px;background:#ffbe55;display:inline-block"></i> классический (hall)</span>` +
     `<span><i style="width:14px;height:2px;background:#7af0a0;display:inline-block"></i> цель</span>`;
+    try{
+      let islTrajs=state?.island_trajectories||[]
+      if(islTrajs.length>1){
+        base+= islTrajs.map(isl=>`<span><i style="width:10px;height:3px;background:${islandColor(isl.strategy)};display:inline-block;border-radius:99px;opacity:0.7"></i>${isl.strategy}</span>`).join('')
+        base+=`<span style="opacity:0.6">· пунктир — классика per island</span>`
+      }
+    }catch(e){}
+    leg.innerHTML=base
+  }
   if(stats){
     let lastWell = wellX? wellX[wellX.length-1]:null;
     let lastQ = qX? qX[qX.length-1]:null;
@@ -2041,6 +2114,233 @@ function drawTrajectories(state){
   }
 }
 
+function drawVoltage(state){
+  const c=document.getElementById('cVoltage'); if(!c) return
+  const ctx=c.getContext('2d'), W=c.width, H=c.height
+  drawAxes(ctx,W,H,{xlabel:"t, мкс", ylabel:"V, вольт"})
+  let trajs = state?.island_trajectories || []
+  let visible = trajs.filter(isl=> trapAnim.islandVisibility[isl.strategy]!==false)
+  if(!visible.length) visible = trajs.slice(0,3)
+  let hasData = visible.some(isl=> isl.candidates[0]?.voltages?.times_s)
+  if(!hasData){
+    ctx.fillStyle="#8aa0c8"; ctx.font="12px sans-serif"; ctx.textAlign="center"
+    ctx.fillText("ожидание напряжений — запустите GA (нужны island_trajectories.voltages)", W/2, H/2)
+    ctx.textAlign="start"
+    const leg=document.getElementById('voltageLegend'); if(leg) leg.innerHTML=""
+    return
+  }
+  // collect global bounds
+  let tMin=Infinity, tMax=-Infinity, vMin=Infinity, vMax=-Infinity
+  for(let isl of visible){
+    let cand = isl.candidates[0]; if(!cand?.voltages) continue
+    let times = cand.voltages.times_s.map(v=>v*1e6)
+    let volts = cand.voltages.voltages
+    if(times.length){ tMin=Math.min(tMin, Math.min(...times)); tMax=Math.max(tMax, Math.max(...times)) }
+    for(let row of volts){ for(let v of row){ vMin=Math.min(vMin, v); vMax=Math.max(vMax, v) } }
+  }
+  if(!isFinite(tMin)){ tMin=0; tMax=16 }
+  if(!isFinite(vMin)){ vMin=-12; vMax=12 }
+  let vPad=(vMax-vMin)*0.08 || 0.5; vMin-=vPad; vMax+=vPad
+  // grid
+  ctx.strokeStyle="rgba(30,46,78,0.5)"; ctx.setLineDash([2,4])
+  for(let i=0;i<=4;i++){ let y=16+i*(H-44)/4; ctx.beginPath(); ctx.moveTo(46,y); ctx.lineTo(W-16,y); ctx.stroke() }
+  for(let i=0;i<=5;i++){ let x=46+i*(W-62)/5; ctx.beginPath(); ctx.moveTo(x,16); ctx.lineTo(x,H-28); ctx.stroke() }
+  ctx.setLineDash([])
+  function xTo(t){ return 46 + (t - tMin)/(tMax - tMin ||1)*(W-62) }
+  function yTo(v){ return H-28 - (v - vMin)/(vMax - vMin ||1)*(H-44) }
+  // draw each island's voltages: each electrode as thin line, RF vs DC different alpha
+  for(let isl of visible){
+    let cand = isl.candidates[0]; if(!cand?.voltages) continue
+    let col=islandColor(isl.strategy)
+    let times = cand.voltages.times_s.map(v=>v*1e6)
+    let volts = cand.voltages.voltages
+    let names = cand.voltages.electrode_names || []
+    // draw per electrode: if many electrodes, use low alpha
+    let nElec = volts[0]?.length || 0
+    for(let ei=0; ei<nElec; ei++){
+      let isRF = names[ei] && String(names[ei]).toLowerCase().includes('rf')
+      ctx.strokeStyle = isRF? "rgba(255,183,77,0.9)" : col
+      ctx.globalAlpha = isRF? 0.9 : 0.45
+      ctx.lineWidth = isRF? 1.6 : 1.0
+      ctx.beginPath()
+      for(let ti=0; ti<times.length; ti++){
+        let x=xTo(times[ti]), y=yTo(volts[ti][ei])
+        if(ti===0) ctx.moveTo(x,y); else ctx.lineTo(x,y)
+      }
+      ctx.stroke()
+    }
+    ctx.globalAlpha=1
+    // highlight first electrode (DC0) with thicker
+    if(nElec>0){
+      ctx.strokeStyle=col; ctx.lineWidth=2.2; ctx.beginPath()
+      for(let ti=0; ti<times.length; ti++){
+        let x=xTo(times[ti]), y=yTo(volts[ti][0])
+        if(ti===0) ctx.moveTo(x,y); else ctx.lineTo(x,y)
+      }
+      ctx.stroke()
+    }
+  }
+  // current time indicator from trapAnim
+  let prog = trapAnim.progress||0
+  let curT = tMin + prog*(tMax - tMin)
+  ctx.strokeStyle="#ffffff"; ctx.setLineDash([4,4]); ctx.lineWidth=1.2; ctx.beginPath(); ctx.moveTo(xTo(curT),16); ctx.lineTo(xTo(curT),H-28); ctx.stroke(); ctx.setLineDash([])
+  ctx.fillStyle="#fff"; ctx.beginPath(); ctx.arc(xTo(curT), H-28, 3,0,Math.PI*2); ctx.fill()
+  // axes labels
+  ctx.fillStyle="#8aa0c8"; ctx.font="10px monospace"; ctx.textAlign="center"
+  ctx.fillText(tMin.toFixed(1), 46, H-6); ctx.fillText(tMax.toFixed(1), W-16, H-6)
+  ctx.textAlign="right"; ctx.fillText(vMax.toFixed(1)+" В", W-6, 22); ctx.fillText(vMin.toFixed(1)+" В", W-6, H-32); ctx.textAlign="start"
+  let leg=document.getElementById('voltageLegend')
+  if(leg) leg.innerHTML=visible.map(isl=>`<span><i style="width:12px;height:3px;background:${islandColor(isl.strategy)};display:inline-block"></i>${isl.strategy} ${isl.candidates[0]?.baseline||""}</span>`).join('') + ` <span style="opacity:0.6">· RF жёлтый, DC тонкие</span>`
+  let stats=document.getElementById('voltageStats')
+  if(stats){
+    let cand = visible[0]?.candidates[0]
+    if(cand?.voltages){
+      let v0 = cand.voltages.voltages[0][0]?.toFixed(2) || "—"
+      stats.textContent=`${visible.length} остров(ов) · ${cand.voltages.electrode_names?.length||0} электродов · t=${curT.toFixed(2)}мкс · V0≈${v0}В`
+    } else stats.textContent=""
+  }
+}
+function drawFrequency(state){
+  const c=document.getElementById('cFrequency'); if(!c) return
+  const ctx=c.getContext('2d'), W=c.width, H=c.height
+  drawAxes(ctx,W,H,{xlabel:"t, мкс", ylabel:"частота, МГц"})
+  let trajs = state?.island_trajectories || []
+  let showAll=document.getElementById('chkFrequencyAll')?.checked
+  let showBase=document.getElementById('chkFrequencyBaseline')?.checked
+  let visible = showAll? trajs : trajs.filter(isl=> trapAnim.islandVisibility[isl.strategy]!==false)
+  if(!visible.length) visible=trajs.slice(0,3)
+  let hasData = visible.some(isl=> isl.candidates[0]?.frequency?.frequency_hz)
+  // also try baseline from trap
+  let baseFreq = state?.trap?.height_m? null : state?.trap?.rf_frequency_hz? state.trap.rf_frequency_hz/1e6 : null
+  if(!hasData){
+    // try to show baseline STA frequency if available via hall
+    ctx.fillStyle="#8aa0c8"; ctx.font="12px sans-serif"; ctx.textAlign="center"
+    ctx.fillText("ожидание частоты — W остров меняет ω(t), остальные ~const", W/2, H/2)
+    ctx.textAlign="start"
+    return
+  }
+  let tMin=Infinity, tMax=-Infinity, fMin=Infinity, fMax=-Infinity
+  for(let isl of visible){
+    let cand=isl.candidates[0]; if(!cand?.frequency) continue
+    let times=cand.frequency.times_s.map(v=>v*1e6)
+    let freqs=cand.frequency.frequency_hz.map(v=>v/1e6)
+    if(times.length){ tMin=Math.min(tMin, Math.min(...times)); tMax=Math.max(tMax, Math.max(...times)) }
+    if(freqs.length){ fMin=Math.min(fMin, Math.min(...freqs)); fMax=Math.max(fMax, Math.max(...freqs)) }
+  }
+  if(!isFinite(tMin)){ tMin=0; tMax=16 }
+  if(!isFinite(fMin)){ fMin=0.4; fMax=1.2 }
+  let pad=(fMax-fMin)*0.12 || 0.05; fMin-=pad; fMax+=pad
+  ctx.strokeStyle="rgba(30,46,78,0.5)"; ctx.setLineDash([2,4])
+  for(let i=0;i<=4;i++){ let y=16+i*(H-44)/4; ctx.beginPath(); ctx.moveTo(46,y); ctx.lineTo(W-16,y); ctx.stroke() }
+  for(let i=0;i<=5;i++){ let x=46+i*(W-62)/5; ctx.beginPath(); ctx.moveTo(x,16); ctx.lineTo(x,H-28); ctx.stroke() }
+  ctx.setLineDash([])
+  function xTo(t){ return 46 + (t - tMin)/(tMax - tMin ||1)*(W-62) }
+  function yTo(f){ return H-28 - (f - fMin)/(fMax - fMin ||1)*(H-44) }
+  for(let isl of visible){
+    let cand=isl.candidates[0]; if(!cand?.frequency) continue
+    let col=islandColor(isl.strategy)
+    let times=cand.frequency.times_s.map(v=>v*1e6)
+    let freqs=cand.frequency.frequency_hz.map(v=>v/1e6)
+    ctx.strokeStyle=col; ctx.lineWidth=2; ctx.beginPath()
+    for(let i=0;i<times.length;i++){ let x=xTo(times[i]), y=yTo(freqs[i]); if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y) }
+    ctx.stroke()
+    // dots at start/end
+    ctx.fillStyle=col; ctx.beginPath(); ctx.arc(xTo(times[0]), yTo(freqs[0]), 2.5,0,Math.PI*2); ctx.fill()
+    ctx.beginPath(); ctx.arc(xTo(times[times.length-1]), yTo(freqs[freqs.length-1]), 2.5,0,Math.PI*2); ctx.fill()
+  }
+  let prog=trapAnim.progress||0
+  let curT=tMin + prog*(tMax - tMin)
+  ctx.strokeStyle="#ffffff"; ctx.setLineDash([4,4]); ctx.lineWidth=1.2; ctx.beginPath(); ctx.moveTo(xTo(curT),16); ctx.lineTo(xTo(curT),H-28); ctx.stroke(); ctx.setLineDash([])
+  ctx.fillStyle="#8aa0c8"; ctx.font="10px monospace"; ctx.textAlign="center"
+  ctx.fillText(tMin.toFixed(1), 46, H-6); ctx.fillText(tMax.toFixed(1), W-16, H-6)
+  ctx.textAlign="right"; ctx.fillText(fMax.toFixed(2), W-6, 22); ctx.fillText(fMin.toFixed(2), W-6, H-32); ctx.textAlign="start"
+  let leg=document.getElementById('frequencyLegend')
+  if(leg) leg.innerHTML=visible.map(isl=>`<span><i style="width:12px;height:3px;background:${islandColor(isl.strategy)};display:inline-block"></i>${isl.strategy}</span>`).join('')
+  let stats=document.getElementById('frequencyStats')
+  if(stats){
+    let cand=visible[0]?.candidates[0]?.frequency
+    if(cand){
+      let curIdx=Math.floor(prog*(cand.frequency_hz.length-1))
+      let curF=(cand.frequency_hz[curIdx]/1e6).toFixed(3)
+      stats.textContent=`${visible.length} островов · t=${curT.toFixed(2)}мкс · ω/2π≈${curF} МГц · W остров имеет провал`
+    } else stats.textContent=""
+  }
+}
+function drawRobust(state){
+  const c=document.getElementById('cRobust'); if(!c) return
+  const ctx=c.getContext('2d'), W=c.width, H=c.height
+  drawAxes(ctx,W,H,{xlabel:"сценарий / остров", ylabel:"n_total"})
+  let rob = state?.robustness || state?.robust
+  if(!rob || (!rob.hall && !rob.islands)){
+    ctx.fillStyle="#8aa0c8"; ctx.font="12px sans-serif"; ctx.textAlign="center"
+    ctx.fillText("ожидание робастности — Hall топ-3 тестируется по 8 сценариям", W/2, H/2)
+    ctx.textAlign="start"
+    return
+  }
+  let hall = rob.hall || []
+  let islands = rob.islands || []
+  let showHall=document.getElementById('chkRobustHall')?.checked
+  let showIslands=document.getElementById('chkRobustIslands')?.checked
+  let items=[]
+  if(showHall) hall.forEach(h=> items.push({label:`Hall#${h.rank} ${h.island}`, mean:h.mean_n, worst:h.worst_n, pass:h.pass_fraction, col:islandColor(h.island), vals:h.vals}))
+  if(showIslands) islands.forEach(i=> items.push({label:`${i.island}`, mean:i.mean_n, worst:i.worst_n, pass:i.pass_fraction, col:islandColor(i.island)}))
+  if(!items.length){ ctx.fillStyle="#8aa0c8"; ctx.fillText("нет данных — включите чекбоксы", W/2-70, H/2); return }
+  let maxN = Math.max(...items.map(it=> Math.max(it.worst||0, it.mean||0, 0.5)))*1.2
+  if(maxN<0.6) maxN=0.6
+  let n = items.length
+  let left=46, right=W-16, top=16, bot=H-28
+  let bw=(right-left)/n, barW=Math.max(8, bw-14)
+  ctx.strokeStyle="rgba(30,46,78,0.5)"; ctx.setLineDash([2,4])
+  for(let i=0;i<=4;i++){ let y=top+i*(bot-top)/4; ctx.beginPath(); ctx.moveTo(left,y); ctx.lineTo(right,y); ctx.stroke() }
+  ctx.setLineDash([])
+  let thr = rob.threshold_n || 0.5
+  let yThr = bot - (thr/maxN)*(bot-top)
+  ctx.strokeStyle="#ff6b7a"; ctx.setLineDash([6,4]); ctx.lineWidth=1.2; ctx.beginPath(); ctx.moveTo(left,yThr); ctx.lineTo(right,yThr); ctx.stroke(); ctx.setLineDash([])
+  ctx.fillStyle="#ff6b7a"; ctx.font="9px monospace"; ctx.fillText("порог "+thr.toFixed(2), right-70, yThr-4)
+  items.forEach((it, idx)=>{
+    let x=left + idx*bw + (bw-barW)/2
+    let yMean = bot - (Math.min(it.mean,maxN)/maxN)*(bot-top)
+    let yWorst = bot - (Math.min(it.worst,maxN)/maxN)*(bot-top)
+    // mean bar
+    ctx.fillStyle=it.col+"88"; ctx.fillRect(x, yMean, barW, bot - yMean)
+    ctx.strokeStyle=it.col; ctx.strokeRect(x, yMean, barW, bot - yMean)
+    // worst dot
+    ctx.fillStyle="#fff"; ctx.beginPath(); ctx.arc(x+barW/2, yWorst, 3.2,0,Math.PI*2); ctx.fill()
+    ctx.strokeStyle=it.col; ctx.lineWidth=1.5; ctx.stroke()
+    // pass indicator
+    let passCol = it.pass>=1? "#7af0a0" : it.pass>=0.8? "#ffbe55" : "#ff6b7a"
+    ctx.fillStyle=passCol; ctx.beginPath(); ctx.arc(x+barW/2, top-6, 4,0,Math.PI*2); ctx.fill()
+    ctx.fillStyle="#8aa0c8"; ctx.font="8px monospace"; ctx.textAlign="center"
+    ctx.fillText(it.label, x+barW/2, bot+12)
+    ctx.fillText(it.pass.toFixed(2), x+barW/2, top-12)
+    ctx.textAlign="start"
+  })
+  ctx.fillStyle="#8aa0c8"; ctx.font="10px monospace"; ctx.textAlign="right"
+  for(let i=0;i<=4;i++){ let v=maxN*(1-i/4); let y=top + i*(bot-top)/4; ctx.fillText(v.toFixed(2), left-6, y+3) }
+  ctx.textAlign="start"
+  let leg=document.getElementById('robustLegend')
+  if(leg) leg.innerHTML=`<span><i style="width:12px;height:8px;background:#7af0a0;display:inline-block"></i> mean n</span><span><i style="width:8px;height:8px;background:#fff;border:1px solid #8aa0c8;border-radius:50%;display:inline-block"></i> worst n</span><span><i style="width:10px;height:10px;background:#ff6b7a;border-radius:50%;display:inline-block"></i> pass=1.0</span><span><i style="width:14px;height:2px;background:#ff6b7a;display:inline-block"></i> порог</span>`
+  let tbl=document.getElementById('robustTable')
+  if(tbl){
+    let html=`<table class="table mono" style="min-width:600px"><tr><th>island/hall</th><th>mean n</th><th>worst n</th><th>pass</th><th>робастность</th></tr>`
+    for(let it of items){
+      let status = it.pass>=1? '<span style="color:#7af0a0">✓ robust</span>' : it.pass>=0.8? '<span style="color:#ffbe55">~ partial</span>' : '<span style="color:#ff6b7a">✗ fail</span>'
+      html+=`<tr><td><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${it.col}"></span> ${it.label}</td><td>${it.mean?.toExponential(2)||"—"}</td><td>${it.worst?.toExponential(2)||"—"}</td><td>${it.pass?.toFixed(2)||"—"}</td><td>${status}</td></tr>`
+    }
+    html+=`</table>`
+    tbl.innerHTML=html
+  }
+  let stats=document.getElementById('robustStats')
+  if(stats){
+    let overall = hall.length? hall[0].pass_fraction : (islands[0]?.pass_fraction||0)
+    let verdict = overall>=1? "✓ все сценарии пройдены" : overall>=0.8? "⚠ частично" : "✗ не робастно — капут"
+    stats.textContent=`hall#0 pass ${overall?.toFixed(2)||"—"} — ${verdict} · проверка обязательна`
+    let badge=document.getElementById('robustBadge')
+    if(badge){ badge.textContent=verdict; badge.style.background= overall>=1? "#0d2816" : overall>=0.8? "#2a1d0a" : "#2a0a0a"; badge.style.borderColor= overall>=1? "#1a5c2a" : "#5c3a1a" }
+    let thrEl=document.getElementById('robustThreshold')
+    if(thrEl) thrEl.textContent=`порог n₀=${thr.toFixed(2)}`
+  }
+}
 function drawIslands(state){
   const tbl=document.getElementById('islandTable'), log=document.getElementById('migrLog')
   if(!tbl) return
@@ -2080,12 +2380,20 @@ function drawIslands(state){
 function drawAxes(ctx,W,H,opts){
   ctx.clearRect(0,0,W,H)
   ctx.fillStyle="#121c2e"; ctx.fillRect(0,0,W,H)
+  // grid — 4 horizontal + 5 vertical, faint dashed
+  ctx.strokeStyle="rgba(30,46,78,0.65)"; ctx.lineWidth=1; ctx.setLineDash([3,5])
+  for(let i=0;i<4;i++){ let y=16+i*(H-40)/3; ctx.beginPath(); ctx.moveTo(44,y); ctx.lineTo(W-12,y); ctx.stroke() }
+  for(let i=0;i<5;i++){ let x=44+i*(W-56)/4; ctx.beginPath(); ctx.moveTo(x,16); ctx.lineTo(x,H-24); ctx.stroke() }
+  ctx.setLineDash([])
   ctx.strokeStyle="#243556"; ctx.strokeRect(0.5,0.5,W-1,H-1)
   if(opts && opts.xlabel){
     ctx.fillStyle="#8aa0c8"; ctx.font="10px sans-serif"; ctx.textAlign="center"
     ctx.fillText(opts.xlabel, W/2, H-6)
-    ctx.save(); ctx.translate(10, H/2); ctx.rotate(-Math.PI/2); ctx.fillText(opts.ylabel||"",0,0); ctx.restore()
+    ctx.save(); ctx.translate(12, H/2); ctx.rotate(-Math.PI/2); ctx.fillText(opts.ylabel||"",0,0); ctx.restore()
     ctx.textAlign="start"
+  } else if(opts && opts.ylabel){
+    ctx.fillStyle="#8aa0c8"; ctx.font="10px sans-serif"
+    ctx.save(); ctx.translate(12, H/2); ctx.rotate(-Math.PI/2); ctx.fillText(opts.ylabel||"",0,0); ctx.restore()
   }
 }
 const LOSS_COLORS = {n:"#7af0a0", pos:"#ffbe55", well:"#c58aff", lag:"#5affda", distortion:"#ff7a7a", control:"#f0883e", freq:"#ff6b9e", robust:"#ffd05a", sum:"#ffffff"}
@@ -2690,6 +2998,7 @@ function drawTrap(state){
   const sideCard=document.getElementById('cardTrapSide')
   const showSide=document.getElementById('chkTrapSide')?.checked
   if(sideCard) sideCard.style.display= showSide? "block":"none"
+  let sideCtx=cSide? cSide.getContext('2d'):null, sW=cSide?cSide.width:0, sH=cSide?cSide.height:0
   const trap = state?.trap || setupTrapData
   if(!trap){
     ctx.clearRect(0,0,W,H); ctx.fillStyle="#0f1930"; ctx.fillRect(0,0,W,H)
@@ -2729,7 +3038,6 @@ function drawTrap(state){
   }
   function xToCanvas(x){ return 40 + (x - xMin)/(xMax - xMin ||1)*(W-60) }
   function yToCanvas(y){ return H-28 - (y - yMin)/(yMax - yMin ||1)*(H-56) }
-  let sideCtx=cSide? cSide.getContext('2d'):null, sW=cSide?cSide.width:0, sH=cSide?cSide.height:0
   function xToSide(x){ return 40 + (x - xMin)/(xMax - xMin ||1)*(sW-60) }
   function zToSide(z){ return sH-24 - (z - zMin)/((zMax - zMin)||1)*(sH-48) }
 
@@ -2888,6 +3196,11 @@ function trapLoop(ts){
   trapAnim.progress += (dt * trapAnim.speed) / 2.0
   if(trapAnim.progress>1) trapAnim.progress=0
   drawTrap(lastState)
+  try{
+    if(document.getElementById('cVoltage')) drawVoltage(lastState)
+    if(document.getElementById('cFrequency')) drawFrequency(lastState)
+    let sl=document.getElementById('sliderTrapTime'); if(sl) sl.value=Math.round(trapAnim.progress*1000)
+  }catch(e){}
   trapAnim.raf=requestAnimationFrame(trapLoop)
 }
 
@@ -2928,6 +3241,35 @@ function init(){
   ;['chkWell','chkQuantum','chkClassical','chkTarget','selTrajZoom'].forEach(id=>{
     let el=document.getElementById(id); if(el) el.addEventListener('change',()=>{ if(lastState) drawTrajectories(lastState); })
   })
+  ;['chkFrequencyAll','chkFrequencyBaseline'].forEach(id=>{
+    let el=document.getElementById(id); if(el) el.addEventListener('change',()=>{ if(lastState) drawFrequency(lastState); })
+  })
+  ;['chkRobustHall','chkRobustIslands'].forEach(id=>{
+    let el=document.getElementById(id); if(el) el.addEventListener('change',()=>{ if(lastState) drawRobust(lastState); })
+  })
+  // export buttons
+  let btnSaveVolt=document.getElementById('btnSaveVoltages'); if(btnSaveVolt) btnSaveVolt.onclick=()=>{
+    let run=localStorage.getItem('dashboard_run')||''
+    let url='/api/sion_export' + (run?`?run=${encodeURIComponent(run)}`:'')
+    window.open(url,'_blank')
+  }
+  let btnSaveSTA=document.getElementById('btnSaveSTA'); if(btnSaveSTA) btnSaveSTA.onclick=()=>{
+    // download both baseline CSVs sequentially
+    let run=localStorage.getItem('dashboard_run')||''
+    let qs=run?`?run=${encodeURIComponent(run)}&`:'?'
+    // sta
+    let a=document.createElement('a'); a.href=`/api/download${qs}file=baseline_sta.csv`; a.download='baseline_sta.csv'; a.click()
+    setTimeout(()=>{ let b=document.createElement('a'); b.href=`/api/download${qs}file=baseline_smooth.csv`; b.download='baseline_smooth.csv'; b.click() }, 300)
+  }
+  let btnCSV=document.getElementById('btnDownloadVoltagesCSV'); if(btnCSV) btnCSV.onclick=()=>{
+    let run=localStorage.getItem('dashboard_run')||''
+    let url='/api/sion_export' + (run?`?run=${encodeURIComponent(run)}`:'')
+    fetch(url).then(r=>r.json()).then(j=>{
+      if(!j.algorithms){ alert('нет данных SION — дождитесь GA'); return }
+      // download combined CSV via export
+      let a=document.createElement('a'); a.href=url; a.download='sion_export.json'; a.click()
+    })
+  }
 
   document.querySelectorAll('.tab-btn').forEach(btn=>{
     btn.addEventListener('click',()=>{
@@ -2937,9 +3279,9 @@ function init(){
       document.querySelectorAll('.tab-pane').forEach(p=>p.classList.remove('active'))
       document.getElementById('pane-'+tab).classList.add('active')
       if(tab==='setup') drawSetupTrap()
-      else if(tab==='trap') drawTrap(lastState)
+      else if(tab==='trap'){ drawTrap(lastState); try{ drawVoltage(lastState); drawFrequency(lastState)}catch(e){} }
       else if(tab==='overview' && lastState){
-        drawFitness(lastState); drawDivers(lastState); drawHist(lastState); drawHall(lastState); drawHeat(lastState); drawPareto(lastState); drawTrajectories(lastState)
+        drawFitness(lastState); drawDivers(lastState); drawHist(lastState); drawHall(lastState); drawHeat(lastState); drawPareto(lastState); drawTrajectories(lastState); try{ drawRobust(lastState)}catch(e){}
       } else if(tab==='loss' && lastState){ drawLossStack(lastState); drawLossHistory(lastState); drawLossTable(lastState) }
       else if(tab==='migration' && lastState){ drawMigration(lastState); drawMigrationTimeline(lastState); drawIsolationTable(lastState) }
       else if(tab==='islands' && lastState){ drawIslands(lastState) }
@@ -2955,6 +3297,7 @@ function init(){
     trapAnim.progress=parseInt(e.target.value)/1000
     setTrapPlaying(false)
     drawTrap(lastState)
+    try{ drawVoltage(lastState); drawFrequency(lastState) }catch(err){}
   }
   document.getElementById('selTrapView').onchange=()=> drawTrap(lastState)
   document.getElementById('chkTrapWell').onchange=()=> drawTrap(lastState)
@@ -3186,7 +3529,7 @@ function init(){
       document.getElementById('liveDot').style.background="#6ef0a8"
       updateKVs(j)
       drawFitness(j); drawDivers(j); drawHist(j); drawHall(j); drawHeat(j); drawPareto(j); drawTrajectories(j); drawIslands(j)
-      buildTrapFilters(j); drawTrap(j)
+      buildTrapFilters(j); drawTrap(j); try{ drawVoltage(j); drawFrequency(j); drawRobust(j)}catch(e){}
       drawLossStack(j); drawLossHistory(j); drawLossTable(j); drawMigration(j); drawMigrationTimeline(j); drawIsolationTable(j)
     }catch(e){
       document.getElementById('liveText').textContent="нет связи"

@@ -1,4 +1,6 @@
 """Sion surface-electrode backend. Public positions/derivatives are in SI."""
+import os as _os
+_os.environ.setdefault("NUMBA_DISABLE_JIT", "1")
 from dataclasses import dataclass
 import numpy as np
 from scipy.constants import elementary_charge, atomic_mass

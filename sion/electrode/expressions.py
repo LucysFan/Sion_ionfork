@@ -38,7 +38,7 @@ except ImportError:
 #logging.basicConfig(level=logging.DEBUG)
 
 
-@jit("void(f8,f8,f8,f8,f8,i4,f8[:])", nopython=True)
+@jit("void(f8,f8,f8,f8,f8,i4,f8[:])", nopython=True, cache=True)
 def point_potential_expr(x, y, z, r, a, derivative, d):
     if derivative == 0:
         n = a/(2*pi*r**3)
@@ -90,7 +90,7 @@ def point_potential_expr(x, y, z, r, a, derivative, d):
         d[10] += ((x**2-6*y**2)*(x**2+y**2)**2+(-11*x**4+90*x**2*y**2+101*y**4)*z**2-4*(x**2+29*y**2)*z**4+8*z**6)*n
 
 
-@jit("void(f8[:,:],f8[:,:],f8[:],f8,i4,i4,f8,f8[:,:])", nopython=True)
+@jit("void(f8[:,:],f8[:,:],f8[:],f8,i4,i4,f8,f8[:,:])", nopython=True, cache=True)
 def _point_potential(x, points, areas, potential, derivative,
         cover_nmax, cover_height, out):
     nx = x.shape[0]
@@ -121,7 +121,7 @@ def point_potential(x, points, areas, potential, derivative,
     return out
 
 
-@jit("void(f8,f8,f8,f8,f8,f8,f8,f8,f8,i4,f8[:])", nopython=True)
+@jit("void(f8,f8,f8,f8,f8,f8,f8,f8,f8,i4,f8[:])", nopython=True, cache=True)
 def edge_potential_expr(x1, x2, y1, y2, r1, r2, l2, z, a, derivative, d):
     if derivative == 0:
         zs = fabs(z)
@@ -177,7 +177,7 @@ def edge_potential_expr(x1, x2, y1, y2, r1, r2, l2, z, a, derivative, d):
         d[10] += (3*(x1-x2)*(2*l2**2*(r1+r2)**4*(r1**4*r2**6*(3*r1**3-2*r1**2*r2+9*r1*r2**2+9*r2**3)*y1+r1**6*r2**4*(9*r1**3+9*r1**2*r2-2*r1*r2**2+3*r2**3)*y2-6*r1**2*r2**2*(15*r1*r2**6*y1+15*r2**7*y1+r1**5*r2**2*(3*y1-4*y2)+r1**3*r2**4*(y1-2*y2)+15*r1**7*y2+15*r1**6*r2*y2+r1**4*r2**3*(-2*y1+y2)+r1**2*r2**5*(-4*y1+3*y2))*z**2+(105*r1*r2**8*y1+105*r2**9*y1-3*r1**5*r2**4*(y1-4*y2)+15*r1**7*r2**2*(y1-2*y2)+3*r1**4*r2**5*(4*y1-y2)+105*r1**9*y2+105*r1**8*r2*y2+15*r1**2*r2**7*(-2*y1+y2)-5*r1**6*r2**3*(2*y1+y2)-5*r1**3*r2**6*(y1+2*y2))*z**4)-2*l2*(r1+r2)**6*(r1**4*r2**6*(3*r1+2*r2)*(r1**2+3*r2**2)*y1+r1**6*r2**4*(2*r1+3*r2)*(3*r1**2+r2**2)*y2-6*r1**2*r2**2*(15*r1*r2**6*y1+10*r2**7*y1+10*r1**7*y2+15*r1**6*r2*y2+r1**4*r2**3*(2*y1+y2)+r1**3*r2**4*(y1+2*y2)+r1**2*r2**5*(4*y1+3*y2)+r1**5*r2**2*(3*y1+4*y2))*z**2+(105*r1*r2**8*y1+70*r2**9*y1-5*r1**3*r2**6*(y1-2*y2)+5*r1**6*r2**3*(2*y1-y2)+70*r1**9*y2+105*r1**8*r2*y2+15*r1**2*r2**7*(2*y1+y2)-3*r1**4*r2**5*(4*y1+y2)+15*r1**7*r2**2*(y1+2*y2)-3*r1**5*r2**4*(y1+4*y2))*z**4)+(r1+r2)**8*(r1**4*r2**6*(2*r1**3+4*r1**2*r2+6*r1*r2**2+3*r2**3)*y1+r1**6*r2**4*(3*r1**3+6*r1**2*r2+4*r1*r2**2+2*r2**3)*y2-6*r1**2*r2**2*(10*r1*r2**6*y1+5*r2**7*y1+5*r1**7*y2+10*r1**6*r2*y2+2*r1**2*r2**5*(4*y1+y2)+2*r1**3*r2**4*(3*y1+2*y2)+2*r1**4*r2**3*(2*y1+3*y2)+2*r1**5*r2**2*(y1+4*y2))*z**2+5*(14*r1*r2**8*y1+7*r2**9*y1+7*r1**9*y2+14*r1**8*r2*y2+2*r1**2*r2**7*(6*y1+y2)+2*r1**3*r2**6*(5*y1+2*y2)+2*r1**4*r2**5*(4*y1+3*y2)+2*r1**5*r2**4*(3*y1+4*y2)+2*r1**6*r2**3*(2*y1+5*y2)+2*r1**7*r2**2*(y1+6*y2))*z**4)+l2**4*(3*r1**4*r2**9*y1-30*r1**2*r2**9*y1*z**2+35*r2**9*y1*z**4+r1**9*y2*(3*r2**4-30*r2**2*z**2+35*z**4))-2*l2**3*(15*r1**5*r2**10*y1+r1**6*r2**9*(10*y1+y2)-150*r1**3*r2**10*y1*z**2+175*r1*r2**10*y1*z**4+70*r2**11*y1*z**4+6*r1**4*r2**9*(r2**2*y1-(16*y1+y2)*z**2)+5*r1**2*r2**9*z**2*(-12*r2**2*y1+(22*y1+y2)*z**2)+2*r1**11*y2*(3*r2**4-30*r2**2*z**2+35*z**4)+5*r1**10*r2*y2*(3*r2**4-30*r2**2*z**2+35*z**4)+r1**9*r2**2*(r2**4*(y1+10*y2)-6*r2**2*(y1+16*y2)*z**2+5*(y1+22*y2)*z**4))))*n
 
 
-@jit("void(f8[:,:],f8[:,:],f8,i4,i4,f8,f8[:,:])", nopython=True)
+@jit("void(f8[:,:],f8[:,:],f8,i4,i4,f8,f8[:,:])", nopython=True, cache=True)
 def _polygon_potential(x, polygon, potential, derivative, cover_nmax,
         cover_height, out):
     nx = x.shape[0]
@@ -215,7 +215,7 @@ def polygon_potential(x, polygons, potential, derivative, cover_nmax,
  
 
 @jit("void(f8[:,:],f8[:,:],i4[:,:],i4[:],f8[:],i4,i4,f8,f8[:,:])",
-    nopython=True)
+    nopython=True, cache=True)
 def _mesh_potential(x, points, edges, polygons, potentials, derivative,
         cover_nmax, cover_height, out):
     nx = x.shape[0]

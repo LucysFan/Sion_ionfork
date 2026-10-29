@@ -620,6 +620,84 @@ class Handler(SimpleHTTPRequestHandler):
             self._send_json({"status": "no live yet"})
             return
 
+        if self.path.startswith("/api/sion_export"):
+            out_dir = self._resolve_out_dir()
+            qs = parse_qs(urlparse(self.path).query)
+            # allow ?run=... override
+            p = out_dir / "sion_export.json"
+            if p.exists():
+                # support ?format=csv&island=S etc for direct CSV download
+                fmt = qs.get("format", [None])[0]
+                if fmt == "csv":
+                    island = qs.get("island", [None])[0]
+                    baseline = qs.get("baseline", [None])[0]
+                    # try to find specific CSV
+                    cand = None
+                    if island:
+                        for suf in [f"algo_{island}_{baseline}.csv" if baseline else f"algo_{island}_*.csv", f"baseline_{island}.csv", f"baseline_{baseline}.csv" if baseline else ""]:
+                            import glob
+                            matches = list((out_dir).glob(suf)) if "*" not in suf else list((out_dir).glob(f"algo_{island}_*.csv"))
+                            if matches:
+                                cand = matches[0]
+                                break
+                    if cand and cand.exists():
+                        self.send_response(200)
+                        self.send_header("Content-Type", "text/csv; charset=utf-8")
+                        self.send_header("Content-Disposition", f'attachment; filename="{cand.name}"')
+                        self.send_header("Access-Control-Allow-Origin", "*")
+                        self.end_headers()
+                        self.wfile.write(cand.read_bytes())
+                        return
+                    # fallback to JSON if not found
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(p.read_bytes())
+                return
+            self._send_json({"error": "no sion_export yet, run GA to generate", "path": str(p)}, 404)
+            return
+
+        if self.path.startswith("/api/robustness"):
+            out_dir = self._resolve_out_dir()
+            p = out_dir / "state.json"
+            if p.exists():
+                try:
+                    j = json.loads(p.read_text(encoding="utf-8"))
+                    rob = j.get("robustness")
+                    if rob:
+                        self._send_json({"robustness": rob, "ok": True})
+                        return
+                except Exception as e:
+                    self._send_json({"error": str(e)}, 500)
+                    return
+            self._send_json({"error": "no robustness yet"}, 404)
+            return
+
+        if self.path.startswith("/api/download"):
+            out_dir = self._resolve_out_dir()
+            qs = parse_qs(urlparse(self.path).query)
+            fname = qs.get("file", [None])[0] or qs.get("path", [None])[0]
+            if fname:
+                # prevent directory traversal
+                fname = pathlib.Path(fname).name
+                p = out_dir / fname
+                if p.exists() and p.is_file():
+                    # guess content type
+                    ctype = "application/octet-stream"
+                    if p.suffix == ".json": ctype = "application/json; charset=utf-8"
+                    elif p.suffix == ".csv": ctype = "text/csv; charset=utf-8"
+                    elif p.suffix == ".md": ctype = "text/markdown; charset=utf-8"
+                    self.send_response(200)
+                    self.send_header("Content-Type", ctype)
+                    self.send_header("Content-Disposition", f'attachment; filename="{p.name}"')
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(p.read_bytes())
+                    return
+            self._send_json({"error": "file not found", "available": [str(x.name) for x in out_dir.glob("*") if x.is_file()]}, 404)
+            return
+
         if self.path.startswith("/api/jobs"):
             running = False
             running_job = None
@@ -985,12 +1063,19 @@ class Handler(SimpleHTTPRequestHandler):
                     log_f = open(log_path, "w", buffering=1, encoding="utf-8", errors="replace")
                 except Exception:
                     log_f = subprocess.PIPE
+                env = dict(os.environ)
+                # GA benefits from JIT cache (fast per-genome) but first compile is ~48s; use JIT for GA, keep pipeline fast-preview without JIT.
+                if mode == "ga":
+                    env["NUMBA_DISABLE_JIT"] = "0"
+                else:
+                    env.setdefault("NUMBA_DISABLE_JIT", "1")
                 proc = subprocess.Popen(
                     cmd,
                     stdout=log_f if not isinstance(log_f, int) and log_f != subprocess.PIPE else subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
                     bufsize=1,
+                    env=env,
                 )
                 job_id = f"{mode}_{int(time.time())}"
                 with _JOBS_lock:

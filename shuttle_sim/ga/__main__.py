@@ -4,6 +4,7 @@ Never blocks evolution — dashboard (if --dashboard) is forked as separate proc
 or if unavailable, writes state.json for external server to poll.
 """
 import argparse, json, pathlib, sys, time, subprocess, os
+os.environ.setdefault("NUMBA_DISABLE_JIT", "1")
 
 def main():
     ap=argparse.ArgumentParser(description="Island GA for shuttling")
