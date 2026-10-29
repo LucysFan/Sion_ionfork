@@ -79,6 +79,7 @@
       {"strategy": "S", "pop": 20, "baseline": "smooth"},
       {"strategy": "A", "pop": 20, "baseline": "sta"},
       {"strategy": "V", "pop": 12, "baseline": "sta"},
+      {"strategy": "W", "pop": 12, "baseline": "sta"},
       {"strategy": "R", "pop": 20, "baseline": "sta"},
       {"strategy": "H", "pop": 18, "baseline": "smooth"},
       {"strategy": "Q1", "pop": 20, "baseline": "smooth", "isolated_until": 12, "desc": "карантин 12 эпох, пустой поиск"},

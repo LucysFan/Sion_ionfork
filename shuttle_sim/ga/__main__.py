@@ -49,7 +49,8 @@ def main():
         ga_cfg["islands"]=[
             {"strategy":"S","pop":20,"baseline":"smooth"},
             {"strategy":"A","pop":20,"baseline":"sta"},
-            {"strategy":"V","pop":20,"baseline":"sta"},
+            {"strategy":"V","pop":20,"baseline":"sta"},  # voltage variable ΔV
+            {"strategy":"W","pop":20,"baseline":"sta"},  # frequency variable ω(s)
             {"strategy":"R","pop":25,"baseline":"sta"},
             {"strategy":"H","pop":20,"baseline":"smooth"},
         ]

@@ -43,9 +43,10 @@ class GAEngine:
             isl.initialize()
             self.islands.append(isl)
         if not self.islands:
-            # default 5 islands — разные базы, не только STA (STA «не радует» в эксперименте)
-            defaults=[("S",20,"smooth"),("A",20,"sta"),("V",20,"sta"),("R",25,"sta"),("H",20,"smooth")]
-            # S=smooth адиабатика, A=STA короткий, V=variable частота, R=robust, H=hardware/lowpass
+            # default 6 islands — разные базы, не только STA (STA «не радует» в эксперименте)
+            # V = variable voltage (4 базиса×2 ΔV), W = variable frequency ω(s) via FrequencyProfile
+            defaults=[("S",20,"smooth"),("A",20,"sta"),("V",20,"sta"),("W",20,"sta"),("R",25,"sta"),("H",20,"smooth")]
+            # S=smooth адиабатика, A=STA короткий, V=voltage, W=frequency, R=robust, H=hardware/lowpass
             for i,(s,p,b) in enumerate(defaults):
                 isl=Island(i,s,p, rng=self.rng.integers(0,1<<31), baseline=b)
                 isl.initialize()

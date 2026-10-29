@@ -239,24 +239,38 @@ input[type=range]{accent-color:var(--accent)}
 <!-- Overview tab -->
 <div id="pane-overview" class="tab-pane">
   <div style="padding:16px 20px 0 20px">
-    <div class="card" style="border:1px solid var(--accent)">
-      <h3>
-        <span>Live · текущее поколение</span>
-        <span class="badge" id="liveGenBadge">—</span>
-      </h3>
-      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
-        <span class="kv" style="min-width:140px">поколение <b id="liveGenText">—</b></span>
-        <div class="progress" style="flex:1;min-width:200px;height:12px"><i id="liveProg" style="width:0%"></i></div>
-        <span class="kv mono" id="liveProgText" style="min-width:110px">—</span>
-        <span class="kv mono" id="liveElapsed" style="min-width:70px">—</span>
-        <span class="kv mono" id="liveBest" style="min-width:110px">best —</span>
+    <div class="card" style="border:1px solid rgba(90,200,255,0.32);background:linear-gradient(180deg,#1a2f52 0%,#17202f 100%);box-shadow:0 8px 32px rgba(0,0,0,0.32), inset 0 1px 0 rgba(255,255,255,0.06);overflow:hidden;position:relative">
+      <div style="position:absolute;inset:0;pointer-events:none;opacity:0.06;background:radial-gradient(600px 200px at 18% 0%, #5ac8ff 0%, transparent 60%), radial-gradient(700px 240px at 92% 18%, #7af0a0 0%, transparent 62%)"></div>
+      <div style="position:relative;display:flex;align-items:center;gap:12px;margin:-2px 0 14px 0">
+        <div style="width:34px;height:34px;border-radius:11px;background:linear-gradient(135deg,#5ac8ff 0%,#7af0a0 100%);display:grid;place-items:center;box-shadow:0 4px 14px rgba(90,200,255,0.35), inset 0 1px 0 rgba(255,255,255,0.7);flex-shrink:0">
+          <span style="width:10px;height:10px;border-radius:50%;background:#fff;box-shadow:0 0 10px #fff;display:block;animation:livePulse 1.7s ease-in-out infinite"></span>
+        </div>
+        <div style="line-height:1.15;min-width:0">
+          <div style="font-size:13.5px;font-weight:800;letter-spacing:.02em;color:#fff;display:flex;align-items:center;gap:8px;flex-wrap:wrap">Live <span style="font-weight:500;color:var(--muted)">· текущее поколение</span> <span style="font-size:11px;font-weight:600;color:#7af0a0;background:rgba(122,240,160,0.14);border:1px solid rgba(122,240,160,0.28);padding:2px 7px;border-radius:999px">в реальном времени</span></div>
+          <div style="font-size:11px;color:var(--muted);margin-top:1px">каждая точка = оценка fitness · цвет = остров · яркие = последние</div>
+        </div>
+        <span class="badge" id="liveGenBadge" style="margin-left:auto;background:rgba(90,200,255,0.14);border:1px solid rgba(90,200,255,0.32);padding:7px 12px;font-weight:800;letter-spacing:.02em;box-shadow:0 2px 8px rgba(90,200,255,0.15)">—</span>
       </div>
-      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
-        <span class="kv">остров <b id="liveIsland">—</b> · оценок <b id="liveEval">—/—</b></span>
-        <span class="kv mono" id="liveCurrentFit" style="color:var(--muted)"></span>
+      <div style="position:relative;display:grid;grid-template-columns:auto 1fr auto auto auto;gap:12px;align-items:center;margin-bottom:12px;padding:11px 12px;background:rgba(11,18,32,0.62);border:1px solid rgba(36,50,77,0.95);border-radius:12px;backdrop-filter:blur(6px)">
+        <span class="kv" style="min-width:124px;display:flex;flex-direction:column;gap:1px"><span style="font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)">поколение</span><b id="liveGenText" style="font-size:13px;color:#fff;line-height:1">—</b></span>
+        <div style="display:flex;align-items:center;gap:10px;min-width:0">
+          <div class="progress" style="flex:1;min-width:140px;height:10px;background:#07101f;border:1px solid #1b2e50;box-shadow:inset 0 1px 6px rgba(0,0,0,0.55), inset 0 0 0 1px rgba(255,255,255,0.03);overflow:hidden;border-radius:999px;position:relative"><i id="liveProg" style="width:0%;background:linear-gradient(90deg,#5ac8ff 0%, #5ad0ff 45%, #7af0a0 100%);box-shadow:0 0 10px rgba(90,200,255,0.45), 0 0 18px rgba(122,240,160,0.22);border-radius:999px;transition:width .35s cubic-bezier(.22,1,.36,1)"></i><span style="position:absolute;inset:0;background:linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.11) 50%, transparent 100%);opacity:0.35;pointer-events:none"></span></div>
+          <span class="kv mono" id="liveProgText" style="min-width:102px;font-weight:800;color:#e6efff;font-size:12px">—</span>
+        </div>
+        <span class="kv mono" id="liveElapsed" style="min-width:64px;text-align:right;background:rgba(15,20,28,0.7);border:1px solid #24324d;padding:5px 8px;border-radius:999px;color:#8aa0c8">—</span>
+        <span class="kv mono" id="liveBest" style="min-width:118px;text-align:right;background:rgba(122,240,160,0.13);border:1px solid rgba(122,240,160,0.32);padding:5px 10px;border-radius:999px;color:#7af0a0;font-weight:700;box-shadow:0 1px 8px rgba(122,240,160,0.12)">best —</span>
       </div>
-      <canvas id="cLive" width="900" height="160" style="height:160px;background:var(--panel2);border-radius:10px;display:block"></canvas>
-      <div class="legend" id="liveLegend"></div>
+      <div style="position:relative;display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:11px">
+        <span class="badge" style="background:#0e1a30;border:1px solid #24324d;padding:6px 11px;gap:8px;box-shadow:inset 0 1px 0 rgba(255,255,255,0.04)"><span style="width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent);display:inline-block"></span> остров <b id="liveIsland" style="margin-left:2px;color:#fff">—</b> <span style="opacity:0.45">·</span> <b id="liveEval" style="color:#fff">—/—</b></span>
+        <span class="kv mono" id="liveCurrentFit" style="color:var(--muted);background:rgba(255,255,255,0.04);padding:4px 8px;border-radius:999px;border:1px solid transparent"></span>
+        <span style="margin-left:auto;font-size:11px;color:var(--muted);display:inline-flex;align-items:center;gap:6px"><span style="width:28px;height:3px;border-radius:99px;background:linear-gradient(90deg,#5ac8ff,#7af0a0);display:inline-block;opacity:0.9"></span> ось X — дробное поколение · Y — log fitness (ниже лучше)</span>
+      </div>
+      <div style="position:relative;border-radius:12px;overflow:hidden;border:1px solid #24324d;background:#07101f;box-shadow:inset 0 0 0 1px rgba(255,255,255,0.03), inset 0 6px 18px rgba(0,0,0,0.35)">
+        <canvas id="cLive" width="900" height="200" style="height:200px;width:100%;display:block"></canvas>
+        <div style="position:absolute;inset:0;pointer-events:none;border-radius:12px;box-shadow:inset 0 1px 0 rgba(255,255,255,0.06), inset 0 0 24px rgba(90,200,255,0.05)"></div>
+      </div>
+      <div class="legend" id="liveLegend" style="margin-top:9px;justify-content:space-between;gap:10px"></div>
+      <style>@keyframes livePulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.18);opacity:0.88}}</style>
     </div>
   </div>
 
@@ -389,13 +403,13 @@ input[type=range]{accent-color:var(--accent)}
 </div>
 
 <script>
-const ISLANDS = ["S","A","V","R","H","Q1","Q2","F"]
+const ISLANDS = ["S","A","V","W","R","H","Q1","Q2","F"]
 const COLORS = {
-  S:"#5ac8ff", A:"#ffbe55", V:"#7af0a0", R:"#c58aff", H:"#ff7a7a",
+  S:"#5ac8ff", A:"#ffbe55", V:"#f0883e", W:"#3fb950", R:"#c58aff", H:"#ff7a7a",
   Q1:"#ff6b9e", Q2:"#5affda", F:"#ffd05a",
-  smooth:"#5ac8ff", sta:"#ffbe55", variable:"#7af0a0", robust:"#c58aff", hardware:"#ff7a7a", free:"#ffd05a"
+  smooth:"#5ac8ff", sta:"#ffbe55", variable:"#f0883e", voltage:"#f0883e", frequency:"#3fb950", robust:"#c58aff", hardware:"#ff7a7a", free:"#ffd05a"
 }
-const NAMES = {S:"S smooth", A:"A STA", V:"V variable", R:"R robust", H:"H hardware", Q1:"Q1", Q2:"Q2", F:"F free"}
+const NAMES = {S:"S smooth", A:"A STA", V:"V voltage", W:"W frequency", R:"R robust", H:"H hardware", Q1:"Q1 карантин 12", Q2:"Q2 карантин 18", F:"F free 15"}
 const POLY_PALETTE = [
   "rgba(90,200,255,0.30)",
   "rgba(122,240,160,0.26)",
@@ -1037,11 +1051,11 @@ function drawFitness(state){
   const c=document.getElementById('cFitness'); if(!c) return
   const ctx=c.getContext('2d'), W=c.width, H=c.height
   drawAxes(ctx,W,H,{xlabel:"generation", ylabel:"log fitness"})
-  if(!window.__fitSeries) window.__fitSeries = {S:[],A:[],V:[],R:[],H:[],Q1:[],Q2:[],F:[], global:[]}
+  if(!window.__fitSeries) window.__fitSeries = {S:[],A:[],V:[],W:[],R:[],H:[],Q1:[],Q2:[],F:[], global:[]}
   if(state && state.islands){
     for(let isl of state.islands){
       let strat = isl.strategy || isl.id
-      let key = String(strat)[0].toUpperCase(); if(!"SAVRH".includes(key) && !"QF".includes(key)) key=String(strat)
+      let key = String(strat)[0].toUpperCase(); if(!"SAVWRH".includes(key) && !"QF".includes(key)) key=String(strat)
       if(["Q1","Q2","F"].includes(String(strat))) key=String(strat)
       else if(!window.__fitSeries[key]) key="S"
       if(isl.best_fitness!=null){
@@ -1068,7 +1082,7 @@ function drawFitness(state){
   let maxX=Math.max(5, state? state.total_generations||20 :20, ...Object.values(ser).flatMap(a=>a.map(p=>p.x)))
   function xTo(px, W){ return 40 + (px/maxX)*(W-50)}
   function yTo(v, H){ let lv=Math.log10(Math.max(1e-3,v+0.1)); let t=(lv-logMin)/(logMax-logMin); return H-20 - t*(H-40) }
-  for(let k of ["S","A","V","R","H","Q1","Q2","F"]){
+  for(let k of ["S","A","V","W","R","H","Q1","Q2","F"]){
     let pts=ser[k]; if(!pts||pts.length<1) continue
     ctx.strokeStyle=islandColor(k); ctx.lineWidth=1.4; ctx.beginPath()
     pts.forEach((p,i)=>{ let x=xTo(p.x,W), y=yTo(p.y,H); if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y)})
@@ -1084,18 +1098,18 @@ function drawFitness(state){
   for(let i=0;i<=3;i++){ let t=i/3, lv=logMin + t*(logMax-logMin), v=Math.pow(10,lv)-0.1; let y=H-20 - t*(H-40); if(v>0) ctx.fillText(fmtFit(Math.max(0,v)), W-46, y+3)}
   ctx.fillText("0", 6, H-16)
   let leg=document.getElementById('fitnessLegend')
-  if(leg) leg.innerHTML=["S","A","V","R","H","Q1","Q2","F"].filter(k=>ser[k]&&ser[k].length).map(k=>`<span><i style="width:12px;height:3px;background:${islandColor(k)};display:inline-block;border-radius:99px"></i>${NAMES[k]||k}</span>`).join('')+`<span><i style="width:12px;height:3px;background:#fff;display:inline-block"></i> global best</span>`
+  if(leg) leg.innerHTML=["S","A","V","W","R","H","Q1","Q2","F"].filter(k=>ser[k]&&ser[k].length).map(k=>`<span><i style="width:12px;height:3px;background:${islandColor(k)};display:inline-block;border-radius:99px"></i>${NAMES[k]||k}</span>`).join('')+`<span><i style="width:12px;height:3px;background:#fff;display:inline-block"></i> global best</span>`
 }
 
 function drawDivers(state){
   const c=document.getElementById('cDivers'); if(!c) return
   const ctx=c.getContext('2d'), W=c.width,H=c.height
   drawAxes(ctx,W,H,{xlabel:"generation", ylabel:"diversity"})
-  if(!window.__divSeries) window.__divSeries={S:[],A:[],V:[],R:[],H:[],Q1:[],Q2:[],F:[]}
+  if(!window.__divSeries) window.__divSeries={S:[],A:[],V:[],W:[],R:[],H:[],Q1:[],Q2:[],F:[]}
   if(state && state.islands){
     for(let isl of state.islands){
       let key=String(isl.strategy||isl.id)
-      if(!["Q1","Q2","F"].includes(key)){ key=key[0].toUpperCase(); if(!"SAVRH".includes(key)) key="S" }
+      if(!["Q1","Q2","F"].includes(key)){ key=key[0].toUpperCase(); if(!"SAVWRH".includes(key)) key="S" }
       if(isl.diversity!=null){
         const arr = window.__divSeries[key]
         if(!arr.length || arr[arr.length-1].x !== state.global_generation){
@@ -1110,7 +1124,7 @@ function drawDivers(state){
   let maxX=Math.max(5, state? state.total_generations||20:20, ...Object.values(ser).flatMap(a=>a.map(p=>p.x)))
   function xTo(px,W){ return 40+(px/maxX)*(W-50)}
   function yTo(v,H){ let t=(v-minY)/(maxY-minY); return H-20 - t*(H-40)}
-  for(let k of ["S","A","V","R","H","Q1","Q2","F"]){
+  for(let k of ["S","A","V","W","R","H","Q1","Q2","F"]){
     let pts=ser[k]; if(!pts||pts.length<2) continue
     ctx.strokeStyle=islandColor(k); ctx.lineWidth=1.3; ctx.beginPath()
     pts.forEach((p,i)=>{ let x=xTo(p.x,W), y=yTo(p.y,H); if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y)}); ctx.stroke()
@@ -1534,6 +1548,11 @@ function drawTrap(state){
   if(!trap){
     ctx.clearRect(0,0,W,H); ctx.fillStyle="#0f1930"; ctx.fillRect(0,0,W,H)
     ctx.fillStyle="#8aa0c8"; ctx.font="13px sans-serif"; ctx.fillText("Загрузите ловушку на главной вкладке", W/2-120, H/2)
+    if(sideCtx && showSide){
+      sideCtx.clearRect(0,0,sW,sH); sideCtx.fillStyle="#121c2e"; sideCtx.fillRect(0,0,sW,sH)
+      sideCtx.fillStyle="#8aa0c8"; sideCtx.font="12px sans-serif"; sideCtx.fillText("вид сбоку — загрузите ловушку", 46, sH/2)
+      sideCtx.strokeStyle="#243556"; sideCtx.strokeRect(0.5,0.5,sW-1,sH-1)
+    }
     return
   }
   let islandTrajs = state?.island_trajectories || []
@@ -1566,7 +1585,7 @@ function drawTrap(state){
   function yToCanvas(y){ return H-28 - (y - yMin)/(yMax - yMin ||1)*(H-56) }
   let sideCtx=cSide? cSide.getContext('2d'):null, sW=cSide?cSide.width:0, sH=cSide?cSide.height:0
   function xToSide(x){ return 40 + (x - xMin)/(xMax - xMin ||1)*(sW-60) }
-  function zToSide(z){ return sH-24 - (z - zMin)/(yMax ? (zMax - zMin || 1) : 1)*(sH-48) }
+  function zToSide(z){ return sH-24 - (z - zMin)/((zMax - zMin)||1)*(sH-48) }
 
   ctx.clearRect(0,0,W,H)
   ctx.fillStyle="#0a1226"; ctx.fillRect(0,0,W,H)
@@ -1903,7 +1922,7 @@ function init(){
     let j=await r.json()
     if(j.ok){
       localStorage.setItem('dashboard_run', j.out)
-      try{ window.__fitSeries={S:[],A:[],V:[],R:[],H:[],Q1:[],Q2:[],F:[], global:[]}; window.__liveSeries=[]; window.__divSeries={S:[],A:[],V:[],R:[],H:[],Q1:[],Q2:[],F:[]}; window.lastState=null; localStorage.removeItem('ga_fit_series'); try{ drawLive({status:"no live yet"}); document.getElementById('kvGen').textContent="—/—"; document.getElementById('kvBest').textContent="—"; }catch(e){} }catch(e){}
+      try{ window.__fitSeries={S:[],A:[],V:[],W:[],R:[],H:[],Q1:[],Q2:[],F:[], global:[]}; window.__liveSeries=[]; window.__divSeries={S:[],A:[],V:[],W:[],R:[],H:[],Q1:[],Q2:[],F:[]}; window.lastState=null; localStorage.removeItem('ga_fit_series'); try{ drawLive({status:"no live yet"}); document.getElementById('kvGen').textContent="—/—"; document.getElementById('kvBest').textContent="—"; }catch(e){} }catch(e){}
       document.getElementById('launchStatus').textContent="Pipeline запущен → "+j.out
     } else {
       document.getElementById('launchStatus').textContent="Ошибка: "+(j.error||"")
@@ -1929,7 +1948,7 @@ function init(){
     let j=await r.json()
     if(j.ok){
       localStorage.setItem('dashboard_run', j.out)
-      try{ window.__fitSeries={S:[],A:[],V:[],R:[],H:[],Q1:[],Q2:[],F:[], global:[]}; window.__divSeries={S:[],A:[],V:[],R:[],H:[],Q1:[],Q2:[],F:[]}; window.__liveSeries=[]; window.lastState=null; localStorage.removeItem('ga_fit_series'); try{ drawLive({status:"no live yet"}); document.getElementById('kvGen').textContent="—/—"; document.getElementById('kvBest').textContent="—"; }catch(e){} }catch(e){}
+      try{ window.__fitSeries={S:[],A:[],V:[],W:[],R:[],H:[],Q1:[],Q2:[],F:[], global:[]}; window.__divSeries={S:[],A:[],V:[],W:[],R:[],H:[],Q1:[],Q2:[],F:[]}; window.__liveSeries=[]; window.lastState=null; localStorage.removeItem('ga_fit_series'); try{ drawLive({status:"no live yet"}); document.getElementById('kvGen').textContent="—/—"; document.getElementById('kvBest').textContent="—"; }catch(e){} }catch(e){}
       document.getElementById('launchStatus').textContent="GA запущен → "+j.out
     } else {
       document.getElementById('launchStatus').textContent="Ошибка: "+(j.error||"")
@@ -1945,8 +1964,8 @@ function init(){
     let run = document.getElementById('selRuns').value
     if(run){
       localStorage.setItem('dashboard_run', run)
-      window.__fitSeries = {S:[],A:[],V:[],R:[],H:[],Q1:[],Q2:[],F:[], global:[]}
-      window.__divSeries = {S:[],A:[],V:[],R:[],H:[],Q1:[],Q2:[],F:[]}
+      window.__fitSeries = {S:[],A:[],V:[],W:[],R:[],H:[],Q1:[],Q2:[],F:[], global:[]}
+      window.__divSeries = {S:[],A:[],V:[],W:[],R:[],H:[],Q1:[],Q2:[],F:[]}
       document.getElementById('launchStatus').textContent="Прогон: "+run
       pollState()
     }
@@ -2051,59 +2070,208 @@ function init(){
   let __liveSeries=[]
   function drawLive(live){
     const c=document.getElementById('cLive'); if(!c) return
-    const ctx=c.getContext('2d'), W=c.width, H=c.height
+    const rect=c.getBoundingClientRect()
+    const dpr=Math.min(window.devicePixelRatio||1,2)
+    const cssW=Math.max(300,Math.round(rect.width||900))
+    const cssH=Math.max(160,Math.round(rect.height||200))
+    const W=Math.round(cssW*dpr), H=Math.round(cssH*dpr)
+    if(c.width!==W || c.height!==H){ c.width=W; c.height=H }
+    const ctx=c.getContext('2d')
+    ctx.setTransform(dpr,0,0,dpr,0,0)
+
     let isNoLive = !live || live.status==="no live yet" || (!live.total_in_gen && !live.evaluated_in_gen && !live.live_generation)
     let genFloat=live?.live_generation ?? live?.global_generation ?? 0
     let evalIn=live?.evaluated_in_gen ?? 0, totIn=live?.total_in_gen ?? 0
     let frac=live?.gen_progress ?? 0
     let totGens = live?.total_generations ?? document.getElementById('inpGens').value ?? 12
-    document.getElementById('liveGenBadge').textContent = isNoLive ? "ожидание" : `gen ${live.global_generation ?? 0} · ${evalIn}/${totIn}`
+    // ——— header pills ———
+    const badge=document.getElementById('liveGenBadge')
+    if(badge){
+      badge.textContent = isNoLive ? "ожидание" : `gen ${live.global_generation ?? 0} · ${evalIn}/${totIn}`
+      badge.style.background = isNoLive ? "rgba(255,190,85,0.14)" : "rgba(90,200,255,0.14)"
+      badge.style.borderColor = isNoLive ? "rgba(255,190,85,0.32)" : "rgba(90,200,255,0.32)"
+      badge.style.color = isNoLive ? "#ffbe55" : "#e6efff"
+    }
     document.getElementById('liveGenText').textContent = isNoLive ? `0.00 / ${totGens}` : `${genFloat.toFixed(2)} / ${totGens}`
-    document.getElementById('liveProg').style.width = isNoLive ? "0%" : (frac*100).toFixed(1)+"%"
-    document.getElementById('liveProgText').textContent = isNoLive ? "—" : `${(frac*100).toFixed(1)}% (${evalIn}/${totIn})`
+    document.getElementById('liveProg').style.width = isNoLive ? "4%" : (frac*100).toFixed(1)+"%"
+    document.getElementById('liveProg').style.opacity = isNoLive ? "0.55" : "1"
+    document.getElementById('liveProgText').textContent = isNoLive ? "инициализация…" : `${(frac*100).toFixed(1)}% (${evalIn}/${totIn})`
     document.getElementById('liveElapsed').textContent = live?.elapsed_s!=null ? fmtSec(live.elapsed_s) : "—"
-    document.getElementById('liveBest').textContent = live?.live_best!=null ? `best ${fmtFit(live.live_best)}` : "best —"
+    const bestEl=document.getElementById('liveBest')
+    if(bestEl) bestEl.textContent = live?.live_best!=null ? `best ${fmtFit(live.live_best)}` : "best —"
     document.getElementById('liveIsland').textContent = isNoLive ? "—" : (live.current_island||"—")
+    // island pill color
+    const islEl=document.getElementById('liveIsland')
+    if(islEl && islEl.parentElement && live?.current_island){
+      // tint the badge border with island color
+      const col=islandColor(live.current_island)
+      islEl.parentElement.style.borderColor = col + "55"
+      islEl.style.color = col
+    }
     document.getElementById('liveEval').textContent = isNoLive ? "—/—" : `${evalIn}/${totIn}`
-    document.getElementById('liveCurrentFit').textContent = live?.current_fitness!=null ? fmtFit(live.current_fitness) : ""
+    const curFit=document.getElementById('liveCurrentFit')
+    if(curFit){
+      if(live?.current_fitness!=null){
+        curFit.textContent = `cur ${fmtFit(live.current_fitness)}`
+        curFit.style.color = "#e6efff"
+        curFit.style.background = "rgba(90,200,255,0.10)"
+        curFit.style.borderColor = "rgba(90,200,255,0.22)"
+      } else {
+        curFit.textContent = isNoLive ? "загрузка…" : ""
+        curFit.style.background="rgba(255,255,255,0.04)"
+        curFit.style.borderColor="transparent"
+      }
+    }
 
     if(live?.recent && Array.isArray(live.recent)){
       for(let r of live.recent){
         if(__liveSeries.length && __liveSeries[__liveSeries.length-1].ts===r.ts) continue
-        __liveSeries.push({x: r.gen + Math.random()*0.02, y: r.fitness, island: r.island, ts:r.ts})
-        if(__liveSeries.length>200) __liveSeries.shift()
+        __liveSeries.push({x: r.gen + (r.gen%1)*0.02 + Math.random()*0.008, y: r.fitness, island: r.island, ts:r.ts})
+        if(__liveSeries.length>220) __liveSeries.shift()
       }
     } else if(live?.current_fitness!=null){
       __liveSeries.push({x: live.live_generation, y: live.current_fitness, island: live.current_island, ts: live.timestamp})
-      if(__liveSeries.length>200) __liveSeries.shift()
+      if(__liveSeries.length>220) __liveSeries.shift()
     }
 
-    ctx.clearRect(0,0,W,H); ctx.fillStyle="#121c2e"; ctx.fillRect(0,0,W,H)
-    ctx.strokeStyle="#1e2e4e"; ctx.setLineDash([3,4]); ctx.lineWidth=1
-    for(let i=0;i<3;i++){ let y=20+i*(H-40)/3; ctx.beginPath();ctx.moveTo(40,y);ctx.lineTo(W-10,y);ctx.stroke()}
-    ctx.setLineDash([]); ctx.strokeStyle="#243556"; ctx.strokeRect(0.5,0.5,W-1,H-1)
+    // ——— canvas ———
+    const padL=46, padR=18, padT=14, padB=28
+    const plotW=cssW-padL-padR, plotH=cssH-padT-padB
+    // background
+    let bg=ctx.createLinearGradient(0,0,0,cssH)
+    bg.addColorStop(0,"#0d1b33")
+    bg.addColorStop(1,"#07101f")
+    ctx.fillStyle=bg; ctx.fillRect(0,0,cssW,cssH)
+    // subtle radial glow top
+    let rg=ctx.createRadialGradient(cssW*0.22, 0, 0, cssW*0.22, 0, cssW*0.85)
+    rg.addColorStop(0,"rgba(90,200,255,0.13)")
+    rg.addColorStop(1,"rgba(0,0,0,0)")
+    ctx.fillStyle=rg; ctx.fillRect(0,0,cssW,cssH*0.72)
+    let rg2=ctx.createRadialGradient(cssW*0.88, cssH*0.12, 0, cssW*0.88, cssH*0.12, cssW*0.6)
+    rg2.addColorStop(0,"rgba(122,240,160,0.09)")
+    rg2.addColorStop(1,"rgba(0,0,0,0)")
+    ctx.fillStyle=rg2; ctx.fillRect(0,0,cssW,cssH)
+    // grid
+    ctx.save()
+    ctx.beginPath(); ctx.rect(padL, padT, plotW, plotH); ctx.clip()
+    ctx.strokeStyle="rgba(30,46,78,0.9)"; ctx.lineWidth=1; ctx.setLineDash([3,5])
+    for(let i=0;i<=3;i++){ let y=padT + i*(plotH/3); ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(padL+plotW,y); ctx.stroke() }
+    ctx.strokeStyle="rgba(30,46,78,0.45)"
+    for(let i=0;i<=5;i++){ let x=padL + i*(plotW/5); ctx.beginPath(); ctx.moveTo(x,padT); ctx.lineTo(x,padT+plotH); ctx.stroke() }
+    ctx.setLineDash([])
+    ctx.restore()
+    // border
+    ctx.strokeStyle="rgba(36,54,92,0.9)"; ctx.lineWidth=1; ctx.strokeRect(padL+0.5, padT+0.5, plotW-1, plotH-1)
+    ctx.strokeStyle="rgba(255,255,255,0.04)"; ctx.strokeRect(0.5,0.5,cssW-1,cssH-1)
+
     if(__liveSeries.length<2){
-      ctx.fillStyle="#8aa0c8"; ctx.font="12px sans-serif"; ctx.fillText("ожидание оценок популяции…", W/2-95, H/2)
+      ctx.fillStyle="rgba(138,160,200,0.95)"; ctx.font="600 12px Inter, sans-serif"; ctx.textAlign="center"
+      ctx.fillText(isNoLive ? "ждём первых оценок — GA готовит популяцию…" : "собираем точки — появится через 1–2 оценки", cssW/2, cssH/2 - 4)
+      ctx.fillStyle="rgba(138,160,200,0.62)"; ctx.font="11px Inter, sans-serif"
+      ctx.fillText("каждая точка подсветится цветом острова", cssW/2, cssH/2 + 14)
+      ctx.textAlign="start"
+      // legend even when empty
+      const leg=document.getElementById('liveLegend')
+      if(leg) leg.innerHTML=`<span style="opacity:0.7">— точки появятся после первых ~0.5с</span><span style="margin-left:auto;opacity:0.6">X — дробное поколение · Y — log fitness</span>`
       return
     }
-    let xs=__liveSeries.map(p=>p.x), ys=__liveSeries.map(p=>p.y).filter(v=>v<1e6)
+    let xs=__liveSeries.map(p=>p.x), ys=__liveSeries.map(p=>p.y).filter(v=>v!=null && isFinite(v) && v<1e6)
     if(!ys.length) return
-    let minX=Math.min(...xs), maxX=Math.max(...xs); if(maxX-minX<0.1) maxX=minX+0.1
+    let minX=Math.min(...xs), maxX=Math.max(...xs); if(maxX-minX<0.12) maxX=minX+0.12
+    // add small right padding so last point not clipped
+    const xPad=(maxX-minX)*0.04; minX-=xPad*0.2; maxX+=xPad
     let minY=Math.min(...ys), maxY=Math.max(...ys)
-    let lMin=Math.log10(Math.max(1e-3,minY+0.1)), lMax=Math.log10(Math.max(maxY+0.2, minY+1))
-    if(lMax-lMin<0.3) lMax=lMin+0.3
-    function xTo(v){ return 40+(v-minX)/(maxX-minX||1)*(W-50) }
-    function yTo(v){ let lv=Math.log10(Math.max(1e-3,v+0.1)); let t=(lv-lMin)/(lMax-lMin); return H-20 - t*(H-40) }
-    for(let i=0;i<__liveSeries.length;i++){
-      let p=__liveSeries[i]; let col=islandColor(p.island)
-      ctx.globalAlpha = i < __liveSeries.length-15 ? 0.35 : 0.95
-      ctx.fillStyle=col; ctx.beginPath(); ctx.arc(xTo(p.x), yTo(p.y), i===__liveSeries.length-1?4:2.5,0,Math.PI*2); ctx.fill()
+    let lMin=Math.log10(Math.max(1e-3,minY+0.08)), lMax=Math.log10(Math.max(maxY+0.18, minY+0.9))
+    if(lMax-lMin<0.38) lMax=lMin+0.38
+    // nice log ticks
+    const yTicks=[]
+    for(let i=0;i<=3;i++){ let lv=lMin + (i/3)*(lMax-lMin); yTicks.push(lv) }
+    function xTo(v){ return padL + (v-minX)/(maxX-minX||1)*plotW }
+    function yTo(v){ let lv=Math.log10(Math.max(1e-3,v+0.08)); let t=(lv-lMin)/(lMax-lMin); return padT+plotH - t*plotH }
+    // y-axis labels (right side inside plot)
+    ctx.fillStyle="rgba(138,160,200,0.85)"; ctx.font="10px ui-monospace, SFMono-Regular, Menlo, monospace"; ctx.textAlign="right"
+    for(let i=0;i<yTicks.length;i++){
+      const v=Math.pow(10,yTicks[i])-0.08; if(v<0) continue
+      const y=yTo(v)
+      // tick line
+      ctx.strokeStyle="rgba(90,200,255,0.10)"; ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(padL+plotW, y); ctx.stroke()
+      ctx.fillStyle="rgba(138,160,200,0.78)"; ctx.fillText(fmtFit(Math.max(0,v)), padL+plotW-4, y-4)
     }
-    ctx.globalAlpha=1
-    if(live?.live_best!=null){
-      let y=yTo(live.live_best)
-      ctx.strokeStyle="rgba(255,255,255,0.5)"; ctx.setLineDash([5,3]); ctx.beginPath(); ctx.moveTo(40,y); ctx.lineTo(W-10,y); ctx.stroke(); ctx.setLineDash([])
-      ctx.fillStyle="#fff"; ctx.font="10px monospace"; ctx.fillText("best "+fmtFit(live.live_best), W-120, y-4)
+    // x-axis ticks
+    ctx.textAlign="center"; ctx.fillStyle="rgba(138,160,200,0.78)"
+    const xSteps=4
+    for(let i=0;i<=xSteps;i++){
+      const xv=minX + (i/xSteps)*(maxX-minX)
+      const x=xTo(xv)
+      ctx.fillText(xv.toFixed(2), x, padT+plotH+14)
+      ctx.strokeStyle="rgba(90,200,255,0.07)"; ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, padT+plotH); ctx.stroke()
+    }
+    ctx.textAlign="start"
+    // draw points — older first, newer on top with glow
+    for(let i=0;i<__liveSeries.length;i++){
+      const p=__liveSeries[i]
+      const col=islandColor(p.island)
+      const x=xTo(p.x), y=yTo(p.y)
+      const isLast=i===__liveSeries.length-1
+      const age = i/__liveSeries.length
+      const alpha = age < 0.55 ? 0.32 + age*0.45 : 0.82 + (age-0.55)*0.4
+      const r = isLast ? 4.2 : (age>0.85 ? 3.0 : 2.3)
+      ctx.globalAlpha = Math.min(0.98, alpha)
+      // glow for recent
+      if(isLast || age>0.88){
+        ctx.shadowColor=col
+        ctx.shadowBlur= isLast ? 12 : 6
+      } else ctx.shadowBlur=0
+      ctx.fillStyle=col
+      ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill()
+      // inner highlight
+      ctx.shadowBlur=0
+      ctx.fillStyle="rgba(255,255,255,0.92)"
+      ctx.beginPath(); ctx.arc(x - r*0.22, y - r*0.22, Math.max(0.9, r*0.32), 0, Math.PI*2); ctx.fill()
+      // border for last
+      if(isLast){
+        ctx.strokeStyle="rgba(255,255,255,0.85)"; ctx.lineWidth=1.2; ctx.beginPath(); ctx.arc(x,y,r+1.2,0,Math.PI*2); ctx.stroke()
+      }
+    }
+    ctx.globalAlpha=1; ctx.shadowBlur=0
+    // best line with pill
+    if(live?.live_best!=null && isFinite(live.live_best)){
+      const y=yTo(live.live_best)
+      if(y>=padT-2 && y<=padT+plotH+2){
+        ctx.strokeStyle="rgba(255,255,255,0.58)"; ctx.setLineDash([6,4]); ctx.lineWidth=1.1; ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(padL+plotW,y); ctx.stroke(); ctx.setLineDash([])
+        // pill
+        const txt="best "+fmtFit(live.live_best)
+        ctx.font="700 10px ui-monospace, monospace"
+        const tw=ctx.measureText(txt).width
+        const pillW=tw+14, pillH=16, px= padL+plotW - pillW - 6, py=y - pillH - 4
+        const pyClamped=Math.max(padT+2, Math.min(py, padT+plotH - pillH -2))
+        ctx.fillStyle="rgba(15,20,28,0.88)"; ctx.strokeStyle="rgba(122,240,160,0.45)"; ctx.lineWidth=1
+        // rounded rect
+        const rx=8
+        ctx.beginPath()
+        ctx.moveTo(px+rx, pyClamped); ctx.lineTo(px+pillW-rx, pyClamped); ctx.quadraticCurveTo(px+pillW, pyClamped, px+pillW, pyClamped+rx)
+        ctx.lineTo(px+pillW, pyClamped+pillH-rx); ctx.quadraticCurveTo(px+pillW, pyClamped+pillH, px+pillW-rx, pyClamped+pillH)
+        ctx.lineTo(px+rx, pyClamped+pillH); ctx.quadraticCurveTo(px, pyClamped+pillH, px, pyClamped+pillH-rx)
+        ctx.lineTo(px, pyClamped+rx); ctx.quadraticCurveTo(px, pyClamped, px+rx, pyClamped); ctx.closePath()
+        ctx.fill(); ctx.stroke()
+        ctx.fillStyle="#7af0a0"; ctx.textAlign="center"; ctx.fillText(txt, px+pillW/2, pyClamped+11); ctx.textAlign="start"
+        // dot on line at current gen
+        const bx=xTo(genFloat)
+        if(bx>=padL && bx<=padL+plotW){
+          ctx.fillStyle="#fff"; ctx.beginPath(); ctx.arc(bx,y,2.6,0,Math.PI*2); ctx.fill()
+          ctx.fillStyle="rgba(122,240,160,0.9)"; ctx.beginPath(); ctx.arc(bx,y,1.2,0,Math.PI*2); ctx.fill()
+        }
+      }
+    }
+    // legend — island distribution
+    const leg=document.getElementById('liveLegend')
+    if(leg){
+      const counts={}
+      for(const p of __liveSeries) counts[p.island]=(counts[p.island]||0)+1
+      const topIslands=Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,5)
+      const dots=topIslands.map(([isl,c])=>`<span style="display:inline-flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:50%;background:${islandColor(isl)};box-shadow:0 0 8px ${islandColor(isl)}88;display:inline-block;border:1px solid rgba(255,255,255,0.18)"></span><span style="font-weight:700;color:#e6efff">${isl}</span><span style="opacity:0.62">${c}</span></span>`).join('')
+      const total=__liveSeries.length
+      leg.innerHTML=`<span style="display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap">${dots}</span><span style="margin-left:auto;display:inline-flex;align-items:center;gap:8px"><span class="mono" style="opacity:0.7">${total} точек</span><span style="width:1px;height:14px;background:#24324d;display:inline-block"></span><span style="font-size:11px;color:var(--muted)">яркие — последние 15 оценок</span></span>`
     }
   }
 

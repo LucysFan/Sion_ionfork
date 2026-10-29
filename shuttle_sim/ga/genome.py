@@ -3,9 +3,13 @@
 Base 8: 2 warp +6 voltage (3 огибающие×2 SVD).
 Расширено до 12: +4 voltage-гармоники (env*sin2πs, env*sin4πs) → гибкая
 форма ΔV с несколькими провалами не обязательно в середине.
-10=2+8 (4 базиса×2), 12=2+10 (5 базисов×2) — все гены активны для напряжения,
-что исправляет дефект R6 (10/12 гены игнорировались). Частотная мода
-FrequencyProfile остаётся отдельной (task.frequency_mode), не через эти гены.
+10=2+8 (4 базиса×2), 12=2+10 (5×2, +sin2πs+sin4πs) — все гены активны для напряжения,
+что исправляет дефект R6 (10/12 гены игнорировались).
+Island V: pure voltage 10 генов (4 базиса×2 ΔV, g8/g9 = env·sin2πs) — крутит напряжение.
+Island W: pure frequency 10 генов (3 базиса×2 ΔV + 2 freq) — g8/g9 = a·env + b·env·(2s-1)
+  для ω(s)=ω0·(1+a·env+b·env·(2s-1)), клип ±15% via FrequencyProfile variable mode.
+  Частотная мода FrequencyProfile остаётся глобальной, но W локально варьирует
+  confinement через отдельный остров, как просили: один остров напряжение, один частоту.
 Bounds — как в pipeline.optimize.
 """
 import numpy as np
@@ -18,8 +22,8 @@ BOUNDS_12 = BOUNDS_8 + [(-0.15,0.15), (-0.15,0.15), (-0.12,0.12), (-0.12,0.12)]
 # 10 = 2 warp +8 voltage (4 базиса×2, +env*sin2πs), 12 = 2+10 (5×2, +sin2πs+sin4πs) — все voltage
 
 ISLAND_GENE_DIMS = {
-    "S": 8, "A": 8, "V": 10, "R": 8, "H": 8, "F": 12, "M": 12,
-    "smooth":8, "sta":8, "variable":10, "robust":8, "hardware":8, "free":12, "multi":12
+    "S": 8, "A": 8, "V": 10, "W": 10, "R": 8, "H": 8, "F": 12, "M": 12,
+    "smooth":8, "sta":8, "variable":10, "frequency":10, "voltage":10, "robust":8, "hardware":8, "free":12, "multi":12
 }
 
 def clip_to_bounds(theta, bounds):

@@ -23,8 +23,10 @@ class Island:
             return dict(mutation_sigma=0.04, cx_rate=0.7, tour_k=3, elite=2, desc="smooth explorer, low sigma (не STA)")
         if s in ('A','sta'):
             return dict(mutation_sigma=0.06, cx_rate=0.9, tour_k=5, elite=2, desc="STA explorer, high cx")
-        if s in ('V','variable'):
-            return dict(mutation_sigma=0.08, cx_rate=0.9, tour_k=3, elite=2, desc="variable ΔV 10 генов, 4 базиса×2 (env*sin2πs), гибкая форма не в середине")
+        if s in ('V','variable','voltage'):
+            return dict(mutation_sigma=0.08, cx_rate=0.9, tour_k=3, elite=2, desc="variable voltage 10 генов: 4 базиса×2 ΔV (env·sin2πs), крутит напряжение")
+        if s in ('W','frequency','freq'):
+            return dict(mutation_sigma=0.08, cx_rate=0.9, tour_k=3, elite=2, desc="variable frequency 10 генов: 3 базиса×2 ΔV + 2 freq a·env+b·env·(2s-1) → ω(s), крутит частоту")
         if s in ('R','robust'):
             return dict(mutation_sigma=0.06, cx_rate=0.7, tour_k=5, elite=3, desc="robust, larger elite")
         if s in ('H','hardware'):
