@@ -137,10 +137,46 @@ def evaluate_genome(genome, runner, baseline='sta', exact_nodes=None, hardware=N
             if stashed['task_coeffs'] is not None:
                 runner.task['frequency_coeffs'] = stashed['task_coeffs']
             raise
+    # Detect segmented K/M/C islands: they evaluate stitched Kx(D/K) path
+    is_stitched = False
+    stitched_segments = None
+    if isinstance(island, str) and (island.startswith('K') or island.startswith('M') or island.startswith('C') or island in ('STITCH','KRAT')):
+        is_stitched = True
+        # parse K5 -> 5, K -> auto
+        import re
+        m = re.match(r'^[KMC](\d+)$', island)
+        if m:
+            try:
+                stitched_segments = int(m.group(1))
+            except:
+                stitched_segments = 'auto'
+        elif island in ('K','M','C','STITCH','KRAT'):
+            stitched_segments = 'auto'
+        else:
+            # e.g. K5 is already handled, but fallback
+            stitched_segments = 'auto'
+        # clamp
+        if isinstance(stitched_segments, int) and stitched_segments > 10:
+            stitched_segments = 10
+        if isinstance(stitched_segments, int) and stitched_segments < 2:
+            stitched_segments = 2
+
     try:
-        # cheap: exact_nodes=None → ROM linear response; expensive: pass exact_nodes
-        metrics = runner.evaluate(theta, baseline=baseline, hardware=hardware, stray=stray,
-                                  frequency_scale=effective_freq_scale, exact_nodes=exact_nodes, subdivisions=runner.cfg.get('subdivisions',4))
+        if is_stitched:
+            # stitched evaluation uses same theta but K segments with holds
+            # need to ensure hardware etc. passed through; frequency_scale still applies
+            # For W stitched not supported, fallback to normal if do_prepare
+            if do_prepare:
+                # W frequency variable not compatible with stitched yet -> fallback to normal
+                metrics = runner.evaluate(theta, baseline=baseline, hardware=hardware, stray=stray,
+                                          frequency_scale=effective_freq_scale, exact_nodes=exact_nodes, subdivisions=runner.cfg.get('subdivisions',4))
+            else:
+                metrics = runner.evaluate_segmented(theta, baseline=baseline, segments=stitched_segments, hardware=hardware, stray=stray,
+                                                   frequency_scale=effective_freq_scale, exact_nodes=exact_nodes)
+        else:
+            # cheap: exact_nodes=None → ROM linear response; expensive: pass exact_nodes
+            metrics = runner.evaluate(theta, baseline=baseline, hardware=hardware, stray=stray,
+                                      frequency_scale=effective_freq_scale, exact_nodes=exact_nodes, subdivisions=runner.cfg.get('subdivisions',4))
         # For W, theta is voltage subset (8) but penalty should consider full genome (10) including freq coeffs
         theta_for_penalty = genome.theta
         bounds_for_penalty = genome.bounds

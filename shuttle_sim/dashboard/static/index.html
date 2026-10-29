@@ -605,13 +605,14 @@ input[type=range]{accent-color:var(--accent)}
 </div>
 
 <script>
-const ISLANDS = ["S","A","V","W","R","H","Q1","Q2","F"]
+const ISLANDS = ["S","A","V","W","R","H","Q1","Q2","F","K","K5","K3","K2"]
 const COLORS = {
   S:"#5ac8ff", A:"#ffbe55", V:"#f0883e", W:"#3fb950", R:"#c58aff", H:"#ff7a7a",
   Q1:"#ff6b9e", Q2:"#5affda", F:"#ffd05a",
+  K:"#00e5ff", K5:"#00e5ff", K3:"#00b8ff", K2:"#7af0a0",
   smooth:"#5ac8ff", sta:"#ffbe55", variable:"#f0883e", voltage:"#f0883e", frequency:"#3fb950", robust:"#c58aff", hardware:"#ff7a7a", free:"#ffd05a"
 }
-const NAMES = {S:"S smooth", A:"A STA", V:"V voltage", W:"W frequency", R:"R robust", H:"H hardware", Q1:"Q1 карантин 12", Q2:"Q2 карантин 18", F:"F free 15"}
+const NAMES = {S:"S smooth", A:"A STA", V:"V voltage", W:"W frequency", R:"R robust", H:"H hardware", Q1:"Q1 карантин 12", Q2:"Q2 карантин 18", F:"F free 15", K:"K stitched auto", K5:"K5 stitched 5 hops", K3:"K3 stitched 3 hops", K2:"K2 stitched 2 hops"}
 const POLY_PALETTE = [
   "rgba(90,200,255,0.30)",
   "rgba(122,240,160,0.26)",
@@ -1802,7 +1803,7 @@ function drawFitness(state){
   for(let i=0;i<=3;i++){ let t=i/3, lv=logMin + t*(logMax-logMin), v=Math.pow(10,lv)-0.1; let y=H-20 - t*(H-40); if(v>0) ctx.fillText(fmtFit(Math.max(0,v)), W-46, y+3)}
   ctx.fillText("0", 6, H-16)
   let leg=document.getElementById('fitnessLegend')
-  if(leg) leg.innerHTML=["S","A","V","W","R","H","Q1","Q2","F"].filter(k=>ser[k]&&ser[k].length).map(k=>`<span><i style="width:12px;height:3px;background:${islandColor(k)};display:inline-block;border-radius:99px"></i>${NAMES[k]||k}</span>`).join('')+`<span><i style="width:12px;height:3px;background:#fff;display:inline-block"></i> global best</span>`
+  if(leg) leg.innerHTML=["S","A","V","W","R","H","Q1","Q2","F","K","K5","K3","K2"].filter(k=>ser[k]&&ser[k].length).map(k=>`<span><i style="width:12px;height:3px;background:${islandColor(k)};display:inline-block;border-radius:99px"></i>${NAMES[k]||k}</span>`).join('')+`<span><i style="width:12px;height:3px;background:#fff;display:inline-block"></i> global best</span>`
 }
 
 function drawDivers(state){

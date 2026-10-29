@@ -117,12 +117,23 @@ class GAEngine:
             strat=icfg.get('strategy','S')
             pop=icfg.get('pop',20)
             base=icfg.get('baseline','sta')
+            segs = icfg.get('segments', None)
+            # also parse K5 style
+            if segs is None and isinstance(strat, str) and len(strat)>1 and strat[0] in ('K','M','C'):
+                import re
+                m=re.match(r'^[KMC](\d+)$', strat)
+                if m:
+                    try: segs=int(m.group(1))
+                    except: segs='auto'
             raw_iso = icfg.get('isolated_until', icfg.get('isolated_until_ratio', 0))
+            # K/M/C stitched islands are isolated by default 100% if not specified
+            if raw_iso in (0, '', None) and isinstance(strat, str) and strat[0] in ('K','M','C'):
+                raw_iso = total_gens  # 100% isolated
             # поддержка обоих ключей: isolated_until и isolated_until_ratio (0..1 или "40%")
             if 'isolated_until_ratio' in icfg and 'isolated_until' not in icfg:
                 raw_iso = icfg['isolated_until_ratio']
             isolated_until = _resolve_isolated_until(raw_iso, total_gens)
-            isl=Island(i, strat, pop, rng=self.rng.integers(0,1<<31), baseline=base, isolated_until=isolated_until)
+            isl=Island(i, strat, pop, rng=self.rng.integers(0,1<<31), baseline=base, isolated_until=isolated_until, segments=segs)
             # сохраним исходное значение для дашборда/дебага
             isl.isolated_until_raw = raw_iso
             isl.isolated_until_percent = (isolated_until/total_gens*100) if total_gens else 0
@@ -138,6 +149,35 @@ class GAEngine:
                 isl=Island(i,s,p, rng=self.rng.integers(0,1<<31), baseline=b)
                 isl.initialize()
                 self.islands.append(isl)
+        # --- Auto-add KRAT (stitched) isolated islands for general arbitrary distance ---
+        # User wants 5x20 etc. as continuous stitched path, general for any D.
+        # We add K (auto) and K5 as fully isolated (100%) if not already present and task distance >= 25um
+        # They don't interact via migration but compete in hall_of_fame and are included in overall stats.
+        # General: K auto segments = round(D/20um) (e.g. 100um->5, 60um->3, 30um->2), K5 is fixed 5 for comparison.
+        try:
+            has_krat = any(str(isl.strategy).startswith('K') or str(isl.strategy).startswith('M') or str(isl.strategy).startswith('C') for isl in self.islands)
+            auto_add = config.get('auto_add_krat', True)
+            dist_m = float(getattr(getattr(self, 'runner', None), 'task', {}).get('distance_m', 0) if hasattr(self, 'runner') else config.get('task',{}).get('distance_m',0) or 0)
+            if auto_add and not has_krat and dist_m >= 25e-6:
+                import math
+                k_auto = max(2, min(10, int(round(dist_m/20e-6)))) if dist_m else 5
+                to_add = []
+                # K auto (segments='auto' will compute k_auto at evaluation time, general for any D)
+                to_add.append(('K', 12, 'sta', 'auto'))
+                # K5 fixed 5 hops as requested for 100um case, but only if k_auto !=5 to avoid duplicate
+                if k_auto != 5:
+                    to_add.append(('K5', 12, 'sta', 5))
+                for strat, pop, base, segs in to_add:
+                    if any(isl.strategy==strat for isl in self.islands):
+                        continue
+                    iso = total_gens
+                    isl = Island(len(self.islands), strat, pop, rng=self.rng.integers(0,1<<31), baseline=base, isolated_until=iso, segments=segs)
+                    isl.isolated_until_raw = iso
+                    isl.isolated_until_percent = 100.0
+                    isl.initialize()
+                    self.islands.append(isl)
+        except Exception as e:
+            pass
         self.migration=RingMigration(self.islands, interval=config.get('migration_interval',5), n_migrants=config.get('n_migrants',2))
         self.generations=config.get('generations', 20)
         self.hall_size=config.get('hall_size', 10)
@@ -334,9 +374,28 @@ class GAEngine:
                             _prepare_for_W(self.runner, freq_coeffs)
                         except Exception:
                             stashed=None
+                    # handle K/M/C stitched islands: use segmented evaluate
+                    is_stitched_island = isinstance(isl.strategy, str) and (isl.strategy.startswith('K') or isl.strategy.startswith('M') or isl.strategy.startswith('C') or isl.strategy in ('STITCH','KRAT'))
+                    stitched_segs = getattr(isl, 'segments', None)
+                    if is_stitched_island:
+                        # parse segments from strategy if not set
+                        if stitched_segs is None:
+                            import re
+                            m=re.match(r'^[KMC](\d+)$', isl.strategy)
+                            if m:
+                                try: stitched_segs=int(m.group(1))
+                                except: stitched_segs='auto'
+                            else:
+                                stitched_segs='auto'
+                        # clamp
+                        if isinstance(stitched_segs, int) and stitched_segs<2: stitched_segs=2
+                        if isinstance(stitched_segs, int) and stitched_segs>10: stitched_segs=10
                     try:
-                        # combined trajectory + voltages in one evaluate (saves 50% cost)
-                        res, trace = self.runner.evaluate(theta_for_eval, baseline=baseline, exact_nodes=None, subdivisions=self.runner.cfg.get('subdivisions',4), keep=True, return_trajectory=True, trajectory_decimate=decimate)
+                        if is_stitched_island:
+                            res, trace = self.runner.evaluate_segmented(theta_for_eval, baseline=baseline, segments=stitched_segs, subdivisions=self.runner.cfg.get('subdivisions',4), keep=True, return_trajectory=True, trajectory_decimate=decimate)
+                        else:
+                            # combined trajectory + voltages in one evaluate (saves 50% cost)
+                            res, trace = self.runner.evaluate(theta_for_eval, baseline=baseline, exact_nodes=None, subdivisions=self.runner.cfg.get('subdivisions',4), keep=True, return_trajectory=True, trajectory_decimate=decimate)
                         traj = res.get('trajectory')
                         if isinstance(traj, dict):
                             traj = dict(traj)

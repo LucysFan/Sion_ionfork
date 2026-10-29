@@ -23,7 +23,8 @@ BOUNDS_12 = BOUNDS_8 + [(-0.15,0.15), (-0.15,0.15), (-0.12,0.12), (-0.12,0.12)]
 
 ISLAND_GENE_DIMS = {
     "S": 8, "A": 8, "V": 10, "W": 10, "R": 8, "H": 8, "F": 12, "M": 12,
-    "smooth":8, "sta":8, "variable":10, "frequency":10, "voltage":10, "robust":8, "hardware":8, "free":12, "multi":12
+    "smooth":8, "sta":8, "variable":10, "frequency":10, "voltage":10, "robust":8, "hardware":8, "free":12, "multi":12,
+    "K": 8, "K2":8, "K3":8, "K5":8, "K10":8, "C":8, "STITCH":8, "KRAT":8,
 }
 
 def clip_to_bounds(theta, bounds):
