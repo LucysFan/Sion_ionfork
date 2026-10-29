@@ -357,21 +357,55 @@ class GAEngine:
                                 frequency = None
                         except Exception:
                             voltages=None; frequency=None
-                        # lightweight classical as well-centers (r) — fast, satisfies s-g overlay without ODE hang
+                        # честный classical ODE (full Sion pseudopotential centroid) для rank0
                         if rank==0:
+                            # heavy+не кэш → честный ODE, иначе лёгкий r для скорости
                             try:
-                                r = trace.get('r') if 'trace' in locals() else None
-                                t_for_c = trace.get('t') if 'trace' in locals() else None
-                                if r is not None and t_for_c is not None:
-                                    step_c = max(1, len(t_for_c)//decimate)
-                                    idx_c = np.arange(0, len(t_for_c), step_c)
-                                    if idx_c[-1] != len(t_for_c)-1:
-                                        idx_c = np.r_[idx_c, len(t_for_c)-1]
-                                    classical = dict(times_s=t_for_c[idx_c].tolist(), positions_m=r[idx_c].tolist(), decimate=int(step_c), note="well_centers_fast")
+                                do_honest = heavy and (not use_cached) and (self.global_gen % 2 == 0 or self.global_gen == self.generations)
+                                if do_honest:
+                                    from ..dynamics import validate_full_field_centroid
+                                    t_for_c = trace.get('t'); v_for_c = trace.get('v')
+                                    if t_for_c is not None and v_for_c is not None:
+                                        classical_raw = validate_full_field_centroid(
+                                            self.runner.trap, t_for_c, v_for_c,
+                                            trace.get('initial', self.runner.initial),
+                                            self.runner.target if self.runner.task.get('protocol')=='one_way' else self.runner.start,
+                                            return_trajectory=True, trajectory_decimate=decimate)
+                                        classical = classical_raw.get('trajectory')
+                                        if classical is not None:
+                                            classical['note'] = 'full_field_centroid'
+                                            classical['coherent_n_total'] = classical_raw.get('coherent_n_total')
+                                        else:
+                                            classical = None
+                                    else:
+                                        classical = None
                                 else:
+                                    # лёгкий fallback для кэша/light обновлений
+                                    r = trace.get('r') if 'trace' in locals() else None
+                                    t_for_c = trace.get('t') if 'trace' in locals() else None
+                                    if r is not None and t_for_c is not None:
+                                        step_c = max(1, len(t_for_c)//decimate)
+                                        idx_c = np.arange(0, len(t_for_c), step_c)
+                                        if idx_c[-1] != len(t_for_c)-1:
+                                            idx_c = np.r_[idx_c, len(t_for_c)-1]
+                                        classical = dict(times_s=t_for_c[idx_c].tolist(), positions_m=r[idx_c].tolist(), decimate=int(step_c), note="well_centers_fast")
+                                    else:
+                                        classical=None
+                            except Exception as _e_cls:
+                                # fallback к лёгкому если ODE упал
+                                try:
+                                    r = trace.get('r') if 'trace' in locals() else None
+                                    t_for_c = trace.get('t') if 'trace' in locals() else None
+                                    if r is not None and t_for_c is not None:
+                                        step_c = max(1, len(t_for_c)//decimate)
+                                        idx_c = np.arange(0, len(t_for_c), step_c)
+                                        if idx_c[-1] != len(t_for_c)-1:
+                                            idx_c = np.r_[idx_c, len(t_for_c)-1]
+                                        classical = dict(times_s=t_for_c[idx_c].tolist(), positions_m=r[idx_c].tolist(), decimate=int(step_c), note="well_centers_fast_fallback", error=str(_e_cls)[:200])
+                                    else:
+                                        classical=None
+                                except:
                                     classical=None
-                            except:
-                                classical=None
                         else:
                             classical=None
                         # cache
@@ -557,8 +591,12 @@ class GAEngine:
                     # use 81 nodes instead of 200 for speed (still decent) — cache already makes it cheap
                     res_traj = self.runner.evaluate(theta8, baseline=best_baseline, exact_nodes=81, subdivisions=self.runner.cfg.get('subdivisions',4), return_trajectory=True, trajectory_decimate=150)
                     best.metrics['trajectory'] = res_traj.get('trajectory')
-                    classical_enabled = self.cfg.get('trajectory_classical', False) or self.runner.cfg.get('trajectory_classical', False)
-                    if classical_enabled and (self.global_gen % 5 == 0 or self.global_gen == self.generations):
+                    # честный classical по умолчанию (пользователь попросил honest), флаг отключает только если явно False
+                    _classical_cfg = self.cfg.get('trajectory_classical', None)
+                    if _classical_cfg is None:
+                        _classical_cfg = self.runner.cfg.get('trajectory_classical', None)
+                    classical_enabled = True if _classical_cfg is None else bool(_classical_cfg)
+                    if classical_enabled and (self.global_gen % 2 == 0 or self.global_gen == self.generations):
                         try:
                             from ..dynamics import validate_full_field_centroid
                             _, trace = self.runner.evaluate(theta8, baseline=best_baseline, exact_nodes=120, subdivisions=4, keep=True)
