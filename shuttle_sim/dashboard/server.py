@@ -17,6 +17,16 @@ import time
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 
+# --- fix for `python shuttle_sim/dashboard/server.py` on Windows/macOS/Linux ---
+# When run as a script, sys.path[0] is .../shuttle_sim/dashboard, not the repo root,
+# so `import tools` and `import shuttle_sim` fail. Insert repo root automatically.
+try:
+    _ROOT = pathlib.Path(__file__).resolve().parents[2]
+    if str(_ROOT) not in sys.path:
+        sys.path.insert(0, str(_ROOT))
+except Exception:
+    pass
+
 # Global job tracker for unified dashboard
 _JOBS = {}
 _JOBS_lock = threading.Lock()
@@ -433,8 +443,8 @@ def build_trap_preview(gds_path=None, cfg=None):
 def _load_active_config(out_dir):
     """Load active config JSON and normalize relative GDS path if present."""
     for cand in (
-        pathlib.Path("configs/unified_live.json"),
         pathlib.Path(out_dir) / "config.json",
+        pathlib.Path("configs/unified_live.json"),
         pathlib.Path("configs/shuttle_gds.json"),
         pathlib.Path("configs/shuttle_reference.json"),
     ):
@@ -503,7 +513,18 @@ class Handler(SimpleHTTPRequestHandler):
                     cuda = json.loads(p.read_text(encoding="utf-8")).get("cuda", {})
                 except Exception:
                     pass
-            self._send_json(cuda)
+            if not cuda:
+                try:
+                    from shuttle_sim.ga.cuda import cuda_info, get_xp
+                    cuda = cuda_info()
+                    try:
+                        xp = get_xp()
+                        cuda["xp"] = getattr(xp, "__name__", str(xp))
+                    except Exception:
+                        pass
+                except Exception as e:
+                    cuda = {"error": str(e)}
+            self._send_json({"cuda": cuda, "ok": True})
             return
 
         if self.path.startswith("/api/runs"):
@@ -597,6 +618,84 @@ class Handler(SimpleHTTPRequestHandler):
                 except Exception:
                     pass
             self._send_json({"status": "no live yet"})
+            return
+
+        if self.path.startswith("/api/sion_export"):
+            out_dir = self._resolve_out_dir()
+            qs = parse_qs(urlparse(self.path).query)
+            # allow ?run=... override
+            p = out_dir / "sion_export.json"
+            if p.exists():
+                # support ?format=csv&island=S etc for direct CSV download
+                fmt = qs.get("format", [None])[0]
+                if fmt == "csv":
+                    island = qs.get("island", [None])[0]
+                    baseline = qs.get("baseline", [None])[0]
+                    # try to find specific CSV
+                    cand = None
+                    if island:
+                        for suf in [f"algo_{island}_{baseline}.csv" if baseline else f"algo_{island}_*.csv", f"baseline_{island}.csv", f"baseline_{baseline}.csv" if baseline else ""]:
+                            import glob
+                            matches = list((out_dir).glob(suf)) if "*" not in suf else list((out_dir).glob(f"algo_{island}_*.csv"))
+                            if matches:
+                                cand = matches[0]
+                                break
+                    if cand and cand.exists():
+                        self.send_response(200)
+                        self.send_header("Content-Type", "text/csv; charset=utf-8")
+                        self.send_header("Content-Disposition", f'attachment; filename="{cand.name}"')
+                        self.send_header("Access-Control-Allow-Origin", "*")
+                        self.end_headers()
+                        self.wfile.write(cand.read_bytes())
+                        return
+                    # fallback to JSON if not found
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(p.read_bytes())
+                return
+            self._send_json({"error": "no sion_export yet, run GA to generate", "path": str(p)}, 404)
+            return
+
+        if self.path.startswith("/api/robustness"):
+            out_dir = self._resolve_out_dir()
+            p = out_dir / "state.json"
+            if p.exists():
+                try:
+                    j = json.loads(p.read_text(encoding="utf-8"))
+                    rob = j.get("robustness")
+                    if rob:
+                        self._send_json({"robustness": rob, "ok": True})
+                        return
+                except Exception as e:
+                    self._send_json({"error": str(e)}, 500)
+                    return
+            self._send_json({"error": "no robustness yet"}, 404)
+            return
+
+        if self.path.startswith("/api/download"):
+            out_dir = self._resolve_out_dir()
+            qs = parse_qs(urlparse(self.path).query)
+            fname = qs.get("file", [None])[0] or qs.get("path", [None])[0]
+            if fname:
+                # prevent directory traversal
+                fname = pathlib.Path(fname).name
+                p = out_dir / fname
+                if p.exists() and p.is_file():
+                    # guess content type
+                    ctype = "application/octet-stream"
+                    if p.suffix == ".json": ctype = "application/json; charset=utf-8"
+                    elif p.suffix == ".csv": ctype = "text/csv; charset=utf-8"
+                    elif p.suffix == ".md": ctype = "text/markdown; charset=utf-8"
+                    self.send_response(200)
+                    self.send_header("Content-Type", ctype)
+                    self.send_header("Content-Disposition", f'attachment; filename="{p.name}"')
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(p.read_bytes())
+                    return
+            self._send_json({"error": "file not found", "available": [str(x.name) for x in out_dir.glob("*") if x.is_file()]}, 404)
             return
 
         if self.path.startswith("/api/jobs"):
@@ -763,15 +862,59 @@ class Handler(SimpleHTTPRequestHandler):
                             resolved = _resolve_gds_path(gpath)
                             cfg["trap"]["path"] = str(resolved)
                             cfg["trap"]["kind"] = "gds"
-                        if "electrode_map" in data:
-                            cfg["trap"]["electrode_map"] = data["electrode_map"]
+                    if "electrode_map" in data:
+                        cfg["trap"]["electrode_map"] = data["electrode_map"]
+                    if "rf_electrodes" in data:
+                        cfg["trap"]["rf_electrodes"] = data["rf_electrodes"]
+                    if "dc_indices" in data:
+                        cfg["trap"]["dc_indices"] = data["dc_indices"]
+                    if "lower_V" in data:
+                        try: cfg["trap"]["lower_V"] = float(data["lower_V"])
+                        except: pass
+                    if "upper_V" in data:
+                        try: cfg["trap"]["upper_V"] = float(data["upper_V"])
+                        except: pass
                     if "generations" in data:
                         cfg.setdefault("ga", {})["generations"] = int(data["generations"])
+                    if "pop_size" in data or "pop" in data:
+                        try:
+                            _pop = int(data.get("pop_size", data.get("pop")))
+                            if _pop>0:
+                                cfg.setdefault("ga", {})["pop_size"] = _pop
+                                cfg["ga"]["pop"] = _pop
+                                if "islands" in cfg["ga"] and isinstance(cfg["ga"]["islands"], list):
+                                    for ic in cfg["ga"]["islands"]:
+                                        ic["pop"] = _pop
+                        except: pass
+                    if "use_cuda" in data:
+                        try:
+                            cfg.setdefault("ga", {})["use_cuda"] = bool(data["use_cuda"])
+                        except: pass
+                    if "islands" in data and isinstance(data["islands"], list):
+                        cfg.setdefault("ga", {})["islands"] = data["islands"]
+                    if "migration_interval" in data:
+                        try: cfg.setdefault("ga", {})["migration_interval"] = int(data["migration_interval"])
+                        except: pass
+                    if "n_migrants" in data:
+                        try: cfg.setdefault("ga", {})["n_migrants"] = int(data["n_migrants"])
+                        except: pass
                     if "start_m" in data:
                         try:
                             sm = [float(x) for x in data["start_m"]]
                             if len(sm) == 3:
                                 cfg["trap"]["minimum_seed_m"] = sm
+                        except:
+                            pass
+                    if "minimum_seed_m" in data:
+                        try:
+                            sm = [float(x) for x in data["minimum_seed_m"]]
+                            if len(sm) == 3:
+                                cfg["trap"]["minimum_seed_m"] = sm
+                        except:
+                            pass
+                    if "rf_voltage" in data:
+                        try:
+                            cfg["trap"]["rf_voltage"] = float(data["rf_voltage"])
                         except:
                             pass
                 dest = pathlib.Path("configs/unified_live.json")
@@ -862,6 +1005,24 @@ class Handler(SimpleHTTPRequestHandler):
                             cfg["trap"]["minimum_seed_m"] = sm
                     except:
                         pass
+                if "pop_size" in data or "pop" in data:
+                    try:
+                        _pop = int(data.get("pop_size", data.get("pop")))
+                        if _pop>0:
+                            cfg.setdefault("ga", {})["pop_size"]=_pop
+                            cfg["ga"]["pop"]=_pop
+                            if "islands" in cfg["ga"] and isinstance(cfg["ga"]["islands"], list):
+                                for ic in cfg["ga"]["islands"]:
+                                    ic["pop"]=_pop
+                    except: pass
+                if "use_cuda" in data:
+                    try: cfg.setdefault("ga", {})["use_cuda"]=bool(data["use_cuda"])
+                    except: pass
+                if "islands" in data and isinstance(data["islands"], list):
+                    cfg.setdefault("ga", {})["islands"]=data["islands"]
+                if "migration_interval" in data:
+                    try: cfg.setdefault("ga", {})["migration_interval"]=int(data["migration_interval"])
+                    except: pass
 
                 out_path = pathlib.Path(out_dir_str)
                 out_path.mkdir(parents=True, exist_ok=True)
@@ -902,12 +1063,19 @@ class Handler(SimpleHTTPRequestHandler):
                     log_f = open(log_path, "w", buffering=1, encoding="utf-8", errors="replace")
                 except Exception:
                     log_f = subprocess.PIPE
+                env = dict(os.environ)
+                # GA benefits from JIT cache (fast per-genome) but first compile is ~48s; use JIT for GA, keep pipeline fast-preview without JIT.
+                if mode == "ga":
+                    env["NUMBA_DISABLE_JIT"] = "0"
+                else:
+                    env.setdefault("NUMBA_DISABLE_JIT", "1")
                 proc = subprocess.Popen(
                     cmd,
                     stdout=log_f if not isinstance(log_f, int) and log_f != subprocess.PIPE else subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
                     bufsize=1,
+                    env=env,
                 )
                 job_id = f"{mode}_{int(time.time())}"
                 with _JOBS_lock:
