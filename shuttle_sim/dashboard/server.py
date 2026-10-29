@@ -435,6 +435,11 @@ def build_trap_preview(gds_path=None, cfg=None):
             "direction": task_cfg.get("direction", [1.0, 0.0, 0.0]),
             "height_m": float(seed_m[2]) if isinstance(seed_m, list) and len(seed_m) >= 3 else 90e-6,
             "rf_frequency_hz": trap_cfg.get("rf_frequency_hz"),
+            "lower_V": trap_cfg.get("lower_V"),
+            "upper_V": trap_cfg.get("upper_V"),
+            "dac_min_V": cfg.get("hardware",{}).get("dac_min_V"),
+            "dac_max_V": cfg.get("hardware",{}).get("dac_max_V"),
+            "rf_peak_V": trap_cfg.get("rf_peak_V"),
         }
 
     raise ValueError("No trap path or configuration provided")

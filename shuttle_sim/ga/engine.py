@@ -223,6 +223,17 @@ class GAEngine:
             xmax, ymax = all_pts.max(axis=0).tolist()
         except:
             xmin=ymin=xmax=ymax=0
+        # real fitted height (more accurate than seed) + voltage bounds for dashboard
+        try:
+            _real_h = float(runner.initial.position_m[2])
+        except Exception:
+            _real_h = float(runner.cfg['trap'].get('minimum_seed_m', [0,0,90e-6])[2] if isinstance(runner.cfg['trap'].get('minimum_seed_m'), list) else 90e-6)
+        try:
+            _lo = runner.trap.lo.tolist() if hasattr(runner.trap.lo, 'tolist') else list(runner.trap.lo)
+            _hi = runner.trap.hi.tolist() if hasattr(runner.trap.hi, 'tolist') else list(runner.trap.hi)
+        except Exception:
+            _lo = runner.cfg['trap'].get('lower_V', -12)
+            _hi = runner.cfg['trap'].get('upper_V', 12)
         geom=dict(
             kind=runner.cfg['trap']['kind'],
             electrodes=electrodes,
@@ -231,7 +242,7 @@ class GAEngine:
             distance_m=float(runner.task.get('distance_m', 0)),
             duration_s=float(runner.task.get('duration_s', 0)),
             hold_s=float(runner.task.get('hold_s', 0)),
-            height_m=float(runner.cfg['trap'].get('minimum_seed_m', [0,0,90e-6])[2] if isinstance(runner.cfg['trap'].get('minimum_seed_m'), list) else 90e-6),
+            height_m=float(_real_h),
             geometry_raw=runner.cfg['trap'].get('geometry', {}),
             length_scale_m=float(runner.cfg['trap'].get('length_scale_m', 1e-6)),
             dc_names=runner.trap.names,
@@ -239,6 +250,13 @@ class GAEngine:
             initial_dc_V=runner.initial_V.tolist() if hasattr(runner.initial_V,'tolist') else list(runner.initial_V),
             # for schematic five_wire, also provide parsed wire widths in µm
             shuttle_axis=[1,0,0] if direction is None else direction,
+            lower_V=_lo,
+            upper_V=_hi,
+            dac_min_V=float(runner.hw.dac_min_V),
+            dac_max_V=float(runner.hw.dac_max_V),
+            rf_peak_V=float(runner.cfg['trap'].get('rf_peak_V', 0)),
+            rf_frequency_hz=float(runner.cfg['trap'].get('rf_frequency_hz', 0)),
+            seed_height_m=float(runner.cfg['trap'].get('minimum_seed_m', [0,0,90e-6])[2] if isinstance(runner.cfg['trap'].get('minimum_seed_m'), list) and len(runner.cfg['trap'].get('minimum_seed_m'))>=3 else 90e-6),
         )
         return geom
 
