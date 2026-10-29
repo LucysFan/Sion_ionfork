@@ -12,7 +12,8 @@ from .genome import Genome
 from .island import Island
 from .migration import RingMigration
 from .fitness import evaluate_exact
-from .cuda import cuda_info
+from .cuda import cuda_info, get_xp
+from ..observables import scalar_loss_from_observables, dimensionless_control_penalty
 
 class GAEngine:
     def __init__(self, runner, config, out_dir="output/ga_run"):
@@ -33,6 +34,32 @@ class GAEngine:
         self.out.mkdir(parents=True, exist_ok=True)
         (self.out/"history").mkdir(exist_ok=True)
         self.rng=np.random.default_rng(config.get('seed', 42))
+        # CUDA: использовать CuPy если есть и не отключено
+        try:
+            _cuda_tmp=cuda_info()
+        except Exception:
+            _cuda_tmp={"has_cupy":False,"has_numba":False}
+        # сохраняем cuda_info для дашборда, но позже перезапишем self.cuda
+        self._cuda_tmp = _cuda_tmp
+        self.use_cuda = bool(config.get('use_cuda', True)) and bool(_cuda_tmp.get('has_cupy') or _cuda_tmp.get('has_numba') or _cuda_tmp.get('numba_cuda_available'))
+        try:
+            self.xp = get_xp() if self.use_cuda else np
+        except Exception:
+            self.xp = np
+            self.use_cuda = False
+        # глобальный pop_size переопределяет per-island pop если задан
+        _global_pop = config.get('pop_size', config.get('pop', None))
+        if _global_pop is not None:
+            try:
+                _global_pop = int(_global_pop)
+                if _global_pop > 0:
+                    for _ic in config.get('islands', []):
+                        _ic['pop'] = _global_pop
+                self._global_pop = _global_pop
+            except Exception:
+                self._global_pop = None
+        else:
+            self._global_pop = None
         self.islands=[]
         # процентный карантин: isolated_until можно задать как 12 (абсолют), "40%" или 0.4 / isolated_until_ratio
         def _resolve_isolated_until(raw, total_gens):
@@ -83,7 +110,8 @@ class GAEngine:
         if not self.islands:
             # default 6 islands — разные базы, не только STA (STA «не радует» в эксперименте)
             # V = variable voltage (4 базиса×2 ΔV), W = variable frequency ω(s) via FrequencyProfile
-            defaults=[("S",20,"smooth"),("A",20,"sta"),("V",20,"sta"),("W",20,"sta"),("R",25,"sta"),("H",20,"smooth")]
+            _def_pop = int(_global_pop) if (_global_pop is not None and int(_global_pop)>0) else None
+            defaults=[("S", _def_pop if _def_pop else 20, "smooth"),("A", _def_pop if _def_pop else 20,"sta"),("V", _def_pop if _def_pop else 20,"sta"),("W", _def_pop if _def_pop else 20,"sta"),("R", _def_pop if _def_pop else 25,"sta"),("H", _def_pop if _def_pop else 20,"smooth")]
             # S=smooth адиабатика, A=STA короткий, V=voltage, W=frequency, R=robust, H=hardware/lowpass
             for i,(s,p,b) in enumerate(defaults):
                 isl=Island(i,s,p, rng=self.rng.integers(0,1<<31), baseline=b)
@@ -95,7 +123,15 @@ class GAEngine:
         self.hall_of_fame=[]  # list of Genome sorted
         self.global_gen=0
         self.start_time=time.time()
-        self.cuda=cuda_info()
+        # reuse earlier cuda info (already computed) or fresh if not yet
+        try:
+            self.cuda = getattr(self, '_cuda_tmp', cuda_info())
+            # enrich with xp info
+            self.cuda['use_cuda'] = bool(self.use_cuda)
+            self.cuda['xp'] = 'cupy' if getattr(self, 'xp', np).__name__ == 'cupy' else 'numpy'
+            self.cuda['xp_name'] = getattr(self.xp, '__name__', 'numpy')
+        except Exception:
+            self.cuda=cuda_info()
         # dashboard state queue (non-blocking)
         self._state_queue=queue.Queue(maxsize=10)
         self._dashboard_thread=None
@@ -107,6 +143,7 @@ class GAEngine:
         self._traj_cache = {}
         self._cached_island_trajs = None
         self._cached_island_trajs_gen = -1
+        self._loss_history = []  # for loss-tab timeline: list of {gen, breakdown}
 
     def _build_trap_geometry(self):
         """Export trap electrode polygons for dashboard Trap tab.
@@ -316,10 +353,78 @@ class GAEngine:
                     except: pass
             self._hall_diversity = float(np.mean(ds)) if ds else 0.0
 
+    def _compute_loss_breakdown(self, genome):
+        """Вернуть разложение fitness по компонентам для дашборда loss-tab."""
+        try:
+            m = genome.metrics or {}
+            task = self.runner.task
+            # веса из runner или дефолт
+            w = dict(self.runner.loss_weights or {"n":1.0,"pos":1.0,"well":1.0,"lag":0.0})
+            # скалярные входы
+            n = float(m.get('n_total', 0))
+            pos = float(m.get('position_error_m', 0))
+            well = float(m.get('well_target_error_m', 0))
+            lag = m.get('max_ion_well_lag_m', m.get('max_transport_error_m'))
+            n0 = float(task.get('max_n_total', 0.5))
+            tol = float(task.get('position_tolerance_m', 5e-6))
+            dist = float(task.get('distance_m', 30e-6))
+            # базовые термы
+            import math as _math
+            n_term = w.get('n',1.0) * _math.log1p(max(0,n)/max(n0,1e-12)) if n0>0 else 0
+            pos_term = w.get('pos',1.0) * _math.log1p((max(0,pos)/max(tol,1e-12))**2) if tol>0 else 0
+            well_term = w.get('well',1.0) * _math.log1p((max(0,well)/max(tol,1e-12))**2) if tol>0 else 0
+            lag_term = 0
+            if w.get('lag',0):
+                try:
+                    if lag is not None and not bool(m.get('is_max_transport_error_fallback', True)):
+                        lag_term = w['lag'] * _math.log1p((float(lag)/max(dist,1e-12))**2)
+                except: lag_term=0
+            # distortion
+            distortion_term = 0
+            try:
+                d = m.get('distortion')
+                if isinstance(d, dict):
+                    rms = float(d.get('rms_deviation_V', d.get('max_deviation_V',0)) or 0)
+                else:
+                    rms = float(d or 0)
+                if rms>0.1:
+                    distortion_term = 0.5*_math.log1p((rms-0.1)/0.1)
+            except: pass
+            # control penalty
+            control_term = 0
+            try:
+                theta = genome.theta
+                bounds = genome.bounds
+                control_term = dimensionless_control_penalty(theta, bounds, self.runner.cfg.get('control_regularization_weight',1e-4))
+            except: control_term=0
+            # frequency gate
+            freq_term = 0
+            try:
+                fmin = float(m.get('minimum_frequency_hz', task.get('min_frequency_hz',400e3)))
+                f0 = float(task.get('min_frequency_hz',400e3))
+                if fmin < f0:
+                    freq_term = 2*_math.log1p((f0-fmin)/0.1e6)
+            except: pass
+            # robust для R — уже в fitness, выделяем отдельно?
+            robust_extra = 0
+            try:
+                if genome.island=='R' and 'robust_train_vals' in m:
+                    vals=m['robust_train_vals']
+                    mean_v=sum(vals)/len(vals); max_v=max(vals)
+                    # часть сверх обычного loss: 0.35*mean+0.65*max vs primary => approx max-mean
+                    robust_extra = float(0.65*(max_v-mean_v))
+            except: pass
+            total = n_term+pos_term+well_term+lag_term+distortion_term+control_term+freq_term+robust_extra
+            # невязка vs реальный fitness (из-за округлений/biased)
+            return dict(n=n_term, pos=pos_term, well=well_term, lag=lag_term, distortion=distortion_term, control=control_term, freq=freq_term, robust=robust_extra, sum=total, fitness=float(genome.fitness) if genome.fitness else total)
+        except Exception as e:
+            return dict(n=0,pos=0,well=0,lag=0,distortion=0,control=0,freq=0,robust=0,sum=float(genome.fitness or 0), error=str(e))
+
     def _write_state(self):
         # build dashboard state
         islands_state=[isl.snapshot() for isl in self.islands]
         hall=[]
+        loss_breakdown=[]
         for g in self.hall_of_fame:
             entry=dict(theta=g.theta.tolist(), fitness=g.fitness, island=g.island, status=g.status,
                    n_total=g.metrics.get('n_total'), pos_err=g.metrics.get('position_error_m'),
@@ -327,6 +432,13 @@ class GAEngine:
             # attach trajectory if already computed (for hall best we compute below)
             if 'trajectory' in g.metrics:
                 entry['trajectory'] = g.metrics['trajectory']
+            # loss breakdown for loss-tab
+            try:
+                bd = self._compute_loss_breakdown(g)
+                entry['loss_breakdown'] = bd
+                loss_breakdown.append(dict(island=g.island, fitness=g.fitness, breakdown=bd, theta=g.theta.tolist()))
+            except Exception:
+                pass
             hall.append(entry)
         # compute trajectory for best hall leader for dashboard (well + quantum + classical)
         trajectory = None
@@ -397,6 +509,17 @@ class GAEngine:
             island_trajectories = [{"error": str(e)[:500]}]
         # trap geometry cached at init; include minimal refresh if runner changed
         trap_geom = getattr(self, '_trap_geometry', None)
+        # update loss history for loss-tab timeline
+        try:
+            if loss_breakdown:
+                # loss_breakdown[0] is {island, fitness, breakdown, theta}
+                _first = loss_breakdown[0]
+                _bd = _first.get('breakdown', _first) if isinstance(_first, dict) else _first
+                self._loss_history.append(dict(gen=self.global_gen, breakdown=dict(_bd), fitness=float(hall[0]['fitness']) if hall and hall[0].get('fitness') is not None else None))
+                if len(self._loss_history) > 250:
+                    self._loss_history = self._loss_history[-250:]
+        except Exception:
+            pass
 
         state=dict(
             global_generation=self.global_gen,
@@ -409,8 +532,16 @@ class GAEngine:
             island_trajectories=island_trajectories,
             trap=trap_geom,
             migration_history=self.migration.history,
+            migration_stats=getattr(self.migration, 'stats', {}),
             cuda=self.cuda,
             config=self.cfg,
+            loss_breakdown=loss_breakdown,
+            loss_weights=dict(self.runner.loss_weights or {"n":1.0,"pos":1.0,"well":1.0,"lag":0.0}),
+            loss_formula=r"F = w_n·ln(1+n/n0) + w_pos·ln(1+(pos/tol)²) + w_well·ln(1+(well/tol)²) + w_lag·ln(1+(lag/dist)²) + 0.5·ln(1+max(0,rms-0.1)/0.1) + λ·mean(((θ-θc)/scale)²) + 2·ln(1+max(0,f0-fmin)/1e5)  ;  + robust 0.35·mean+0.65·max",
+            loss_history=getattr(self, '_loss_history', []),
+            pop_size=int(self.islands[0].pop_size if self.islands else (getattr(self,'_global_pop',None) or 20)),
+            total_pop=sum(isl.pop_size for isl in self.islands),
+            use_cuda=bool(getattr(self, 'use_cuda', False)),
             timestamp=time.time(),
             # dashboard contract note for frontend
             dashboard=dict(note="Trap tab polls state.json every 500ms; GA writes tmp->state.json atomically, no blocking. Per-island top 3% trajectories are decimated cheap ROM (exact_nodes=None) cached by theta hash, recomputed every trap_traj_interval gens.", top_percent=float(self.cfg.get('island_top_percent', 0.03) if not isinstance(self.cfg.get('ga'), dict) else self.cfg.get('ga', {}).get('island_top_percent', 0.03)), decimate=int(self.cfg.get('trap_traj_decimate', 80) if not isinstance(self.cfg.get('ga'), dict) else self.cfg.get('ga', {}).get('trap_traj_decimate', 80))),

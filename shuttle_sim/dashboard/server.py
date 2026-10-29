@@ -443,8 +443,8 @@ def build_trap_preview(gds_path=None, cfg=None):
 def _load_active_config(out_dir):
     """Load active config JSON and normalize relative GDS path if present."""
     for cand in (
-        pathlib.Path("configs/unified_live.json"),
         pathlib.Path(out_dir) / "config.json",
+        pathlib.Path("configs/unified_live.json"),
         pathlib.Path("configs/shuttle_gds.json"),
         pathlib.Path("configs/shuttle_reference.json"),
     ):
@@ -513,7 +513,18 @@ class Handler(SimpleHTTPRequestHandler):
                     cuda = json.loads(p.read_text(encoding="utf-8")).get("cuda", {})
                 except Exception:
                     pass
-            self._send_json(cuda)
+            if not cuda:
+                try:
+                    from shuttle_sim.ga.cuda import cuda_info, get_xp
+                    cuda = cuda_info()
+                    try:
+                        xp = get_xp()
+                        cuda["xp"] = getattr(xp, "__name__", str(xp))
+                    except Exception:
+                        pass
+                except Exception as e:
+                    cuda = {"error": str(e)}
+            self._send_json({"cuda": cuda, "ok": True})
             return
 
         if self.path.startswith("/api/runs"):
@@ -787,6 +798,28 @@ class Handler(SimpleHTTPRequestHandler):
                         except: pass
                     if "generations" in data:
                         cfg.setdefault("ga", {})["generations"] = int(data["generations"])
+                    if "pop_size" in data or "pop" in data:
+                        try:
+                            _pop = int(data.get("pop_size", data.get("pop")))
+                            if _pop>0:
+                                cfg.setdefault("ga", {})["pop_size"] = _pop
+                                cfg["ga"]["pop"] = _pop
+                                if "islands" in cfg["ga"] and isinstance(cfg["ga"]["islands"], list):
+                                    for ic in cfg["ga"]["islands"]:
+                                        ic["pop"] = _pop
+                        except: pass
+                    if "use_cuda" in data:
+                        try:
+                            cfg.setdefault("ga", {})["use_cuda"] = bool(data["use_cuda"])
+                        except: pass
+                    if "islands" in data and isinstance(data["islands"], list):
+                        cfg.setdefault("ga", {})["islands"] = data["islands"]
+                    if "migration_interval" in data:
+                        try: cfg.setdefault("ga", {})["migration_interval"] = int(data["migration_interval"])
+                        except: pass
+                    if "n_migrants" in data:
+                        try: cfg.setdefault("ga", {})["n_migrants"] = int(data["n_migrants"])
+                        except: pass
                     if "start_m" in data:
                         try:
                             sm = [float(x) for x in data["start_m"]]
@@ -894,6 +927,24 @@ class Handler(SimpleHTTPRequestHandler):
                             cfg["trap"]["minimum_seed_m"] = sm
                     except:
                         pass
+                if "pop_size" in data or "pop" in data:
+                    try:
+                        _pop = int(data.get("pop_size", data.get("pop")))
+                        if _pop>0:
+                            cfg.setdefault("ga", {})["pop_size"]=_pop
+                            cfg["ga"]["pop"]=_pop
+                            if "islands" in cfg["ga"] and isinstance(cfg["ga"]["islands"], list):
+                                for ic in cfg["ga"]["islands"]:
+                                    ic["pop"]=_pop
+                    except: pass
+                if "use_cuda" in data:
+                    try: cfg.setdefault("ga", {})["use_cuda"]=bool(data["use_cuda"])
+                    except: pass
+                if "islands" in data and isinstance(data["islands"], list):
+                    cfg.setdefault("ga", {})["islands"]=data["islands"]
+                if "migration_interval" in data:
+                    try: cfg.setdefault("ga", {})["migration_interval"]=int(data["migration_interval"])
+                    except: pass
 
                 out_path = pathlib.Path(out_dir_str)
                 out_path.mkdir(parents=True, exist_ok=True)
