@@ -929,7 +929,62 @@ class GAEngine:
                 elif 'validation_nodes' in self.runner.cfg:
                     del self.runner.cfg['validation_nodes']
 
-    def _write_live(self, evaluated, total, island_strategy=None, current_fitness=None):
+    def _get_migration_live(self):
+        """Snapshot for live ring — no heavy compute, just current isolation/next migration."""
+        try:
+            cur = int(self.global_gen)
+            interval = int(getattr(self.migration, 'interval', 5))
+            # find next generation where should_migrate is True
+            nxt = None
+            for g in range(cur+1, cur+interval*4+6):
+                try:
+                    if self.migration.should_migrate(g):
+                        nxt = g
+                        break
+                except Exception:
+                    continue
+            if nxt is None:
+                # fallback to next interval
+                nxt = ((cur // interval) + 1) * interval if interval else cur+1
+            # islands snapshot for ring (light)
+            islands = []
+            for isl in self.islands:
+                try:
+                    fits = [gg.fitness for gg in isl.population if gg.fitness is not None]
+                    best = float(min(fits)) if fits else None
+                    mean = float(sum(fits)/len(fits)) if fits else None
+                except Exception:
+                    best = mean = None
+                islands.append(dict(
+                    id=isl.id,
+                    strategy=isl.strategy,
+                    isolated_until=int(getattr(isl, 'isolated_until', 0)),
+                    is_isolated=bool(getattr(isl, 'isolated_until', 0) > cur),
+                    isolated_until_raw=getattr(isl, 'isolated_until_raw', getattr(isl, 'isolated_until', 0)),
+                    generation=int(getattr(isl, 'generation', cur)),
+                    pop_size=int(getattr(isl, 'pop_size', 20)),
+                    baseline=getattr(isl, 'baseline', 'sta'),
+                    best_fitness=best,
+                    mean_fitness=mean,
+                ))
+            hist = list(getattr(self.migration, 'history', []))[-8:]
+            stats = dict(getattr(self.migration, 'stats', {}))
+            return dict(
+                global_generation=cur,
+                total_generations=int(self.generations),
+                interval=interval,
+                n_migrants=int(getattr(self.migration, 'n_migrants', 2)),
+                next_migration_gen=int(nxt) if nxt is not None else None,
+                generations_until_next=int(nxt - cur) if nxt is not None else None,
+                islands=islands,
+                history=hist,
+                stats=stats,
+                timestamp=time.time(),
+            )
+        except Exception as e:
+            return dict(error=str(e)[:400], global_generation=int(getattr(self, 'global_gen', 0)))
+
+    def _write_live(self, evaluated, total, island_strategy=None, current_fitness=None, force=False):
         # lightweight live update inside generation — не тяжёлый как _write_state (без trap траекторий)
         try:
             frac = evaluated/total if total else 0
@@ -954,9 +1009,9 @@ class GAEngine:
                 self._live_recent.append(dict(island=island_strategy, fitness=float(current_fitness), gen=self.global_gen, ts=time.time()))
                 if len(self._live_recent)>60:
                     self._live_recent.pop(0)
-            # throttle 0.2s
+            # throttle 0.2s — force bypasses for migration events / gen boundaries
             now=time.time()
-            if now - getattr(self,'_live_last_write',0) < 0.2 and evaluated % 2 !=0:
+            if not force and now - getattr(self,'_live_last_write',0) < 0.2 and evaluated % 2 !=0:
                 return
             self._live_last_write=now
             live_state=dict(
@@ -975,7 +1030,9 @@ class GAEngine:
                 recent=self._live_recent[-30:],
                 timestamp=time.time(),
                 # also include per-island best for live header
-                islands_live=[dict(strategy=isl.strategy, best=float(min([g.fitness for g in isl.population if g.fitness is not None], default=1e9)), evaluated=len([g for g in isl.population if g.fitness is not None]), pop=isl.pop_size) for isl in self.islands]
+                islands_live=[dict(strategy=isl.strategy, best=float(min([g.fitness for g in isl.population if g.fitness is not None], default=1e9)), evaluated=len([g for g in isl.population if g.fitness is not None]), pop=isl.pop_size) for isl in self.islands],
+                # live migration ring — updates every 0.2s even intra-gen so ring is live
+                migration_live=self._get_migration_live(),
             )
             tmp=self.out/"live.json.tmp"
             final=self.out/"live.json"
@@ -1030,6 +1087,10 @@ class GAEngine:
                 print(f"gen boundary state fail {e}")
             if self.migration.should_migrate(gen):
                 self.migration.migrate(gen)
+                # live ring: immediate forced update so UI sees migration instantly
+                try:
+                    self._write_live(live_evaluated, total_in_gen, island_strategy="migrated", current_fitness=self._live_best, force=True)
+                except: pass
                 # re-evaluate migrants with live
                 live_evaluated=0
                 for isl in self.islands:
@@ -1037,8 +1098,11 @@ class GAEngine:
                 try:
                     self._update_hall(); self._write_state(heavy=True)
                 except: pass
-            # ensure live shows gen completion
-            self._write_live(total_in_gen, total_in_gen, island_strategy="gen_done", current_fitness=self._live_best)
+                try:
+                    self._write_live(total_in_gen, total_in_gen, island_strategy="post_migrate", current_fitness=self._live_best, force=True)
+                except: pass
+            # ensure live shows gen completion — forced for ring sync
+            self._write_live(total_in_gen, total_in_gen, island_strategy="gen_done", current_fitness=self._live_best, force=True)
             if gen%5==0:
                 self._evaluate_exact_hall()
                 self._write_state()

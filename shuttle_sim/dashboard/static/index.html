@@ -599,6 +599,7 @@ const POLY_PALETTE = [
 const POLY_STROKES = ["#5ac8ff","#7af0a0","#c58aff","#ffbe55","#5affda","#ff7a7a"]
 
 let lastState = null
+let lastLive = null
 let setupTrapData = null
 let setupView = {
   cx: 0,
@@ -2593,11 +2594,12 @@ function drawMigration(state){
   const c=document.getElementById('cMigration'); if(!c) return
   const ctx=c.getContext('2d'), W=c.width, H=c.height
   const dpr = Math.min(window.devicePixelRatio||1,2)
-  // use css size for drawing; we already have W/H as canvas pixel size (900*?); just draw
   ctx.clearRect(0,0,W,H)
   ctx.fillStyle="#0a1224"; ctx.fillRect(0,0,W,H)
   ctx.strokeStyle="#243556"; ctx.strokeRect(0.5,0.5,W-1,H-1)
-  const islands = state?.islands || []
+  // live source: prefer migration_live (pollLive 500мс) over state
+  const ml = state?.migration_live
+  const islands = ml?.islands || state?.islands || []
   if(!islands.length){
     ctx.fillStyle="#8aa0c8"; ctx.font="12px sans-serif"; ctx.textAlign="center"
     ctx.fillText("ожидание островов…", W/2, H/2); ctx.textAlign="start"; return
@@ -2605,16 +2607,14 @@ function drawMigration(state){
   const isls = islands.slice().sort((a,b)=>a.id-b.id)
   const n=isls.length
   const cx=W/2, cy=H/2-10, R=Math.min(W,H)*0.34
-  // precompute positions
   const pos={}
   isls.forEach((isl,i)=>{
     const ang = -Math.PI/2 + (i/n)*2*Math.PI
     const x=cx + R*Math.cos(ang), y=cy + R*Math.sin(ang)
     pos[isl.id]={x,y,ang, isl}
   })
-  // draw isolation halos (если остров изолирован)
-  const curGen=state.global_generation||0
-  const total=state.total_generations||20
+  const curGen= ml?.global_generation ?? state.global_generation ?? 0
+  const total= ml?.total_generations ?? state.total_generations ?? 20
   isls.forEach(isl=>{
     const p=pos[isl.id]
     const isolated = isl.is_isolated || (isl.isolated_until!=null && curGen < isl.isolated_until)
@@ -2639,7 +2639,6 @@ function drawMigration(state){
       ctx.setLineDash([])
     }
   })
-  // draw ring connections (background)
   ctx.strokeStyle="rgba(36,50,77,0.32)"; ctx.lineWidth=1; ctx.setLineDash([4,6])
   for(let i=0;i<n;i++){
     const a=isls[i], b=isls[(i+1)%n]
@@ -2647,8 +2646,7 @@ function drawMigration(state){
     ctx.beginPath(); ctx.moveTo(pa.x,pa.y); ctx.lineTo(pb.x,pb.y); ctx.stroke()
   }
   ctx.setLineDash([])
-  // draw migration arrows for recent history (last 3 events)
-  const hist=(state.migration_history||[]).slice(-4)
+  const hist=(ml?.history || state.migration_history || []).slice(-4)
   const animate=document.getElementById('chkMigrationAnimate')?.checked
   const t = Date.now()/800 % 1
   hist.forEach(entry=>{
@@ -2703,19 +2701,33 @@ function drawMigration(state){
     ctx.closePath(); ctx.fill()
     ctx.fillStyle="rgba(0,0,0,0.18)"; ctx.beginPath(); ctx.arc(ex,ey,2,0,Math.PI*2); ctx.fill()
   }
-  // draw island nodes on top
+  // highlight live current island (from pollLive)
+  let liveCur = state.current_island || (typeof lastLive!=='undefined' && lastLive?.current_island) || null
   isls.forEach(isl=>{
     const p=pos[isl.id]
     const col=islandColor(String(isl.strategy||isl.id)[0].toUpperCase())
+    const isCurrent = liveCur && String(isl.strategy)===String(liveCur)
     const isolated = isl.is_isolated || (isl.isolated_until!=null && curGen < isl.isolated_until)
     // shadow
     ctx.fillStyle="rgba(0,0,0,0.28)"; ctx.beginPath(); ctx.arc(p.x+2,p.y+2,28,0,Math.PI*2); ctx.fill()
     // outer ring
     ctx.fillStyle=isolated? "rgba(255,107,122,0.18)" : col+"22"
     ctx.beginPath(); ctx.arc(p.x,p.y,30,0,Math.PI*2); ctx.fill()
+    if(isCurrent){
+      // pulsing glow for live evaluated island
+      ctx.fillStyle=col+"33"; ctx.beginPath(); ctx.arc(p.x,p.y,38,0,Math.PI*2); ctx.fill()
+      ctx.strokeStyle=col; ctx.lineWidth=2; ctx.setLineDash([]); ctx.globalAlpha=0.6
+      ctx.beginPath(); ctx.arc(p.x,p.y,32,0,Math.PI*2); ctx.stroke()
+      ctx.globalAlpha=1
+    }
     // inner circle
     ctx.fillStyle=col; ctx.beginPath(); ctx.arc(p.x,p.y,26,0,Math.PI*2); ctx.fill()
-    ctx.strokeStyle= isolated? "#ff6b7a" : "rgba(255,255,255,0.88)"; ctx.lineWidth=2; ctx.stroke()
+    ctx.strokeStyle= isCurrent ? "#ffffff" : (isolated? "#ff6b7a" : "rgba(255,255,255,0.88)"); ctx.lineWidth= isCurrent ? 3 : 2; ctx.stroke()
+    if(isCurrent){
+      ctx.fillStyle="#fff"; ctx.font="700 10px Inter, sans-serif"; ctx.textAlign="center"
+      ctx.fillText("● LIVE", p.x, p.y+20)
+      ctx.textAlign="start"
+    }
     // text
     ctx.fillStyle="#0a1224"; ctx.font="700 13px Inter, sans-serif"; ctx.textAlign="center"; ctx.textBaseline="middle"
     ctx.fillText(String(isl.strategy||isl.id), p.x, p.y-2)
@@ -2734,9 +2746,15 @@ function drawMigration(state){
       ctx.fillStyle="#e6efff"; ctx.textAlign="center"; ctx.fillText(txt, p.x, by+10); ctx.textAlign="start"
     }
   })
-  // center label
-  ctx.fillStyle="rgba(138,160,200,0.9)"; ctx.font="11px Inter, sans-serif"; ctx.textAlign="center"
-  ctx.fillText(`поколение ${curGen} / ${total}`, cx, cy)
+  if(liveCur){
+    ctx.fillStyle="#7af0a0"; ctx.font="700 11px Inter, sans-serif"; ctx.textAlign="center"
+    ctx.fillText(`LIVE: остров ${liveCur}`, cx, cy-12)
+    ctx.fillStyle="rgba(138,160,200,0.9)"; ctx.font="11px Inter, sans-serif"
+    ctx.fillText(`поколение ${curGen} / ${total}`, cx, cy+4)
+  } else {
+    ctx.fillStyle="rgba(138,160,200,0.9)"; ctx.font="11px Inter, sans-serif"; ctx.textAlign="center"
+    ctx.fillText(`поколение ${curGen} / ${total}`, cx, cy)
+  }
   ctx.fillStyle="rgba(138,160,200,0.62)"; ctx.font="10px monospace"
   const activeCnt = isls.filter(s=>! (s.is_isolated || (s.isolated_until!=null && curGen < s.isolated_until))).length
   ctx.fillText(`${activeCnt} активных · ${n-activeCnt} в карантине`, cx, cy+14)
@@ -2746,17 +2764,16 @@ function drawMigration(state){
   if(leg) leg.innerHTML=`<span><i style="width:14px;height:3px;background:#7af0a0;display:inline-block"></i> активные</span><span><i style="width:14px;height:3px;background:#ff6b7a;display:inline-block"></i> внутри карантина</span><span><i style="width:14px;height:3px;background:#ffd05a;display:inline-block"></i> burst при открытии</span><span><i style="width:14px;height:3px;background:#5affda;display:inline-block"></i> global shuffle</span>`
   const badge=document.getElementById('migrationStatsBadge')
   if(badge){
-    const s=state.migration_stats||state.migration_history?.stats||{}
-    // stats from engine migration.stats
-    const mst = state.migration_stats || (state.migration_history && state.migration_history.stats) || {}
-    // fallback compute
-    const totalH = (state.migration_history||[]).length
-    badge.textContent = `событий: ${totalH} · bursts:${state.migration_history?.filter(x=>x.type==="burst").length||0}`
+    const s= ml?.stats || state.migration_stats||state.migration_history?.stats||{}
+    const totalH = (ml?.history || state.migration_history||[]).length
+    const bursts = (ml?.history || state.migration_history||[]).filter(x=>x.type==="burst").length||0
+    let extra = ml?.next_migration_gen!=null ? ` · след. ${ml.next_migration_gen} (через ${ml.generations_until_next})` : ""
+    badge.textContent = `событий: ${totalH} · bursts:${bursts}${extra}`
   }
   const interv=document.getElementById('migrationInterval')
-  if(interv) interv.textContent = state.config?.ga?.migration_interval || state.config?.migration_interval || 5
+  if(interv) interv.textContent = ml?.interval ?? state.config?.ga?.migration_interval ?? state.config?.migration_interval ?? 5
   const nm=document.getElementById('migrationN')
-  if(nm) nm.textContent = state.config?.ga?.n_migrants || 2
+  if(nm) nm.textContent = ml?.n_migrants ?? state.config?.ga?.n_migrants ?? 2
   const iso=document.getElementById('migrationIsolated')
   if(iso) iso.textContent = isls.filter(s=> s.is_isolated || (s.isolated_until!=null && curGen < s.isolated_until)).map(s=>s.strategy).join(", ") || "—"
 }
@@ -2766,9 +2783,10 @@ function drawMigrationTimeline(state){
   ctx.clearRect(0,0,W,H)
   ctx.fillStyle="#121c2e"; ctx.fillRect(0,0,W,H)
   ctx.strokeStyle="#243556"; ctx.strokeRect(0.5,0.5,W-1,H-1)
-  const total=state?.total_generations||20
-  const cur=state?.global_generation||0
-  const isls=state?.islands||[]
+  const ml = state?.migration_live
+  const total= ml?.total_generations ?? state?.total_generations ?? 20
+  const cur= ml?.global_generation ?? state?.global_generation ?? 0
+  const isls= ml?.islands ?? state?.islands ?? []
   if(!isls.length){
     ctx.fillStyle="#8aa0c8"; ctx.font="11px sans-serif"; ctx.textAlign="center"; ctx.fillText("ожидание", W/2, H/2); ctx.textAlign="start"; return
   }
@@ -2810,8 +2828,7 @@ function drawMigrationTimeline(state){
     // cur gen line
     // migration dots
   })
-  // migration events as dots
-  const hist=state.migration_history||[]
+  const hist= ml?.history ?? state.migration_history ?? []
   hist.forEach(entry=>{
     const g=entry.generation
     if(g==null || g>total) return
@@ -2847,10 +2864,11 @@ function drawMigrationTimeline(state){
 }
 function drawIsolationTable(state){
   const tbl=document.getElementById('isolationTable'); if(!tbl) return
-  const isls=state?.islands||[]
+  const ml = state?.migration_live
+  const isls= ml?.islands ?? state?.islands ?? []
   if(!isls.length){ tbl.innerHTML="<tr><td style='color:var(--muted)'>нет данных</td></tr>"; return }
-  const cur=state.global_generation||0
-  const total=state.total_generations||20
+  const cur= ml?.global_generation ?? state.global_generation ?? 0
+  const total= ml?.total_generations ?? state.total_generations ?? 20
   let html=`<tr><th>остров</th><th>стратегия</th><th>поп</th><th>карантин до</th><th>%</th><th>статус</th><th>границы</th></tr>`
   for(let isl of isls){
     const strat=isl.strategy||isl.id
@@ -2859,13 +2877,13 @@ function drawIsolationTable(state){
     const pct = total? (until/total*100).toFixed(0) : "0"
     const isIso = isl.is_isolated || (until>cur)
     const status = isIso? `<span style="color:#ff6b7a">● изолирован</span>` : until>0&&cur>=until? `<span style="color:#7af0a0">◉ открыт (был до ${until})</span>` : `<span style="color:#8aa0c8">○ активен</span>`
-    const borders = isIso? `закрыты · внутри иногда ${state.config?.ga?.migration_interval? "да":"нет"}` : `открыты`
+    const borders = isIso? `закрыты · внутри иногда ${ (ml?.interval ?? state.config?.ga?.migration_interval) ? "да":"нет"}` : `открыты`
     html+=`<tr><td><span class="status-dot" style="background:${islandColor(String(strat)[0].toUpperCase())}"></span> ${isl.id}</td><td>${strat}</td><td class="mono">${isl.pop_size||""}</td><td class="mono">${until} <span style="opacity:0.6">(${raw})</span></td><td class="mono">${pct}%</td><td>${status}</td><td class="mono">${borders}</td></tr>`
   }
   tbl.innerHTML=html
   const histList=document.getElementById('migrationHistoryList')
   if(histList){
-    const hist=(state.migration_history||[]).slice(-20).reverse()
+    const hist=(ml?.history ?? state.migration_history ?? []).slice(-20).reverse()
     if(!hist.length){ histList.innerHTML=`<div style="color:var(--muted)">пока нет миграций</div>` }
     else {
       histList.innerHTML=hist.map(entry=>{
@@ -2879,9 +2897,10 @@ function drawIsolationTable(state){
   }
   const detail=document.getElementById('migrationStatsDetail')
   if(detail){
-    const s=state.migration_stats || {}
-    const total = (state.migration_history||[]).length
-    detail.textContent=`всего событий: ${total} · bursts:${ (state.migration_history||[]).filter(x=>x.type==="burst").length} · активные:${ (state.migration_history||[]).filter(x=>x.type==="ring_active").length} · карантинные:${ (state.migration_history||[]).filter(x=>x.type==="ring_isolated").length} · shuffles:${ (state.migration_history||[]).filter(x=>x.type==="global_shuffle").length}`
+    const s= ml?.stats ?? state.migration_stats ?? {}
+    const total = (ml?.history ?? state.migration_history ?? []).length
+    let histAll = ml?.history ?? state.migration_history ?? []
+    detail.textContent=`всего событий: ${total} · bursts:${ histAll.filter(x=>x.type==="burst").length} · активные:${ histAll.filter(x=>x.type==="ring_active").length} · карантинные:${ histAll.filter(x=>x.type==="ring_isolated").length} · shuffles:${ histAll.filter(x=>x.type==="global_shuffle").length}`
   }
 }
 function updateKVs(state){
@@ -3878,7 +3897,42 @@ function init(){
       let run = localStorage.getItem('dashboard_run') || document.getElementById('inpOut').value || "output/live_run"
       let r = await fetch('/api/live?run='+encodeURIComponent(run)+'&ts='+Date.now(), {cache:"no-store"})
       let j = await r.json()
+      lastLive = j
       drawLive(j)
+      // live migration ring — обновление каждые 500мс без ожидания state.json
+      if(j && j.migration_live){
+        try{
+          // build state-like object for migration draw functions
+          let migState = {
+            global_generation: j.migration_live.global_generation,
+            total_generations: j.migration_live.total_generations,
+            islands: j.migration_live.islands,
+            migration_history: j.migration_live.history,
+            migration_stats: j.migration_live.stats,
+            migration_live: j.migration_live,
+            config: lastState?.config,
+            trap: lastState?.trap,
+            current_island: j.current_island
+          }
+          // if lastState has hall etc, keep for other panels but migration uses live
+          // draw migration visuals live (even if tab not active, for badge updates)
+          drawMigration(migState)
+          drawMigrationTimeline(migState)
+          drawIsolationTable(migState)
+          // also update header badge for next migration
+          try{
+            let nextEl = document.getElementById('migrationStatsBadge')
+            if(nextEl && j.migration_live.next_migration_gen!=null){
+              let cur = j.migration_live.global_generation
+              let nxt = j.migration_live.next_migration_gen
+              let until = j.migration_live.generations_until_next
+              nextEl.textContent = `след. миграция gen ${nxt} (через ${until})`
+              nextEl.style.background = until<=1 ? "#0d2816" : "var(--chip)"
+              nextEl.style.borderColor = until<=1 ? "#1a5c2a" : "var(--border)"
+            }
+          }catch(e){}
+        }catch(e){}
+      }
     }catch(e){}
   }
 

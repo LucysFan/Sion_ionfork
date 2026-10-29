@@ -476,12 +476,47 @@ class Handler(SimpleHTTPRequestHandler):
             out_dir = self._resolve_out_dir()
             p = out_dir / "state.json"
             if p.exists():
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.end_headers()
-                self.wfile.write(p.read_bytes())
-                return
+                try:
+                    # merge live migration if newer so ring is live even before heavy state
+                    state_bytes = p.read_bytes()
+                    try:
+                        live_path = out_dir / "live.json"
+                        if live_path.exists():
+                            st_json = json.loads(state_bytes.decode("utf-8"))
+                            live_json = json.loads(live_path.read_text(encoding="utf-8"))
+                            mig = live_json.get("migration_live")
+                            if mig:
+                                # only merge if live is at same or newer generation
+                                if live_json.get("timestamp", 0) >= st_json.get("timestamp", 0) - 2:
+                                    st_json["migration_live"] = mig
+                                    # also enrich islands with live isolation (more timely)
+                                    # keep islands from state but update is_isolated from live if available
+                                    try:
+                                        live_islands = {x["id"]: x for x in mig.get("islands", [])}
+                                        for isl in st_json.get("islands", []):
+                                            li = live_islands.get(isl.get("id"))
+                                            if li is not None:
+                                                isl["is_isolated"] = li.get("is_isolated", isl.get("is_isolated"))
+                                                isl["isolated_until"] = li.get("isolated_until", isl.get("isolated_until"))
+                                    except Exception:
+                                        pass
+                                    state_bytes = json.dumps(st_json, ensure_ascii=False).encode("utf-8")
+                    except Exception:
+                        pass
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(state_bytes)
+                    return
+                except Exception:
+                    # fallback to raw
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(p.read_bytes())
+                    return
             pp = out_dir / "status.json"
             if pp.exists():
                 try:
@@ -765,6 +800,7 @@ class Handler(SimpleHTTPRequestHandler):
                                                 "evaluated_in_gen": live.get("evaluated_in_gen", 0),
                                                 "total_in_gen": live.get("total_in_gen", 0),
                                                 "current_island": live.get("current_island"),
+                                                "migration_live": live.get("migration_live"),
                                             }
                                 except Exception:
                                     progress_extra = {}
@@ -796,6 +832,7 @@ class Handler(SimpleHTTPRequestHandler):
                                     "elapsed_s": live.get("elapsed_s", elapsed),
                                     "best": live.get("live_best"),
                                     "status": "initializing",
+                                    "migration_live": live.get("migration_live"),
                                 }
                             else:
                                 gg_hist = 0
