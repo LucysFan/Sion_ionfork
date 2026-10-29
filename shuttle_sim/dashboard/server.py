@@ -773,8 +773,18 @@ class Handler(SimpleHTTPRequestHandler):
                             resolved = _resolve_gds_path(gpath)
                             cfg["trap"]["path"] = str(resolved)
                             cfg["trap"]["kind"] = "gds"
-                        if "electrode_map" in data:
-                            cfg["trap"]["electrode_map"] = data["electrode_map"]
+                    if "electrode_map" in data:
+                        cfg["trap"]["electrode_map"] = data["electrode_map"]
+                    if "rf_electrodes" in data:
+                        cfg["trap"]["rf_electrodes"] = data["rf_electrodes"]
+                    if "dc_indices" in data:
+                        cfg["trap"]["dc_indices"] = data["dc_indices"]
+                    if "lower_V" in data:
+                        try: cfg["trap"]["lower_V"] = float(data["lower_V"])
+                        except: pass
+                    if "upper_V" in data:
+                        try: cfg["trap"]["upper_V"] = float(data["upper_V"])
+                        except: pass
                     if "generations" in data:
                         cfg.setdefault("ga", {})["generations"] = int(data["generations"])
                     if "start_m" in data:
@@ -782,6 +792,18 @@ class Handler(SimpleHTTPRequestHandler):
                             sm = [float(x) for x in data["start_m"]]
                             if len(sm) == 3:
                                 cfg["trap"]["minimum_seed_m"] = sm
+                        except:
+                            pass
+                    if "minimum_seed_m" in data:
+                        try:
+                            sm = [float(x) for x in data["minimum_seed_m"]]
+                            if len(sm) == 3:
+                                cfg["trap"]["minimum_seed_m"] = sm
+                        except:
+                            pass
+                    if "rf_voltage" in data:
+                        try:
+                            cfg["trap"]["rf_voltage"] = float(data["rf_voltage"])
                         except:
                             pass
                 dest = pathlib.Path("configs/unified_live.json")
