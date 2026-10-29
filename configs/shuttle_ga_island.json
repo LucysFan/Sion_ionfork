@@ -206,6 +206,11 @@
         "baseline": "sta"
       },
       {
+        "strategy": "W",
+        "pop": 12,
+        "baseline": "sta"
+      },
+      {
         "strategy": "R",
         "pop": 20,
         "baseline": "sta"
@@ -213,7 +218,7 @@
       {
         "strategy": "H",
         "pop": 18,
-        "baseline": "sta"
+        "baseline": "smooth"
       }
     ],
     "hall_diversity_min_distance": 0.12,
