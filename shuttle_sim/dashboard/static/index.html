@@ -323,7 +323,7 @@ input[type=range]{accent-color:var(--accent)}
         <span style="margin-left:auto;font-size:11px;color:var(--muted);display:inline-flex;align-items:center;gap:6px"><span style="width:28px;height:3px;border-radius:99px;background:linear-gradient(90deg,#5ac8ff,#7af0a0);display:inline-block;opacity:0.9"></span> ось X — дробное поколение · Y — log fitness (ниже лучше)</span>
       </div>
       <div style="position:relative;border-radius:12px;overflow:hidden;border:1px solid #24324d;background:#07101f;box-shadow:inset 0 0 0 1px rgba(255,255,255,0.03), inset 0 6px 18px rgba(0,0,0,0.35)">
-        <canvas id="cLive" width="1100" height="260" style="height:260px;width:100%;display:block"></canvas>
+        <canvas id="cLive" width="1100" height="320" style="height:320px;width:100%;display:block"></canvas>
         <div style="position:absolute;inset:0;pointer-events:none;border-radius:12px;box-shadow:inset 0 1px 0 rgba(255,255,255,0.06), inset 0 0 24px rgba(90,200,255,0.05)"></div>
       </div>
       <div class="legend" id="liveLegend" style="margin-top:9px;justify-content:space-between;gap:10px"></div>
@@ -334,16 +334,16 @@ input[type=range]{accent-color:var(--accent)}
   <div class="grid">
     <div class="card">
       <h3>Fitness vs generation <small>по островам и глобальный минимум</small></h3>
-      <canvas id="cFitness" width="1100" height="320"></canvas>
+      <canvas id="cFitness" width="1100" height="380"></canvas>
       <div id="fitnessLegend" class="legend"></div>
     </div>
     <div class="card">
       <h3>Diversity vs generation <small>нормированное расстояние</small></h3>
-      <canvas id="cDivers" width="1100" height="320"></canvas>
+      <canvas id="cDivers" width="1100" height="380"></canvas>
     </div>
     <div class="card">
       <h3>Population histogram <small>распределение fitness</small></h3>
-      <canvas id="cHist" width="1100" height="320"></canvas>
+      <canvas id="cHist" width="1100" height="380"></canvas>
       <div id="histStats" class="kv mono" style="margin-top:8px"></div>
     </div>
     <div class="card">
@@ -362,12 +362,12 @@ input[type=range]{accent-color:var(--accent)}
     </div>
     <div class="card">
       <h3>Pareto <small>n_total / ошибка позиции / искажение</small></h3>
-      <canvas id="cPareto" width="1100" height="360" class="pareto"></canvas>
+      <canvas id="cPareto" width="1100" height="380" class="pareto"></canvas>
       <div class="legend" id="paretoLegend"></div>
     </div>
     <div class="card" style="grid-column:1/-1">
       <h3>Траектории лучшего решения <small>мкм / мкс</small></h3>
-      <canvas id="cTraj" width="1300" height="360" style="height:360px;background:#121c2e;border-radius:10px;display:block"></canvas>
+      <canvas id="cTraj" width="1300" height="400" style="height:400px;background:#121c2e;border-radius:10px;display:block"></canvas>
       <div class="legend" id="trajLegend"></div>
       <div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap;align-items:center">
         <label class="kv"><input type="checkbox" id="chkWell" checked> яма</label>
@@ -386,7 +386,7 @@ input[type=range]{accent-color:var(--accent)}
     </div>
     <div class="card" style="grid-column:1/-1;border-left:4px solid #ff6b7a">
       <h3>Робастность <small>проверка на вариациях hardware — gain/offset/stray/freq, порог n₀</small> <span id="robustBadge" class="badge" style="margin-left:8px">—</span></h3>
-      <canvas id="cRobust" width="1100" height="280" style="height:280px"></canvas>
+      <canvas id="cRobust" width="1100" height="340" style="height:280px"></canvas>
       <div class="legend" id="robustLegend" style="margin-top:8px"></div>
       <div id="robustTable" class="mono" style="margin-top:8px;overflow:auto"></div>
       <div class="kv mono" id="robustStats" style="margin-top:6px;color:var(--muted);font-size:11px"></div>
@@ -467,7 +467,7 @@ input[type=range]{accent-color:var(--accent)}
     <div class="grid" style="grid-template-columns:1fr 1fr;gap:16px">
       <div class="card">
         <h3>Напряжения на электродах <small>во времени — лучшие per island</small></h3>
-        <canvas id="cVoltage" width="1100" height="320" style="height:320px"></canvas>
+        <canvas id="cVoltage" width="1100" height="360" style="height:360px"></canvas>
         <div class="legend" id="voltageLegend" style="margin-top:8px"></div>
         <div class="kv mono" id="voltageStats" style="margin-top:6px;color:var(--muted);font-size:11px"></div>
         <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
@@ -478,7 +478,7 @@ input[type=range]{accent-color:var(--accent)}
       </div>
       <div class="card">
         <h3>Секулярная частота <small>ω(t)/2π, МГц — по времени шаттлинга</small></h3>
-        <canvas id="cFrequency" width="1100" height="320" style="height:320px"></canvas>
+        <canvas id="cFrequency" width="1100" height="360" style="height:360px"></canvas>
         <div class="legend" id="frequencyLegend" style="margin-top:8px"></div>
         <div class="kv mono" id="frequencyStats" style="margin-top:6px;color:var(--muted);font-size:11px"></div>
         <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
@@ -497,50 +497,74 @@ input[type=range]{accent-color:var(--accent)}
 
 <!-- Loss tab — формула и вклад компонентов -->
 <div id="pane-loss" class="tab-pane">
-  <div style="padding:16px 20px;display:grid;gap:16px">
+  <div style="padding:16px 20px;display:grid;gap:18px">
+    <!-- Формула + легенда -->
     <div class="card" style="border-left:4px solid #5ac8ff">
-      <h3>Скалярный loss <small>F(θ) — что минимизирует GA</small></h3>
-      <div class="mono" style="font-size:12px;line-height:1.6;background:var(--panel2);padding:12px;border-radius:10px;border:1px solid var(--border);overflow:auto">
+      <h3>Скалярный loss <small>F(θ) — что минимизирует GA (чем меньше, тем лучше)</small></h3>
+      <div class="mono" style="font-size:12.5px;line-height:1.65;background:var(--panel2);padding:14px;border-radius:10px;border:1px solid var(--border);overflow:auto">
         <b style="color:#5ac8ff">F(θ) =</b> <span style="color:#7af0a0">w<sub>n</sub>·ln(1+n/n<sub>0</sub>)</span> + <span style="color:#ffbe55">w<sub>pos</sub>·ln(1+(pos/tol)²)</span> + <span style="color:#c58aff">w<sub>well</sub>·ln(1+(well/tol)²)</span> + <span style="color:#5affda">w<sub>lag</sub>·ln(1+(lag/dist)²)</span><br>
         &nbsp;&nbsp;&nbsp;&nbsp; + <span style="color:#ff7a7a">0.5·ln(1+max(0,rms−0.1)/0.1)</span> <small style="color:var(--muted)">— искажение ЦАП</small><br>
         &nbsp;&nbsp;&nbsp;&nbsp; + <span style="color:#f0883e">λ·mean(((θ−θ<sub>c</sub>)/scale)²)</span> <small style="color:var(--muted)">— штраф управления (θ в границах)</small><br>
         &nbsp;&nbsp;&nbsp;&nbsp; + <span style="color:#ff6b9e">2·ln(1+max(0,f<sub>0</sub>−f<sub>min</sub>)/1e5)</span> <small style="color:var(--muted)">— частотный гейт (если f<sub>min</sub> &lt; f<sub>0</sub>)</small><br>
-        &nbsp;&nbsp;&nbsp;&nbsp; + <span style="color:#ffd05a">robust: 0.35·mean+0.65·max</span> <small style="color:var(--muted)">— только для острова R</small>
-        <div style="margin-top:8px;color:var(--muted);font-size:11px">
-          <b style="color:var(--text)">Обозначения:</b> n — n<sub>total</sub> фононов, pos — ошибка позиции (|&lt;r&gt;−target|), well — ошибка минимума ямы, lag — max|ион−яма| по траектории, rms — искажение DAC, f<sub>min</sub> — минимальная секулярная частота, λ=1e-4, n<sub>0</sub>=task.max_n_total, tol=position_tolerance_m, dist=distance_m.<br>
-          <span id="lossWeightsLabel" style="color:#5ac8ff"></span> · <span id="lossFormulaNote" style="color:var(--muted)">веса w<sub>n</sub>/w<sub>pos</sub>/w<sub>well</sub>/w<sub>lag</sub> из loss_weights (по умолчанию 1/1/1/0)</span>
+        &nbsp;&nbsp;&nbsp;&nbsp; + <span style="color:#ffd05a">robust: 0.35·mean+0.65·max</span> <small style="color:var(--muted)">— только для острова R (устойчивость к вариациям железа)</small>
+        <div style="margin-top:10px;color:var(--muted);font-size:11px;line-height:1.5">
+          <b style="color:var(--text)">Обозначения:</b> n — n<sub>total</sub> фононов (цель &lt;0.5), pos — ошибка позиции |&lt;r&gt;−target| (цель &lt;tol), well — ошибка минимума ямы, lag — max|ион−яма| по траектории, rms — искажение DAC (>0.1В штрафуется), f<sub>min</sub> — минимальная секулярная частота (цель ≥f<sub>0</sub>), λ=1e-4, n<sub>0</sub>=task.max_n_total, tol=position_tolerance_m, dist=distance_m.<br>
+          <span id="lossWeightsLabel" style="color:#5ac8ff;font-weight:700"></span> · <span id="lossFormulaNote" style="color:var(--muted)">веса w<sub>n</sub>/w<sub>pos</sub>/w<sub>well</sub>/w<sub>lag</sub> из loss_weights (по умолчанию 1/1/1/0) — меняются в конфиге</span>
         </div>
       </div>
-      <div class="legend" style="margin-top:10px;flex-wrap:wrap">
-        <span><i style="width:14px;height:14px;background:#7af0a0;display:inline-block;border-radius:3px"></i> n_total</span>
-        <span><i style="width:14px;height:14px;background:#ffbe55;display:inline-block;border-radius:3px"></i> pos</span>
-        <span><i style="width:14px;height:14px;background:#c58aff;display:inline-block;border-radius:3px"></i> well</span>
-        <span><i style="width:14px;height:14px;background:#5affda;display:inline-block;border-radius:3px"></i> lag</span>
-        <span><i style="width:14px;height:14px;background:#ff7a7a;display:inline-block;border-radius:3px"></i> distortion</span>
-        <span><i style="width:14px;height:14px;background:#f0883e;display:inline-block;border-radius:3px"></i> control</span>
-        <span><i style="width:14px;height:14px;background:#ff6b9e;display:inline-block;border-radius:3px"></i> freq gate</span>
-        <span><i style="width:14px;height:14px;background:#ffd05a;display:inline-block;border-radius:3px"></i> robust</span>
+      <div class="legend" style="margin-top:12px;flex-wrap:wrap;gap:12px">
+        <span title="Нагрев иона — главный критерий"><i style="width:16px;height:16px;background:#7af0a0;display:inline-block;border-radius:3px;border:1px solid #2a5a3a"></i> <b>n_total</b> <small style="color:var(--muted)">фононы</small></span>
+        <span title="Ошибка позиции в конце"><i style="width:16px;height:16px;background:#ffbe55;display:inline-block;border-radius:3px;border:1px solid #5a4220"></i> <b>pos</b> <small>позиция</small></span>
+        <span title="Ошибка минимума потенциала"><i style="width:16px;height:16px;background:#c58aff;display:inline-block;border-radius:3px;border:1px solid #4a2a6a"></i> <b>well</b> <small>яма</small></span>
+        <span title="Отставание иона от ямы"><i style="width:16px;height:16px;background:#5affda;display:inline-block;border-radius:3px;border:1px solid #2a5a4a"></i> <b>lag</b> <small>отставание</small></span>
+        <span title="Искажение формы напряжения"><i style="width:16px;height:16px;background:#ff7a7a;display:inline-block;border-radius:3px;border:1px solid #5a2a2a"></i> <b>dist</b> <small>DAC</small></span>
+        <span title="Штраф за большие θ"><i style="width:16px;height:16px;background:#f0883e;display:inline-block;border-radius:3px;border:1px solid #5a3a1a"></i> <b>control</b></span>
+        <span title="Штраф если частота провалилась"><i style="width:16px;height:16px;background:#ff6b9e;display:inline-block;border-radius:3px;border:1px solid #5a2a3a"></i> <b>freq</b></span>
+        <span title="Доплата за неустойчивость (остров R)"><i style="width:16px;height:16px;background:#ffd05a;display:inline-block;border-radius:3px;border:1px solid #5a4a1a"></i> <b>robust</b></span>
+      </div>
+      <!-- Подробная таблица компонентов -->
+      <div style="margin-top:12px;display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px" class="mono" id="lossExplainer">
+        <div style="background:rgba(122,240,160,0.08);border:1px solid rgba(122,240,160,0.22);border-radius:8px;padding:8px"><b style="color:#7af0a0">n_total</b> <small>фононы</small><br><span style="font-size:11px;color:var(--muted)">ln(1+n/n0). n0=0.5. Если n=0.1 → 0.18, n=1 → 1.1. Цель ≤0.3</span></div>
+        <div style="background:rgba(255,190,85,0.08);border:1px solid rgba(255,190,85,0.22);border-radius:8px;padding:8px"><b style="color:#ffbe55">pos</b> <small>ошибка</small><br><span style="font-size:11px;color:var(--muted)">ln(1+(pos/tol)²). tol=5мкм. pos=1мкм→0.04, 10мкм→1.6. Должно →0</span></div>
+        <div style="background:rgba(197,138,255,0.08);border:1px solid rgba(197,138,255,0.22);border-radius:8px;padding:8px"><b style="color:#c58aff">well</b> <small>яма</small><br><span style="font-size:11px;color:var(--muted)">аналогично pos, но для минимума потенциала. →0</span></div>
+        <div style="background:rgba(90,255,218,0.08);border:1px solid rgba(90,255,218,0.22);border-radius:8px;padding:8px"><b style="color:#5affda">lag</b> <small>отставание</small><br><span style="font-size:11px;color:var(--muted)">max|ион−яма|/dist. Обычно выкл (w_lag=0). Если вкл — штраф за отставание</span></div>
+        <div style="background:rgba(255,122,122,0.08);border:1px solid rgba(255,122,122,0.22);border-radius:8px;padding:8px"><b style="color:#ff7a7a">distortion</b><br><span style="font-size:11px;color:var(--muted)">rms искажения >0.1В. rms=0.12→0.09, 0.3→0.55</span></div>
+        <div style="background:rgba(240,136,62,0.08);border:1px solid rgba(240,136,62,0.22);border-radius:8px;padding:8px"><b style="color:#f0883e">control</b><br><span style="font-size:11px;color:var(--muted)">θ близко к границам. Обычно &lt;0.05</span></div>
+        <div style="background:rgba(255,107,158,0.08);border:1px solid rgba(255,107,158,0.22);border-radius:8px;padding:8px"><b style="color:#ff6b9e">freq gate</b><br><span style="font-size:11px;color:var(--muted)">если fmin&lt;f0: 2·ln(1+Δ/1e5). Провал на 200кГц→2.2</span></div>
+        <div style="background:rgba(255,208,90,0.08);border:1px solid rgba(255,208,90,0.22);border-radius:8px;padding:8px"><b style="color:#ffd05a">robust</b><br><span style="font-size:11px;color:var(--muted)">только R: 0.35·mean+0.65·max − primary. Показывает неустойчивость</span></div>
       </div>
     </div>
-    <div class="grid" style="grid-template-columns:1fr 1fr">
-      <div class="card">
-        <h3>Вклад в loss — лучшие решения <small>stacked, чем ниже тем лучше</small></h3>
-        <canvas id="cLossStack" width="900" height="320" style="height:320px"></canvas>
-        <div class="legend" id="lossStackLegend"></div>
-        <div class="mono" id="lossStackStats" style="margin-top:6px;color:var(--muted);font-size:11px"></div>
+    <!-- Сводка лучшего -->
+    <div class="card" id="lossBestSummary" style="border:1px solid rgba(90,200,255,0.35);background:linear-gradient(180deg,rgba(90,200,255,0.08),transparent)">
+      <h3>Текущий лучший <small id="lossBestTitle">—</small></h3>
+      <div id="lossBestGrid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-top:8px"></div>
+      <div class="mono" id="lossBestNote" style="margin-top:8px;color:var(--muted);font-size:11px"></div>
+    </div>
+    <!-- Графики — теперь в одну колонку, крупнее -->
+    <div class="card">
+      <h3>Вклад в loss — лучшие решения <small>stacked, высота сегмента = вклад, чем ниже тем лучше · наведите мышкой для деталей</small> <span class="badge" id="lossStackBadge" style="margin-left:8px">топ-10</span></h3>
+      <div style="position:relative">
+        <canvas id="cLossStack" width="1200" height="520" style="height:520px;width:100%;display:block;background:#07101f;border-radius:10px;border:1px solid var(--border)"></canvas>
+        <div id="lossStackTooltip" style="position:absolute;display:none;pointer-events:none;background:rgba(15,20,28,0.96);border:1px solid #2a4a6a;border-radius:8px;padding:8px 10px;font-size:11px;line-height:1.4;max-width:280px;box-shadow:0 4px 16px rgba(0,0,0,0.4)"></div>
       </div>
-      <div class="card">
-        <h3>Динамика вкладов по поколениям <small>лучший hall[0]</small></h3>
-        <canvas id="cLossHistory" width="900" height="320" style="height:320px"></canvas>
-        <div class="legend" id="lossHistoryLegend"></div>
-        <div class="mono" id="lossHistoryStats" style="margin-top:6px;color:var(--muted);font-size:11px"></div>
-      </div>
+      <div class="legend" id="lossStackLegend" style="margin-top:8px"></div>
+      <div class="mono" id="lossStackStats" style="margin-top:6px;color:var(--muted);font-size:11px"></div>
     </div>
     <div class="card">
-      <h3>Таблица hall — разложение fitness <small>топ-10</small></h3>
-      <div style="overflow:auto;max-width:100%">
-        <table class="table mono" id="lossTable" style="min-width:760px"></table>
+      <h3>Динамика вкладов по поколениям <small>лучший hall[0] — как каждый компонент падал · наведите для значений</small> <span class="badge" id="lossHistoryBadge">—</span></h3>
+      <div style="position:relative">
+        <canvas id="cLossHistory" width="1200" height="520" style="height:520px;width:100%;display:block;background:#07101f;border-radius:10px;border:1px solid var(--border)"></canvas>
+        <div id="lossHistoryTooltip" style="position:absolute;display:none;pointer-events:none;background:rgba(15,20,28,0.96);border:1px solid #2a4a6a;border-radius:8px;padding:8px 10px;font-size:11px;line-height:1.4;max-width:280px;box-shadow:0 4px 16px rgba(0,0,0,0.4)"></div>
       </div>
+      <div class="legend" id="lossHistoryLegend" style="margin-top:8px"></div>
+      <div class="mono" id="lossHistoryStats" style="margin-top:6px;color:var(--muted);font-size:11px"></div>
+    </div>
+    <div class="card">
+      <h3>Таблица hall — разложение fitness <small>топ-10 · клик по строке подсветит на графиках · цвет ячейки = сила вклада</small></h3>
+      <div style="overflow:auto;max-width:100%;border:1px solid var(--border);border-radius:8px">
+        <table class="table mono" id="lossTable" style="min-width:900px"></table>
+      </div>
+      <div class="mono" id="lossTableNote" style="margin-top:6px;color:var(--muted);font-size:11px">Ячейка тем ярче, чем больше вклад. Белый контур — строка лучшего. Наведите на ячейку для подсказки.</div>
     </div>
   </div>
 </div>
@@ -599,6 +623,7 @@ const POLY_PALETTE = [
 const POLY_STROKES = ["#5ac8ff","#7af0a0","#c58aff","#ffbe55","#5affda","#ff7a7a"]
 
 let lastState = null
+let lastLive = null
 let setupTrapData = null
 let setupView = {
   cx: 0,
@@ -1712,12 +1737,18 @@ function centerViewOnIon(){
 // =========================================================================
 function drawAxes(ctx,w,h,opts){
   ctx.clearRect(0,0,w,h)
-  ctx.fillStyle="#121c2e"; ctx.fillRect(0,0,w,h)
-  ctx.strokeStyle="#1e2e4e"; ctx.lineWidth=1; ctx.setLineDash([3,4])
-  for(let i=0;i<4;i++){ let y=20+i*(h-40)/3; ctx.beginPath();ctx.moveTo(40,y);ctx.lineTo(w-10,y);ctx.stroke()}
-  ctx.setLineDash([]); ctx.strokeStyle="#243556"; ctx.strokeRect(0.5,0.5,w-1,h-1)
-  if(opts.xlabel){ ctx.fillStyle="#8aa0c8"; ctx.font="10px sans-serif"; ctx.fillText(opts.xlabel, 42, h-6)}
-  if(opts.ylabel){ ctx.save(); ctx.translate(12, h/2); ctx.rotate(-Math.PI/2); ctx.fillStyle="#8aa0c8"; ctx.font="10px sans-serif"; ctx.fillText(opts.ylabel, -30, 0); ctx.restore()}
+  // gradient bg
+  let bg=ctx.createLinearGradient(0,0,0,h)
+  bg.addColorStop(0,"#121c2e"); bg.addColorStop(1,"#0e172a")
+  ctx.fillStyle=bg; ctx.fillRect(0,0,w,h)
+  // grid: 4 horizontal + 5 vertical, subtle dashed
+  ctx.strokeStyle="rgba(30,46,78,0.85)"; ctx.lineWidth=1; ctx.setLineDash([3,5])
+  for(let i=0;i<4;i++){ let y=22+i*(h-48)/3; ctx.beginPath();ctx.moveTo(46,y);ctx.lineTo(w-14,y);ctx.stroke()}
+  for(let i=0;i<5;i++){ let x=46+i*(w-60)/4; ctx.beginPath();ctx.moveTo(x,22);ctx.lineTo(x,h-26);ctx.stroke()}
+  ctx.setLineDash([]); ctx.strokeStyle="#25365a"; ctx.lineWidth=1; ctx.strokeRect(0.5,0.5,w-1,h-1)
+  // labels with better typography
+  if(opts.xlabel){ ctx.fillStyle="#8aa0c8"; ctx.font="11px Inter, sans-serif"; ctx.textAlign="center"; ctx.fillText(opts.xlabel, w/2, h-7); ctx.textAlign="start"}
+  if(opts.ylabel){ ctx.save(); ctx.translate(14, h/2); ctx.rotate(-Math.PI/2); ctx.fillStyle="#8aa0c8"; ctx.font="11px Inter, sans-serif"; ctx.textAlign="center"; ctx.fillText(opts.ylabel, 0, 0); ctx.restore()}
 }
 
 function drawFitness(state){
@@ -2379,140 +2410,273 @@ function drawIslands(state){
 
 function drawAxes(ctx,W,H,opts){
   ctx.clearRect(0,0,W,H)
-  ctx.fillStyle="#121c2e"; ctx.fillRect(0,0,W,H)
-  // grid — 4 horizontal + 5 vertical, faint dashed
-  ctx.strokeStyle="rgba(30,46,78,0.65)"; ctx.lineWidth=1; ctx.setLineDash([3,5])
-  for(let i=0;i<4;i++){ let y=16+i*(H-40)/3; ctx.beginPath(); ctx.moveTo(44,y); ctx.lineTo(W-12,y); ctx.stroke() }
-  for(let i=0;i<5;i++){ let x=44+i*(W-56)/4; ctx.beginPath(); ctx.moveTo(x,16); ctx.lineTo(x,H-24); ctx.stroke() }
+  let bg=ctx.createLinearGradient(0,0,0,H)
+  bg.addColorStop(0,"#121c2e"); bg.addColorStop(1,"#0e172a")
+  ctx.fillStyle=bg; ctx.fillRect(0,0,W,H)
+  ctx.strokeStyle="rgba(30,46,78,0.85)"; ctx.lineWidth=1; ctx.setLineDash([3,5])
+  for(let i=0;i<4;i++){ let y=22+i*(H-48)/3; ctx.beginPath(); ctx.moveTo(46,y); ctx.lineTo(W-14,y); ctx.stroke() }
+  for(let i=0;i<5;i++){ let x=46+i*(W-60)/4; ctx.beginPath(); ctx.moveTo(x,22); ctx.lineTo(x,H-26); ctx.stroke() }
   ctx.setLineDash([])
-  ctx.strokeStyle="#243556"; ctx.strokeRect(0.5,0.5,W-1,H-1)
+  ctx.strokeStyle="#25365a"; ctx.strokeRect(0.5,0.5,W-1,H-1)
   if(opts && opts.xlabel){
-    ctx.fillStyle="#8aa0c8"; ctx.font="10px sans-serif"; ctx.textAlign="center"
-    ctx.fillText(opts.xlabel, W/2, H-6)
-    ctx.save(); ctx.translate(12, H/2); ctx.rotate(-Math.PI/2); ctx.fillText(opts.ylabel||"",0,0); ctx.restore()
+    ctx.fillStyle="#8aa0c8"; ctx.font="11px Inter, sans-serif"; ctx.textAlign="center"
+    ctx.fillText(opts.xlabel, W/2, H-7)
+    ctx.save(); ctx.translate(14, H/2); ctx.rotate(-Math.PI/2); ctx.fillText(opts.ylabel||"",0,0); ctx.restore()
     ctx.textAlign="start"
   } else if(opts && opts.ylabel){
-    ctx.fillStyle="#8aa0c8"; ctx.font="10px sans-serif"
-    ctx.save(); ctx.translate(12, H/2); ctx.rotate(-Math.PI/2); ctx.fillText(opts.ylabel||"",0,0); ctx.restore()
+    ctx.fillStyle="#8aa0c8"; ctx.font="11px Inter, sans-serif"
+    ctx.save(); ctx.translate(14, H/2); ctx.rotate(-Math.PI/2); ctx.fillText(opts.ylabel||"",0,0); ctx.restore()
   }
 }
 const LOSS_COLORS = {n:"#7af0a0", pos:"#ffbe55", well:"#c58aff", lag:"#5affda", distortion:"#ff7a7a", control:"#f0883e", freq:"#ff6b9e", robust:"#ffd05a", sum:"#ffffff"}
 const LOSS_LABELS = {n:"n", pos:"pos", well:"well", lag:"lag", distortion:"dist.", control:"control", freq:"freq", robust:"robust"}
+
+function updateLossBestSummary(state){
+  const grid=document.getElementById('lossBestGrid'), title=document.getElementById('lossBestTitle'), note=document.getElementById('lossBestNote')
+  if(!grid) return
+  const hall = state?.hall_of_fame||[]
+  if(!hall.length || !hall[0].loss_breakdown){
+    if(title) title.textContent="нет данных — запустите GA"
+    grid.innerHTML='<div class="mono" style="color:var(--muted)">данные появятся после первого поколения</div>'
+    if(note) note.textContent=""
+    return
+  }
+  const best = hall[0], bd = best.loss_breakdown||{}
+  if(title) title.textContent=`#0 ${best.island} · F=${fmtFit(best.fitness)} · n=${best.n_total!=null?Number(best.n_total).toExponential(2):"—"}`
+  const keys=["n","pos","well","lag","distortion","control","freq","robust"]
+  const labels={n:"n",pos:"pos",well:"well",lag:"lag",distortion:"dist",control:"ctrl",freq:"freq",robust:"rob"}
+  const descs={n:"фононы",pos:"поз",well:"яма",lag:"отстав",distortion:"DAC",control:"θ",freq:"fmin",robust:"уст"}
+  grid.innerHTML = keys.map(k=>{
+    let v = bd[k]
+    if(v==null || !isFinite(v)) v=0
+    let col=LOSS_COLORS[k]||"#8aa0c8"
+    let pct = bd.sum ? (v/bd.sum*100) : 0
+    let bar = v>1e-3 ? `<div style="height:6px;border-radius:99px;background:${col};width:${Math.min(100, pct)}%;margin-top:4px"></div>` : `<div style="height:6px"></div>`
+    return `<div style="background:rgba(255,255,255,0.04);border:1px solid ${col}44;border-radius:8px;padding:8px;text-align:center">
+      <div style="font-size:10px;color:var(--muted)">${labels[k]} <small style="opacity:0.7">${descs[k]}</small></div>
+      <div style="font-size:15px;font-weight:800;color:${col}">${v.toFixed(3)}</div>
+      <div style="font-size:10px;color:var(--muted)">${pct.toFixed(0)}%</div>
+      ${bar}
+    </div>`
+  }).join('')
+  if(note){
+    let w = state.loss_weights||{}
+    note.textContent=`веса w_n=${w.n??1} w_pos=${w.pos??1} w_well=${w.well??1} w_lag=${w.lag??0} · сумма ${bd.sum!=null?bd.sum.toFixed(3):"—"} vs fitness ${fmtFit(best.fitness)} · чем ближе к 0, тем лучше`
+  }
+}
+const LOSS_KEYS=["n","pos","well","lag","distortion","control","freq","robust"]
 function drawLossStack(state){
-  const c=document.getElementById('cLossStack'); if(!c) return
-  const ctx=c.getContext('2d'), W=c.width, H=c.height
+  const c=document.getElementById('cLossStack'), tip=document.getElementById('lossStackTooltip')
+  if(!c) return
+  const rect=c.getBoundingClientRect()
+  const dpr=Math.min(window.devicePixelRatio||1,2)
+  const cssW=Math.max(600,Math.round(rect.width||1200)), cssH=Math.max(300,Math.round(rect.height||520))
+  const W=Math.round(cssW*dpr), H=Math.round(cssH*dpr)
+  if(c.width!==W||c.height!==H){c.width=W;c.height=H}
+  const ctx=c.getContext('2d')
+  ctx.setTransform(dpr,0,0,dpr,0,0)
   const breakdowns = state?.loss_breakdown || state?.hall_of_fame?.map(h=>h.loss_breakdown).filter(Boolean) || []
-  // fallback from hall_of_fame if no explicit loss_breakdown
   let items=[]
   if(breakdowns.length && breakdowns[0].breakdown){
-    items = breakdowns.slice(0,10).map(b=>({island:b.island, fitness:b.fitness, bd:b.breakdown}))
+    items = breakdowns.slice(0,10).map(b=>({island:b.island, fitness:b.fitness, bd:b.breakdown, theta:b.theta}))
   } else if(state?.hall_of_fame){
     items = state.hall_of_fame.slice(0,10).map(h=>{
       const bd = h.loss_breakdown || {}
-      return {island:h.island, fitness:h.fitness, bd:bd}
+      return {island:h.island, fitness:h.fitness, bd:bd, theta:h.theta}
     }).filter(x=>Object.keys(x.bd).length)
   }
-  drawAxes(ctx,W,H,{xlabel:"hall rank", ylabel:"loss вклада"})
+  // best summary
+  try{ updateLossBestSummary(state) }catch(e){}
+  // axes
+  drawAxes(ctx,cssW,cssH,{xlabel:"hall rank (остров · fitness)", ylabel:"loss вклад (сумма = fitness)"})
   if(!items.length){
-    ctx.fillStyle="#8aa0c8"; ctx.font="12px sans-serif"; ctx.textAlign="center"
-    ctx.fillText("ожидание данных — запустите GA", W/2, H/2); ctx.textAlign="start"; return
+    ctx.fillStyle="rgba(138,160,200,0.9)"; ctx.font="600 14px Inter, sans-serif"; ctx.textAlign="center"
+    ctx.fillText("ожидание данных — запустите GA", cssW/2, cssH/2)
+    ctx.font="12px Inter, sans-serif"; ctx.fillStyle="rgba(138,160,200,0.62)"
+    ctx.fillText("появятся после 1-го поколения: stacked-столбцы покажут какой компонент тянет loss вверх", cssW/2, cssH/2+18)
+    ctx.textAlign="start"
+    const leg=document.getElementById('lossStackLegend'); if(leg) leg.innerHTML='<span style="opacity:0.6">нет данных</span>'
+    document.getElementById('lossStackBadge') && (document.getElementById('lossStackBadge').textContent="—")
+    window._lossStackItems=null
+    return
   }
-  const keys=["n","pos","well","lag","distortion","control","freq","robust"]
-  let maxSum = Math.max(...items.map(it=> Object.values(it.bd).reduce((a,b)=>a+(typeof b==='number'?b:0),0) || it.fitness || 0), 0.5)
+  const keys=LOSS_KEYS
+  let maxSum = Math.max(...items.map(it=> Object.values(it.bd).reduce((a,b)=>a+(typeof b==='number'?b:0),0) || it.fitness || 0), 0.6)
+  // add headroom 12%
+  maxSum *= 1.12
   if(maxSum<=0) maxSum=1
-  const left=46, right=W-16, top=16, bot=H-28
-  const bw=(right-left)/items.length
-  const barW=Math.max(8, bw-14)
-  // grid
-  ctx.strokeStyle="rgba(30,46,78,0.6)"; ctx.setLineDash([2,4])
-  for(let i=0;i<=4;i++){ let y=top + i*(bot-top)/4; ctx.beginPath(); ctx.moveTo(left,y); ctx.lineTo(right,y); ctx.stroke() }
+  const left=64, right=cssW-18, top=22, bot=cssH-42
+  const plotW=right-left, plotH=bot-top
+  const bw=plotW/items.length
+  const barW=Math.max(18, Math.min(64, bw-18))
+  // y grid + labels (5 ticks)
+  ctx.strokeStyle="rgba(30,46,78,0.55)"; ctx.setLineDash([3,5]); ctx.lineWidth=1
+  for(let i=0;i<=5;i++){
+    let y=top + (i/5)*plotH
+    ctx.beginPath(); ctx.moveTo(left,y); ctx.lineTo(right,y); ctx.stroke()
+    let v=maxSum*(1-i/5)
+    ctx.fillStyle="rgba(138,160,200,0.9)"; ctx.font="11px ui-monospace, monospace"; ctx.textAlign="right"
+    ctx.fillText(v.toFixed(2), left-8, y+3)
+  }
   ctx.setLineDash([])
-  items.forEach((it, idx)=>{
-    const bd=it.bd || {}
-    const fitness=it.fitness
+  // x grid light
+  ctx.strokeStyle="rgba(30,46,78,0.22)"
+  for(let i=0;i<items.length;i++){
+    let x=left + i*bw + bw/2
+    ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, bot); ctx.stroke()
+  }
+  // bars
+  window._lossStackItems = items.map((it, idx)=>{
+    const bd=it.bd||{}
     let x = left + idx*bw + (bw-barW)/2
     let y0 = bot
+    let segs=[]
     let sum=0
     for(let k of keys){
       let v=bd[k]
       if(v==null || !isFinite(v) || v<=1e-4) continue
-      let h = (v/maxSum)*(bot-top)
+      let h = (v/maxSum)*plotH
       let y = y0 - h
-      ctx.fillStyle=LOSS_COLORS[k] || "#8aa0c8"
+      ctx.fillStyle=LOSS_COLORS[k]||"#8aa0c8"
+      // rounded top for last segment? just rect
       ctx.fillRect(x, y, barW, h)
-      ctx.strokeStyle="rgba(0,0,0,0.25)"; ctx.strokeRect(x,y,barW,h)
+      ctx.strokeStyle="rgba(0,0,0,0.35)"; ctx.lineWidth=1; ctx.strokeRect(x,y,barW,h)
+      // value inside if big enough
+      if(h>16){
+        ctx.fillStyle="rgba(10,18,36,0.92)"; ctx.font="700 10px ui-monospace, monospace"; ctx.textAlign="center"
+        ctx.fillText(v.toFixed(2), x+barW/2, y+10)
+      }
+      segs.push({k,v,y,h})
       y0 = y
       sum+=v
     }
-    // outline for fitness line
-    let fH = (Math.min(fitness, maxSum)/maxSum)*(bot-top)
-    ctx.fillStyle="rgba(255,255,255,0.9)"; ctx.fillRect(x+barW/2-1, bot-fH, 2, 2)
-    // label
-    ctx.fillStyle="#8aa0c8"; ctx.font="9px monospace"; ctx.textAlign="center"
-    ctx.fillText(`#${idx} ${it.island||""}`, x+barW/2, bot+12)
-    ctx.fillText(fmtFit(fitness), x+barW/2, top-4)
+    // fitness dot (white) at total height
+    let fH = (Math.min(it.fitness, maxSum)/maxSum)*plotH
+    let fy = bot - fH
+    ctx.fillStyle="rgba(255,255,255,0.95)"; ctx.beginPath(); ctx.arc(x+barW/2, fy, 3.2,0,Math.PI*2); ctx.fill()
+    ctx.strokeStyle="rgba(10,18,36,0.9)"; ctx.lineWidth=1.2; ctx.stroke()
+    // island label below
+    ctx.fillStyle=islandColor(String(it.island)[0]?.toUpperCase()||"S")
+    ctx.fillRect(x, bot+2, barW, 3)
+    ctx.fillStyle="#e6efff"; ctx.font="600 11px ui-monospace, monospace"; ctx.textAlign="center"
+    ctx.fillText(`#${idx}`, x+barW/2, bot+14)
+    ctx.fillStyle="#8aa0c8"; ctx.font="10px sans-serif"
+    ctx.fillText(String(it.island||""), x+barW/2, bot+26)
+    ctx.fillStyle="#e6efff"; ctx.font="10px ui-monospace, monospace"
+    ctx.fillText(fmtFit(it.fitness), x+barW/2, top-6)
     ctx.textAlign="start"
+    return {x, barW, y0, fy, it, segs, sum}
   })
-  // y labels
-  ctx.fillStyle="#8aa0c8"; ctx.font="10px monospace"; ctx.textAlign="right"
-  for(let i=0;i<=4;i++){ let v=maxSum*(1-i/4); let y=top + i*(bot-top)/4; ctx.fillText(v.toFixed(2), left-6, y+3) }
-  ctx.textAlign="start"
+  // legend
   const leg=document.getElementById('lossStackLegend')
-  if(leg) leg.innerHTML=keys.filter(k=>items.some(it=>it.bd[k]>1e-3)).map(k=>`<span><i style="width:12px;height:12px;background:${LOSS_COLORS[k]};display:inline-block;border-radius:2px"></i>${LOSS_LABELS[k]}</span>`).join('')
+  if(leg) leg.innerHTML=keys.filter(k=>items.some(it=> (it.bd[k]||0)>1e-3)).map(k=>`<span style="display:inline-flex;align-items:center;gap:6px"><i style="width:14px;height:14px;background:${LOSS_COLORS[k]};display:inline-block;border-radius:3px;border:1px solid #0003"></i><b>${LOSS_LABELS[k]}</b></span>`).join('') + ` <span style="opacity:0.6">· высота = вклад · белый кружок = fitness</span>`
+  const badge=document.getElementById('lossStackBadge'); if(badge) badge.textContent=`топ-${items.length} · max ${maxSum.toFixed(2)}`
   const stats=document.getElementById('lossStackStats')
-  if(stats && items[0]) {
+  if(stats && items[0]){
     const bd=items[0].bd
-    stats.textContent = `лучший #0 ${items[0].island} F=${fmtFit(items[0].fitness)} → ` + keys.filter(k=>bd[k]>1e-4).map(k=>`${k}:${bd[k].toFixed(3)}`).join(" · ")
+    let top = keys.filter(k=> (bd[k]||0)>0.02).map(k=>`${k}:${bd[k].toFixed(2)}`).join(" · ")
+    if(!top) top = keys.filter(k=> (bd[k]||0)>1e-3).map(k=>`${k}:${bd[k].toFixed(3)}`).join(" · ")
+    stats.innerHTML = `лучший <b style="color:${islandColor(String(items[0].island)[0])}">#0 ${items[0].island}</b> F=${fmtFit(items[0].fitness)} → ` + top + ` <span style="opacity:0.6">· сумма ${Object.values(bd).reduce((a,b)=>a+(b||0),0).toFixed(2)}</span>`
   }
-  // weights
   const wl=document.getElementById('lossWeightsLabel')
   if(wl && state?.loss_weights) wl.textContent = `веса: n=${state.loss_weights.n} pos=${state.loss_weights.pos} well=${state.loss_weights.well} lag=${state.loss_weights.lag}`
+  // tooltip wiring (once)
+  if(!c._lossStackWired){
+    c._lossStackWired=true
+    c.addEventListener('mousemove', (e)=>{
+      const tip=document.getElementById('lossStackTooltip')
+      if(!tip || !window._lossStackItems) return
+      const rect=c.getBoundingClientRect()
+      const x=(e.clientX-rect.left)
+      const cssW2=rect.width
+      const bw2= (cssW2-82)/window._lossStackItems.length
+      let idx=Math.floor((x-64)/bw2)
+      if(idx<0||idx>=window._lossStackItems.length){ tip.style.display='none'; return }
+      const it=window._lossStackItems[idx].it, bd=it.bd
+      let html=`<div style="font-weight:700;color:#e6efff">#${idx} ${it.island} · F=${fmtFit(it.fitness)}</div>`
+      html+=`<div style="margin-top:4px;display:grid;gap:2px">`
+      let sum=0
+      for(let k of LOSS_KEYS){
+        let v=bd[k]||0; if(v<1e-4) continue
+        sum+=v
+        html+=`<div style="display:flex;justify-content:space-between;gap:12px"><span style="display:inline-flex;align-items:center;gap:6px"><i style="width:10px;height:10px;background:${LOSS_COLORS[k]};border-radius:2px"></i>${k}</span><span style="font-weight:700;color:${LOSS_COLORS[k]}">${v.toFixed(3)}</span></div>`
+      }
+      html+=`</div><div style="margin-top:6px;border-top:1px solid #23324d;padding-top:4px;display:flex;justify-content:space-between"><span>сумма</span><b>${sum.toFixed(3)}</b></div>`
+      if(it.theta) html+=`<div style="margin-top:4px;opacity:0.7;font-size:10px">θ: [${it.theta.slice(0,4).map(v=>Number(v).toFixed(2)).join(", ")}…]</div>`
+      tip.innerHTML=html
+      tip.style.left=Math.min(cssW2-290, x+12)+"px"
+      tip.style.top=(e.clientY-rect.top-10)+"px"
+      tip.style.display='block'
+    })
+    c.addEventListener('mouseleave', ()=>{ const t=document.getElementById('lossStackTooltip'); if(t) t.style.display='none' })
+  }
 }
 function drawLossHistory(state){
-  const c=document.getElementById('cLossHistory'); if(!c) return
-  const ctx=c.getContext('2d'), W=c.width, H=c.height
-  drawAxes(ctx,W,H,{xlabel:"поколение", ylabel:"loss"})
+  const c=document.getElementById('cLossHistory'), tip=document.getElementById('lossHistoryTooltip')
+  if(!c) return
+  const rect=c.getBoundingClientRect()
+  const dpr=Math.min(window.devicePixelRatio||1,2)
+  const cssW=Math.max(700,Math.round(rect.width||1200)), cssH=Math.max(320,Math.round(rect.height||520))
+  const W=Math.round(cssW*dpr), H=Math.round(cssH*dpr)
+  if(c.width!==W||c.height!==H){c.width=W;c.height=H}
+  const ctx=c.getContext('2d')
+  ctx.setTransform(dpr,0,0,dpr,0,0)
+  drawAxes(ctx,cssW,cssH,{xlabel:"поколение · hall[0]", ylabel:"loss вклад"})
   const hist = state?.loss_history || []
   if(!hist.length){
-    ctx.fillStyle="#8aa0c8"; ctx.font="12px sans-serif"; ctx.textAlign="center"
-    ctx.fillText("история появится после 2–3 поколений", W/2, H/2); ctx.textAlign="start"; return
+    ctx.fillStyle="rgba(138,160,200,0.9)"; ctx.font="600 14px Inter, sans-serif"; ctx.textAlign="center"
+    ctx.fillText("история появится после 2–3 поколений", cssW/2, cssH/2)
+    ctx.font="12px Inter, sans-serif"; ctx.fillStyle="rgba(138,160,200,0.6)"
+    ctx.fillText("каждая точка = лучший hall[0] поколения, stacked-цвета как в формуле", cssW/2, cssH/2+18)
+    ctx.textAlign="start"
+    window._lossHist=null
+    document.getElementById('lossHistoryBadge') && (document.getElementById('lossHistoryBadge').textContent="—")
+    return
   }
-  const keys=["n","pos","well","lag","distortion","control","freq","robust"]
+  const keys=LOSS_KEYS
   let maxY=0
   for(let h of hist){
     let sum = keys.reduce((a,k)=>a+(h.breakdown[k]||0),0)
     maxY=Math.max(maxY, sum, h.fitness||0)
   }
-  maxY=Math.max(maxY*1.1, 0.5)
-  let maxX=Math.max(...hist.map(h=>h.gen), state?.total_generations||20, 5)
-  // X by index to spread per-island writes inside same gen (otherwise duplicates overplot)
-  const xSteps=hist.map((h,i)=> 46 + (i/Math.max(1,hist.length-1))*(W-62))
-  function yTo(v){ return H-28 - (v/maxY)*(H-44) }
-  // grid horizontal
-  ctx.strokeStyle="rgba(30,46,78,0.5)"; ctx.setLineDash([2,4])
-  for(let i=0;i<=3;i++){ let y=16+i*(H-44)/3; ctx.beginPath(); ctx.moveTo(46,y); ctx.lineTo(W-16,y); ctx.stroke() }
-  // vertical gen ticks
+  maxY=Math.max(maxY*1.12, 0.6)
+  let maxX=Math.max(...hist.map(h=>h.gen), state?.total_generations||20, 6)
+  const left=64, right=cssW-18, top=22, bot=cssH-42
+  const plotW=right-left, plotH=bot-top
+  // X by index to spread per-island writes inside same gen (otherwise duplicates overplot) — but keep gen scale
+  // Build x as linear by generation index, but if multiple entries same gen, spread slightly
+  const xSteps=hist.map((h,i)=>{
+    // gen + i*0.02 to separate same-gen points
+    let genF = h.gen + (i%3)*0.18
+    return left + (genF/maxX)*plotW
+  })
+  function yTo(v){ return bot - (v/maxY)*plotH }
+  // grid
+  ctx.strokeStyle="rgba(30,46,78,0.45)"; ctx.setLineDash([3,5]); ctx.lineWidth=1
+  for(let i=0;i<=5;i++){
+    let y=top + (i/5)*plotH
+    ctx.beginPath(); ctx.moveTo(left,y); ctx.lineTo(right,y); ctx.stroke()
+    ctx.fillStyle="rgba(138,160,200,0.85)"; ctx.font="11px ui-monospace, monospace"; ctx.textAlign="right"
+    ctx.fillText((maxY*(1-i/5)).toFixed(2), left-8, y+3)
+  }
   for(let g=0; g<=maxX; g++){
     if(g%Math.max(1, Math.ceil(maxX/8))!==0 && g!==maxX) continue
-    // find first index with gen >= g
-    let idx=hist.findIndex(h=>h.gen>=g)
-    if(idx<0) idx=hist.length-1
-    let x=xSteps[idx] ?? 46
-    ctx.strokeStyle="rgba(30,46,78,0.18)"
-    ctx.beginPath(); ctx.moveTo(x,16); ctx.lineTo(x,H-28); ctx.stroke()
-    ctx.fillStyle="#8aa0c8"; ctx.font="9px monospace"; ctx.textAlign="center"
-    ctx.fillText(String(g), x, H-6)
+    let x=left + (g/maxX)*plotW
+    ctx.strokeStyle="rgba(30,46,78,0.28)"; ctx.beginPath(); ctx.moveTo(x,top); ctx.lineTo(x,bot); ctx.stroke()
+    ctx.fillStyle="rgba(138,160,200,0.85)"; ctx.font="11px ui-monospace, monospace"; ctx.textAlign="center"
+    ctx.fillText(String(g), x, bot+14)
   }
   ctx.setLineDash([])
+  // store for tooltip
+  window._lossHist={hist, xSteps, yTo, maxY, maxX, left, top, bot, right, plotW, plotH}
   // stacked area per key
-  // draw stacked areas from bottom up
   let cumulative = hist.map(()=>0)
   for(let k of keys){
     let vals=hist.map(h=>h.breakdown[k]||0)
     if(vals.every(v=>v<1e-4)) continue
     ctx.fillStyle=LOSS_COLORS[k]+"55"
     ctx.strokeStyle=LOSS_COLORS[k]
-    ctx.lineWidth=1.2
+    ctx.lineWidth=2
     ctx.beginPath()
     vals.forEach((v,i)=>{
       let x=xSteps[i], y=yTo(cumulative[i]+v)
@@ -2528,57 +2692,122 @@ function drawLossHistory(state){
     vals.forEach((v,i)=> cumulative[i]+=v)
   }
   // fitness line white
-  ctx.strokeStyle="#ffffff"; ctx.lineWidth=2; ctx.setLineDash([])
+  ctx.strokeStyle="#ffffff"; ctx.lineWidth=2.2; ctx.setLineDash([])
   ctx.beginPath()
   hist.forEach((h,i)=>{
     let x=xSteps[i], y=yTo(Math.min(h.fitness||cumulative[i], maxY))
     if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y)
   })
   ctx.stroke()
-  // dots
+  // dots white
   hist.forEach((h,i)=>{
     let x=xSteps[i], y=yTo(h.fitness)
-    ctx.fillStyle="#fff"; ctx.beginPath(); ctx.arc(x,y,2.5,0,Math.PI*2); ctx.fill()
-    ctx.fillStyle="#0f141c"; ctx.beginPath(); ctx.arc(x,y,1,0,Math.PI*2); ctx.fill()
+    ctx.fillStyle="#fff"; ctx.beginPath(); ctx.arc(x,y,3.2,0,Math.PI*2); ctx.fill()
+    ctx.fillStyle="#0f141c"; ctx.beginPath(); ctx.arc(x,y,1.4,0,Math.PI*2); ctx.fill()
   })
-  ctx.fillStyle="#8aa0c8"; ctx.font="10px monospace"
-  ctx.fillText("0", 6, H-16)
-  ctx.fillText(maxY.toFixed(2), W-46, 14)
+  // up/down arrows for last
+  if(hist.length>=2){
+    let last=hist[hist.length-1], prev=hist[hist.length-2]
+    let d = (last.fitness||0)-(prev.fitness||0)
+    ctx.fillStyle= d<0 ? "#7af0a0" : d>0 ? "#ff7a7a" : "#8aa0c8"
+    ctx.font="600 12px Inter, sans-serif"; ctx.textAlign="left"
+    ctx.fillText(d<0 ? "↘ улучшение "+d.toFixed(3) : d>0 ? "↗ ухудшение +"+d.toFixed(3) : "→ без изм.", left+6, top+14)
+  }
   const leg=document.getElementById('lossHistoryLegend')
-  if(leg) leg.innerHTML=keys.filter(k=>hist.some(h=>(h.breakdown[k]||0)>1e-3)).map(k=>`<span><i style="width:12px;height:3px;background:${LOSS_COLORS[k]};display:inline-block"></i>${LOSS_LABELS[k]}</span>`).join('') + ` <span><i style="width:12px;height:3px;background:#fff;display:inline-block"></i> fitness</span>`
+  if(leg) leg.innerHTML=keys.filter(k=>hist.some(h=>(h.breakdown[k]||0)>1e-3)).map(k=>`<span style="display:inline-flex;align-items:center;gap:6px"><i style="width:14px;height:3px;background:${LOSS_COLORS[k]};display:inline-block;border-radius:99px"></i>${LOSS_LABELS[k]}</span>`).join('') + ` <span style="display:inline-flex;align-items:center;gap:6px"><i style="width:14px;height:3px;background:#fff;display:inline-block;border-radius:99px"></i> fitness</span>`
   const stats=document.getElementById('lossHistoryStats')
-  if(stats && hist.length) {
+  if(stats && hist.length){
     const last=hist[hist.length-1].breakdown
-    stats.textContent=`gen ${hist[hist.length-1].gen}: `+keys.filter(k=>last[k]>1e-3).map(k=>`${k}=${last[k].toFixed(3)}`).join(" · ")
+    let top = keys.filter(k=> (last[k]||0)>0.02).map(k=>`${k}=${last[k].toFixed(2)}`).join(" · ")
+    if(!top) top = keys.filter(k=> (last[k]||0)>1e-3).map(k=>`${k}=${last[k].toFixed(3)}`).join(" · ")
+    stats.innerHTML=`gen ${hist[hist.length-1].gen}: `+ top + ` <span style="opacity:0.6">· F=${fmtFit(hist[hist.length-1].fitness)}</span>`
+  }
+  const badge=document.getElementById('lossHistoryBadge'); if(badge) badge.textContent=`${hist.length} точек · ${maxX} gen`
+  // tooltip wiring once
+  if(!c._lossHistWired){
+    c._lossHistWired=true
+    c.addEventListener('mousemove', (e)=>{
+      const tip2=document.getElementById('lossHistoryTooltip')
+      const h = window._lossHist
+      if(!tip2 || !h) return
+      const rect2=c.getBoundingClientRect()
+      const mx=e.clientX-rect2.left
+      // find nearest hist index by x
+      let best=0, bestDist=1e9
+      for(let i=0;i<h.xSteps.length;i++){
+        let d=Math.abs(h.xSteps[i]-mx)
+        if(d<bestDist){ bestDist=d; best=i }
+      }
+      if(bestDist>28){ tip2.style.display='none'; return }
+      const pt=h.hist[best], bd=pt.breakdown
+      let html=`<div style="font-weight:700;color:#e6efff">gen ${pt.gen} · F=${fmtFit(pt.fitness)}</div>`
+      html+=`<div style="margin-top:4px;display:grid;gap:2px">`
+      let sum=0
+      for(let k of LOSS_KEYS){ let v=bd[k]||0; if(v<1e-4) continue; sum+=v; html+=`<div style="display:flex;justify-content:space-between;gap:12px"><span style="display:inline-flex;align-items:center;gap:6px"><i style="width:10px;height:10px;background:${LOSS_COLORS[k]};border-radius:2px"></i>${k}</span><span style="font-weight:700;color:${LOSS_COLORS[k]}">${v.toFixed(3)}</span></div>`}
+      html+=`</div><div style="margin-top:6px;border-top:1px solid #23324d;padding-top:4px;display:flex;justify-content:space-between"><span>сумма</span><b>${sum.toFixed(3)}</b></div>`
+      tip2.innerHTML=html
+      tip2.style.left=Math.min(rect2.width-290, mx+14)+"px"
+      tip2.style.top=(e.clientY-rect2.top-10)+"px"
+      tip2.style.display='block'
+      // vertical guide
+      h._hoverX = h.xSteps[best]
+    })
+    c.addEventListener('mouseleave', ()=>{ const t=document.getElementById('lossHistoryTooltip'); if(t) t.style.display='none'; if(window._lossHist) window._lossHist._hoverX=null })
+    // draw hover line in animation frame
+    let raf=null
+    function hoverFrame(){
+      const h=window._lossHist
+      if(h && h._hoverX!=null){
+        const ctx2=c.getContext('2d')
+        // redraw is heavy, just draw line over existing? we will rely on next drawLossHistory call; for now just stroke
+        // simple: draw line
+        // this is called every frame while hovering; we need to restore? easiest: on mousemove we trigger redraw after a delay, but for now just draw line without clear
+      }
+      raf=requestAnimationFrame(hoverFrame)
+    }
+    // hoverFrame() // not needed now
   }
 }
 function drawLossTable(state){
   const tbl=document.getElementById('lossTable'); if(!tbl) return
   const breakdowns = state?.loss_breakdown || []
+  let rows=[]
+  let keys=LOSS_KEYS
   if(!breakdowns.length){
     if(state?.hall_of_fame){
-      // build from hall if explicit not present
-      const rows = state.hall_of_fame.slice(0,10).map((h,i)=>{
+      rows = state.hall_of_fame.slice(0,10).map((h,i)=>{
         const bd=h.loss_breakdown||{}
-        const keys=["n","pos","well","lag","distortion","control","freq","robust"]
-        let html=`<tr><td>${i}</td><td><span class="status-dot" style="background:${islandColor(String(h.island)[0].toUpperCase())}"></span> ${h.island}</td><td class="mono">${fmtFit(h.fitness)}</td>`
-        for(let k of keys){ html+=`<td class="mono" style="color:${LOSS_COLORS[k]}">${bd[k]!=null?bd[k].toFixed(3):"—"}</td>` }
-        html+=`<td class="mono">${bd.sum!=null?bd.sum.toFixed(3):"—"}</td></tr>`
-        return html
-      }).join('')
-      tbl.innerHTML=`<tr><th>#</th><th>остров</th><th>F</th><th>n</th><th>pos</th><th>well</th><th>lag</th><th>dist</th><th>ctrl</th><th>freq</th><th>rob</th><th>sum</th></tr>`+rows
-      return
+        return {idx:i, island:h.island, fitness:h.fitness, bd, theta:h.theta}
+      })
     }
-    tbl.innerHTML=`<tr><td style="color:var(--muted)">нет данных</td></tr>`; return
+    if(!rows.length){ tbl.innerHTML=`<tr><td style="color:var(--muted)">нет данных — запустите GA</td></tr>`; return }
+  } else {
+    rows = breakdowns.slice(0,10).map((b,idx)=>({idx, island:b.island, fitness:b.fitness, bd:b.breakdown||{}, theta:b.theta}))
   }
-  const keys=["n","pos","well","lag","distortion","control","freq","robust"]
+  // compute per-key max for color intensity
+  let maxPerKey={}
+  for(let k of keys){
+    maxPerKey[k]=Math.max(...rows.map(r=> r.bd[k]||0), 0.01)
+  }
   let html=`<tr><th>#</th><th>остров</th><th>F</th>`+keys.map(k=>`<th style="color:${LOSS_COLORS[k]}">${k}</th>`).join('')+`<th>sum</th><th>θ[0..3]</th></tr>`
-  breakdowns.slice(0,10).forEach((b,idx)=>{
-    const bd=b.breakdown||{}
-    const th=b.theta? b.theta.slice(0,4).map(v=>v.toFixed(2)).join(", ") : "—"
-    html+=`<tr><td>${idx}</td><td><span class="status-dot" style="background:${islandColor(String(b.island)[0].toUpperCase())}"></span> ${b.island}</td><td class="mono" style="color:#fff">${fmtFit(b.fitness)}</td>`
-    for(let k of keys){ html+=`<td class="mono" style="color:${LOSS_COLORS[k]}">${bd[k]!=null?bd[k].toFixed(3):"—"}</td>` }
-    html+=`<td class="mono">${bd.sum!=null?bd.sum.toFixed(3):"—"}</td><td class="mono" style="font-size:10px">${th}</td></tr>`
+  rows.forEach((r)=>{
+    const bd=r.bd
+    let sum = keys.reduce((a,k)=>a+(bd[k]||0),0)
+    let isBest = r.idx===0
+    html+=`<tr style="${isBest?'background:rgba(90,200,255,0.08);outline:1px solid rgba(90,200,255,0.25)':''}"><td>${r.idx}</td><td><span class="status-dot" style="background:${islandColor(String(r.island)[0]?.toUpperCase()||'S')}"></span> ${r.island}</td><td class="mono" style="color:#fff;font-weight:800">${fmtFit(r.fitness)}</td>`
+    for(let k of keys){
+      let v=bd[k]||0
+      let max=maxPerKey[k]
+      let intensity = max>0 ? Math.min(1, v/max) : 0
+      let bg = v>1e-4 ? `background:${LOSS_COLORS[k]}${Math.round(18+intensity*38).toString(16).padStart(2,'0')}` : ""
+      let txt = v>1e-4 ? v.toFixed(3) : "—"
+      let title = `${k}: ${v.toFixed(4)} ${intensity>0.5?'— доминирует':''}`
+      html+=`<td class="mono" title="${title}" style="color:${v>1e-3?LOSS_COLORS[k]:'var(--muted)'};${bg};font-weight:${v> max*0.7?'700':'400'}">${txt}</td>`
+    }
+    let sumCol = Math.abs(sum - r.fitness) < 0.02 ? "#7af0a0" : sum>r.fitness ? "#ffbe55" : "#8aa0c8"
+    html+=`<td class="mono" style="color:${sumCol};font-weight:700">${sum.toFixed(3)}</td>`
+    let th=r.theta? r.theta.slice(0,4).map(v=>Number(v).toFixed(2)).join(", ") : "—"
+    html+=`<td class="mono" style="font-size:10px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.theta?r.theta.join(", "):""}">${th}</td></tr>`
   })
   tbl.innerHTML=html
 }
@@ -2586,11 +2815,12 @@ function drawMigration(state){
   const c=document.getElementById('cMigration'); if(!c) return
   const ctx=c.getContext('2d'), W=c.width, H=c.height
   const dpr = Math.min(window.devicePixelRatio||1,2)
-  // use css size for drawing; we already have W/H as canvas pixel size (900*?); just draw
   ctx.clearRect(0,0,W,H)
   ctx.fillStyle="#0a1224"; ctx.fillRect(0,0,W,H)
   ctx.strokeStyle="#243556"; ctx.strokeRect(0.5,0.5,W-1,H-1)
-  const islands = state?.islands || []
+  // live source: prefer migration_live (pollLive 500мс) over state
+  const ml = state?.migration_live
+  const islands = ml?.islands || state?.islands || []
   if(!islands.length){
     ctx.fillStyle="#8aa0c8"; ctx.font="12px sans-serif"; ctx.textAlign="center"
     ctx.fillText("ожидание островов…", W/2, H/2); ctx.textAlign="start"; return
@@ -2598,16 +2828,14 @@ function drawMigration(state){
   const isls = islands.slice().sort((a,b)=>a.id-b.id)
   const n=isls.length
   const cx=W/2, cy=H/2-10, R=Math.min(W,H)*0.34
-  // precompute positions
   const pos={}
   isls.forEach((isl,i)=>{
     const ang = -Math.PI/2 + (i/n)*2*Math.PI
     const x=cx + R*Math.cos(ang), y=cy + R*Math.sin(ang)
     pos[isl.id]={x,y,ang, isl}
   })
-  // draw isolation halos (если остров изолирован)
-  const curGen=state.global_generation||0
-  const total=state.total_generations||20
+  const curGen= ml?.global_generation ?? state.global_generation ?? 0
+  const total= ml?.total_generations ?? state.total_generations ?? 20
   isls.forEach(isl=>{
     const p=pos[isl.id]
     const isolated = isl.is_isolated || (isl.isolated_until!=null && curGen < isl.isolated_until)
@@ -2632,7 +2860,6 @@ function drawMigration(state){
       ctx.setLineDash([])
     }
   })
-  // draw ring connections (background)
   ctx.strokeStyle="rgba(36,50,77,0.32)"; ctx.lineWidth=1; ctx.setLineDash([4,6])
   for(let i=0;i<n;i++){
     const a=isls[i], b=isls[(i+1)%n]
@@ -2640,8 +2867,7 @@ function drawMigration(state){
     ctx.beginPath(); ctx.moveTo(pa.x,pa.y); ctx.lineTo(pb.x,pb.y); ctx.stroke()
   }
   ctx.setLineDash([])
-  // draw migration arrows for recent history (last 3 events)
-  const hist=(state.migration_history||[]).slice(-4)
+  const hist=(ml?.history || state.migration_history || []).slice(-4)
   const animate=document.getElementById('chkMigrationAnimate')?.checked
   const t = Date.now()/800 % 1
   hist.forEach(entry=>{
@@ -2696,19 +2922,33 @@ function drawMigration(state){
     ctx.closePath(); ctx.fill()
     ctx.fillStyle="rgba(0,0,0,0.18)"; ctx.beginPath(); ctx.arc(ex,ey,2,0,Math.PI*2); ctx.fill()
   }
-  // draw island nodes on top
+  // highlight live current island (from pollLive)
+  let liveCur = state.current_island || (typeof lastLive!=='undefined' && lastLive?.current_island) || null
   isls.forEach(isl=>{
     const p=pos[isl.id]
     const col=islandColor(String(isl.strategy||isl.id)[0].toUpperCase())
+    const isCurrent = liveCur && String(isl.strategy)===String(liveCur)
     const isolated = isl.is_isolated || (isl.isolated_until!=null && curGen < isl.isolated_until)
     // shadow
     ctx.fillStyle="rgba(0,0,0,0.28)"; ctx.beginPath(); ctx.arc(p.x+2,p.y+2,28,0,Math.PI*2); ctx.fill()
     // outer ring
     ctx.fillStyle=isolated? "rgba(255,107,122,0.18)" : col+"22"
     ctx.beginPath(); ctx.arc(p.x,p.y,30,0,Math.PI*2); ctx.fill()
+    if(isCurrent){
+      // pulsing glow for live evaluated island
+      ctx.fillStyle=col+"33"; ctx.beginPath(); ctx.arc(p.x,p.y,38,0,Math.PI*2); ctx.fill()
+      ctx.strokeStyle=col; ctx.lineWidth=2; ctx.setLineDash([]); ctx.globalAlpha=0.6
+      ctx.beginPath(); ctx.arc(p.x,p.y,32,0,Math.PI*2); ctx.stroke()
+      ctx.globalAlpha=1
+    }
     // inner circle
     ctx.fillStyle=col; ctx.beginPath(); ctx.arc(p.x,p.y,26,0,Math.PI*2); ctx.fill()
-    ctx.strokeStyle= isolated? "#ff6b7a" : "rgba(255,255,255,0.88)"; ctx.lineWidth=2; ctx.stroke()
+    ctx.strokeStyle= isCurrent ? "#ffffff" : (isolated? "#ff6b7a" : "rgba(255,255,255,0.88)"); ctx.lineWidth= isCurrent ? 3 : 2; ctx.stroke()
+    if(isCurrent){
+      ctx.fillStyle="#fff"; ctx.font="700 10px Inter, sans-serif"; ctx.textAlign="center"
+      ctx.fillText("● LIVE", p.x, p.y+20)
+      ctx.textAlign="start"
+    }
     // text
     ctx.fillStyle="#0a1224"; ctx.font="700 13px Inter, sans-serif"; ctx.textAlign="center"; ctx.textBaseline="middle"
     ctx.fillText(String(isl.strategy||isl.id), p.x, p.y-2)
@@ -2727,9 +2967,15 @@ function drawMigration(state){
       ctx.fillStyle="#e6efff"; ctx.textAlign="center"; ctx.fillText(txt, p.x, by+10); ctx.textAlign="start"
     }
   })
-  // center label
-  ctx.fillStyle="rgba(138,160,200,0.9)"; ctx.font="11px Inter, sans-serif"; ctx.textAlign="center"
-  ctx.fillText(`поколение ${curGen} / ${total}`, cx, cy)
+  if(liveCur){
+    ctx.fillStyle="#7af0a0"; ctx.font="700 11px Inter, sans-serif"; ctx.textAlign="center"
+    ctx.fillText(`LIVE: остров ${liveCur}`, cx, cy-12)
+    ctx.fillStyle="rgba(138,160,200,0.9)"; ctx.font="11px Inter, sans-serif"
+    ctx.fillText(`поколение ${curGen} / ${total}`, cx, cy+4)
+  } else {
+    ctx.fillStyle="rgba(138,160,200,0.9)"; ctx.font="11px Inter, sans-serif"; ctx.textAlign="center"
+    ctx.fillText(`поколение ${curGen} / ${total}`, cx, cy)
+  }
   ctx.fillStyle="rgba(138,160,200,0.62)"; ctx.font="10px monospace"
   const activeCnt = isls.filter(s=>! (s.is_isolated || (s.isolated_until!=null && curGen < s.isolated_until))).length
   ctx.fillText(`${activeCnt} активных · ${n-activeCnt} в карантине`, cx, cy+14)
@@ -2739,17 +2985,16 @@ function drawMigration(state){
   if(leg) leg.innerHTML=`<span><i style="width:14px;height:3px;background:#7af0a0;display:inline-block"></i> активные</span><span><i style="width:14px;height:3px;background:#ff6b7a;display:inline-block"></i> внутри карантина</span><span><i style="width:14px;height:3px;background:#ffd05a;display:inline-block"></i> burst при открытии</span><span><i style="width:14px;height:3px;background:#5affda;display:inline-block"></i> global shuffle</span>`
   const badge=document.getElementById('migrationStatsBadge')
   if(badge){
-    const s=state.migration_stats||state.migration_history?.stats||{}
-    // stats from engine migration.stats
-    const mst = state.migration_stats || (state.migration_history && state.migration_history.stats) || {}
-    // fallback compute
-    const totalH = (state.migration_history||[]).length
-    badge.textContent = `событий: ${totalH} · bursts:${state.migration_history?.filter(x=>x.type==="burst").length||0}`
+    const s= ml?.stats || state.migration_stats||state.migration_history?.stats||{}
+    const totalH = (ml?.history || state.migration_history||[]).length
+    const bursts = (ml?.history || state.migration_history||[]).filter(x=>x.type==="burst").length||0
+    let extra = ml?.next_migration_gen!=null ? ` · след. ${ml.next_migration_gen} (через ${ml.generations_until_next})` : ""
+    badge.textContent = `событий: ${totalH} · bursts:${bursts}${extra}`
   }
   const interv=document.getElementById('migrationInterval')
-  if(interv) interv.textContent = state.config?.ga?.migration_interval || state.config?.migration_interval || 5
+  if(interv) interv.textContent = ml?.interval ?? state.config?.ga?.migration_interval ?? state.config?.migration_interval ?? 5
   const nm=document.getElementById('migrationN')
-  if(nm) nm.textContent = state.config?.ga?.n_migrants || 2
+  if(nm) nm.textContent = ml?.n_migrants ?? state.config?.ga?.n_migrants ?? 2
   const iso=document.getElementById('migrationIsolated')
   if(iso) iso.textContent = isls.filter(s=> s.is_isolated || (s.isolated_until!=null && curGen < s.isolated_until)).map(s=>s.strategy).join(", ") || "—"
 }
@@ -2759,9 +3004,10 @@ function drawMigrationTimeline(state){
   ctx.clearRect(0,0,W,H)
   ctx.fillStyle="#121c2e"; ctx.fillRect(0,0,W,H)
   ctx.strokeStyle="#243556"; ctx.strokeRect(0.5,0.5,W-1,H-1)
-  const total=state?.total_generations||20
-  const cur=state?.global_generation||0
-  const isls=state?.islands||[]
+  const ml = state?.migration_live
+  const total= ml?.total_generations ?? state?.total_generations ?? 20
+  const cur= ml?.global_generation ?? state?.global_generation ?? 0
+  const isls= ml?.islands ?? state?.islands ?? []
   if(!isls.length){
     ctx.fillStyle="#8aa0c8"; ctx.font="11px sans-serif"; ctx.textAlign="center"; ctx.fillText("ожидание", W/2, H/2); ctx.textAlign="start"; return
   }
@@ -2803,8 +3049,7 @@ function drawMigrationTimeline(state){
     // cur gen line
     // migration dots
   })
-  // migration events as dots
-  const hist=state.migration_history||[]
+  const hist= ml?.history ?? state.migration_history ?? []
   hist.forEach(entry=>{
     const g=entry.generation
     if(g==null || g>total) return
@@ -2840,10 +3085,11 @@ function drawMigrationTimeline(state){
 }
 function drawIsolationTable(state){
   const tbl=document.getElementById('isolationTable'); if(!tbl) return
-  const isls=state?.islands||[]
+  const ml = state?.migration_live
+  const isls= ml?.islands ?? state?.islands ?? []
   if(!isls.length){ tbl.innerHTML="<tr><td style='color:var(--muted)'>нет данных</td></tr>"; return }
-  const cur=state.global_generation||0
-  const total=state.total_generations||20
+  const cur= ml?.global_generation ?? state.global_generation ?? 0
+  const total= ml?.total_generations ?? state.total_generations ?? 20
   let html=`<tr><th>остров</th><th>стратегия</th><th>поп</th><th>карантин до</th><th>%</th><th>статус</th><th>границы</th></tr>`
   for(let isl of isls){
     const strat=isl.strategy||isl.id
@@ -2852,13 +3098,13 @@ function drawIsolationTable(state){
     const pct = total? (until/total*100).toFixed(0) : "0"
     const isIso = isl.is_isolated || (until>cur)
     const status = isIso? `<span style="color:#ff6b7a">● изолирован</span>` : until>0&&cur>=until? `<span style="color:#7af0a0">◉ открыт (был до ${until})</span>` : `<span style="color:#8aa0c8">○ активен</span>`
-    const borders = isIso? `закрыты · внутри иногда ${state.config?.ga?.migration_interval? "да":"нет"}` : `открыты`
+    const borders = isIso? `закрыты · внутри иногда ${ (ml?.interval ?? state.config?.ga?.migration_interval) ? "да":"нет"}` : `открыты`
     html+=`<tr><td><span class="status-dot" style="background:${islandColor(String(strat)[0].toUpperCase())}"></span> ${isl.id}</td><td>${strat}</td><td class="mono">${isl.pop_size||""}</td><td class="mono">${until} <span style="opacity:0.6">(${raw})</span></td><td class="mono">${pct}%</td><td>${status}</td><td class="mono">${borders}</td></tr>`
   }
   tbl.innerHTML=html
   const histList=document.getElementById('migrationHistoryList')
   if(histList){
-    const hist=(state.migration_history||[]).slice(-20).reverse()
+    const hist=(ml?.history ?? state.migration_history ?? []).slice(-20).reverse()
     if(!hist.length){ histList.innerHTML=`<div style="color:var(--muted)">пока нет миграций</div>` }
     else {
       histList.innerHTML=hist.map(entry=>{
@@ -2872,9 +3118,10 @@ function drawIsolationTable(state){
   }
   const detail=document.getElementById('migrationStatsDetail')
   if(detail){
-    const s=state.migration_stats || {}
-    const total = (state.migration_history||[]).length
-    detail.textContent=`всего событий: ${total} · bursts:${ (state.migration_history||[]).filter(x=>x.type==="burst").length} · активные:${ (state.migration_history||[]).filter(x=>x.type==="ring_active").length} · карантинные:${ (state.migration_history||[]).filter(x=>x.type==="ring_isolated").length} · shuffles:${ (state.migration_history||[]).filter(x=>x.type==="global_shuffle").length}`
+    const s= ml?.stats ?? state.migration_stats ?? {}
+    const total = (ml?.history ?? state.migration_history ?? []).length
+    let histAll = ml?.history ?? state.migration_history ?? []
+    detail.textContent=`всего событий: ${total} · bursts:${ histAll.filter(x=>x.type==="burst").length} · активные:${ histAll.filter(x=>x.type==="ring_active").length} · карантинные:${ histAll.filter(x=>x.type==="ring_isolated").length} · shuffles:${ histAll.filter(x=>x.type==="global_shuffle").length}`
   }
 }
 function updateKVs(state){
@@ -2894,17 +3141,39 @@ function updateKVs(state){
     if(tText) tText.textContent = prog.toFixed(1)+"% ("+(state.global_generation||0)+"/"+(state.total_generations||"—")+")";
   }
   let cuda=state.cuda||{}
-  let cudaTxt = cuda.has_cupy? `CUDA ${cuda.cupy_version||""}`.trim() : (cuda.has_numba && cuda.numba_cuda_available ? `Numba CUDA` : (state.use_cuda===false? "CPU (выкл.)" : (cuda.xp==="cupy"?"CUDA":"CPU")))
-  if(state.use_cuda===true && cuda.xp==="cupy") cudaTxt += " ✓"
-  else if(state.use_cuda===true && !(cuda.has_cupy)) cudaTxt += " →CPU"
+  // clearer CUDA badge: distinguish real device vs user toggle
+  let hasRealCuda = !!(cuda.has_cupy || cuda.numba_cuda_available)
+  let cudaTxt = ""
+  if(hasRealCuda){
+    if(cuda.has_cupy){
+      if(state.use_cuda===false) cudaTxt = `CuPy ${cuda.cupy_version||""} → CPU (выкл.)`
+      else cudaTxt = `CUDA ✓ CuPy ${cuda.cupy_version||""}`.trim()
+    } else if(cuda.numba_cuda_available){
+      if(state.use_cuda===false) cudaTxt = `Numba CUDA → CPU (выкл.)`
+      else cudaTxt = `CUDA ✓ Numba`
+    }
+    if(cuda.xp) cudaTxt += ` · ${cuda.xp}`
+  } else {
+    if(state.use_cuda===false) cudaTxt = "CPU (выкл.)"
+    else cudaTxt = `CPU · ${cuda.xp||"numpy"}`
+    if(cuda.cupy_error) cudaTxt += " (CuPy ошибка)"
+  }
   document.getElementById('cudaBadge').textContent = cudaTxt.trim()
   let availEl=document.getElementById('cudaAvailBadge')
   if(availEl){
-    if(cuda.has_cupy) availEl.textContent = `есть CuPy ${cuda.cupy_version||""} · ${state.use_cuda!==false? "вкл.":"выкл."} (${cuda.xp||"cupy"})`
-    else if(cuda.has_numba && cuda.numba_cuda_available) availEl.textContent = `Numba CUDA · ${state.use_cuda!==false? "вкл.":"CPU"}`
-    else availEl.textContent = cuda.has_cupy===false && !cuda.has_numba ? "нет CUDA — CPU" : `CPU fallback (${cuda.xp||"numpy"})`
-    availEl.style.background = (cuda.has_cupy||cuda.numba_cuda_available) && state.use_cuda!==false ? "#0d2816" : "#2a1d0a"
-    availEl.style.borderColor = (cuda.has_cupy||cuda.numba_cuda_available) && state.use_cuda!==false ? "#1a5c2a" : "#5c3a1a"
+    if(cuda.has_cupy){
+      let on = state.use_cuda!==false
+      availEl.textContent = `CuPy ${cuda.cupy_version||""} · ${on? "вкл ✓":"выкл →CPU"} (${cuda.xp||"cupy"})`
+    } else if(cuda.numba_cuda_available){
+      let on = state.use_cuda!==false
+      availEl.textContent = `Numba CUDA · ${on? "вкл ✓":"выкл →CPU"} (${cuda.xp||"numpy"})`
+    } else {
+      if(cuda.cupy_error) availEl.textContent = `CuPy ошибка: ${String(cuda.cupy_error).slice(0,60)} → CPU`
+      else if(cuda.has_cupy===false && !cuda.has_numba) availEl.textContent = "нет CUDA — CPU"
+      else availEl.textContent = `CPU (${cuda.xp||"numpy"}) — нет устройства`
+    }
+    availEl.style.background = hasRealCuda && state.use_cuda!==false ? "#0d2816" : "#2a1d0a"
+    availEl.style.borderColor = hasRealCuda && state.use_cuda!==false ? "#1a5c2a" : "#5c3a1a"
   }
   if(state.pop_size && document.activeElement?.id!=="inpPop"){
     let pp=document.getElementById('inpPop'); if(pp && pp.dataset.userEdited!=="1") pp.value=state.pop_size
@@ -3179,6 +3448,11 @@ function drawTrap(state){
     sideCtx.fillStyle="#8aa0c8"; sideCtx.font="9px monospace"
     sideCtx.fillText(xMin.toFixed(0), 42, sH-8); sideCtx.fillText(xMax.toFixed(0), sW-48, sH-8)
     sideCtx.fillText(zMin.toFixed(0), 4, sH-26); sideCtx.fillText(zMax.toFixed(0), 4, 28)
+    // axis labels for side view
+    sideCtx.fillStyle="#8aa0c8"; sideCtx.font="10px Inter, sans-serif"; sideCtx.textAlign="center"
+    sideCtx.fillText("x, мкм (шаттлинг)", sW/2, sH-2)
+    sideCtx.save(); sideCtx.translate(12, sH/2); sideCtx.rotate(-Math.PI/2); sideCtx.fillText("z, мкм (высота)",0,0); sideCtx.restore()
+    sideCtx.textAlign="start"
   }
   let lbl=document.getElementById('trapTimeLabel')
   if(lbl) lbl.textContent=`t=${curTus.toFixed(2)} мкс · ${(prog*100).toFixed(0)}%`
@@ -3554,13 +3828,34 @@ function init(){
       if(btnGA) btnGA.disabled=true
       if(btnSave) btnSave.disabled=true
       if(btnStop){ btnStop.disabled=false; btnStop.style.opacity="1" }
-      let isInit = progInfo.status==="initializing" || (progInfo.total_generations>0 && progInfo.global_generation===0 && (progInfo.percent||0)===0)
-      if(statusText) statusText.textContent = isInit ? `Инициализация · ${progInfo.mode||"GA"}` : `Расчёт · ${progInfo.mode||"GA"}`
+      let isInit = progInfo.status==="initializing" || (progInfo.total_generations>0 && (progInfo.global_generation||0)===0 && (progInfo.percent||0)<2)
+      // show live island & eval if available
+      let curIsl = progInfo.current_island
+      let evalIn = progInfo.evaluated_in_gen, totIn = progInfo.total_in_gen
+      let liveGen = progInfo.live_generation
+      let genProg = progInfo.gen_progress
+      let hasLive = liveGen!=null && progInfo.overall_progress!=null
+      if(hasLive){
+        // during init, liveGen is 0..1 fractional of gen0
+        if(isInit && liveGen<0.05) isInit = true
+        else if(liveGen>0.05) isInit = false
+      }
+      if(statusText) statusText.textContent = isInit ? `Инициализация · ${progInfo.mode||"GA"}${curIsl? " · "+curIsl:""}` : `Расчёт · ${progInfo.mode||"GA"}${curIsl? " · "+curIsl:""}${evalIn!=null&&totIn? " "+evalIn+"/"+totIn:""}`
       if(jobIdEl) jobIdEl.textContent = jobId ? `(${jobId})` : ""
       let pct = progInfo.percent||0
       if(progBar){ progBar.style.width = Math.max(pct, isInit?4:0).toFixed(1)+"%"; progBar.style.opacity = isInit?"0.7":"1" }
       let tot = progInfo.total_generations||"—"
-      if(progText) progText.textContent = `${pct.toFixed(1)}% (${progInfo.global_generation||0}/${tot})`
+      if(hasLive){
+        let genDisp = liveGen.toFixed(2)
+        // also show gen progress intra
+        if(evalIn!=null && totIn){
+          if(progText) progText.textContent = `${pct.toFixed(1)}% (${genDisp}/${tot}) · ${evalIn}/${totIn}${genProg!=null? " ("+(genProg*100).toFixed(0)+"%)":""}`
+        } else {
+          if(progText) progText.textContent = `${pct.toFixed(1)}% (${genDisp}/${tot})`
+        }
+      } else {
+        if(progText) progText.textContent = `${pct.toFixed(1)}% (${progInfo.global_generation||0}/${tot})`
+      }
       if(elapsedEl) elapsedEl.textContent = progInfo.elapsed_s!=null ? fmtSec(progInfo.elapsed_s) : "—"
       if(logWrap) logWrap.style.display="block"
     } else {
@@ -3621,8 +3916,9 @@ function init(){
     const ctx=c.getContext('2d')
     ctx.setTransform(dpr,0,0,dpr,0,0)
 
-    let isNoLive = !live || live.status==="no live yet" || (!live.total_in_gen && !live.evaluated_in_gen && !live.live_generation)
-    let genFloat=live?.live_generation ?? live?.global_generation ?? 0
+    let isNoLive = !live || live.status==="no live yet" || (!live.total_in_gen && !live.evaluated_in_gen && !live.live_generation && live.live_generation!==0)
+    // live_generation is fractional completed (0..total) for overall percent; raw is current gen + frac for display (1.5 = gen1 half)
+    let genFloat=live?.live_generation_raw ?? live?.live_generation ?? live?.global_generation ?? 0
     let evalIn=live?.evaluated_in_gen ?? 0, totIn=live?.total_in_gen ?? 0
     let frac=live?.gen_progress ?? 0
     let totGens = live?.total_generations ?? document.getElementById('inpGens').value ?? 12
@@ -3822,7 +4118,42 @@ function init(){
       let run = localStorage.getItem('dashboard_run') || document.getElementById('inpOut').value || "output/live_run"
       let r = await fetch('/api/live?run='+encodeURIComponent(run)+'&ts='+Date.now(), {cache:"no-store"})
       let j = await r.json()
+      lastLive = j
       drawLive(j)
+      // live migration ring — обновление каждые 500мс без ожидания state.json
+      if(j && j.migration_live){
+        try{
+          // build state-like object for migration draw functions
+          let migState = {
+            global_generation: j.migration_live.global_generation,
+            total_generations: j.migration_live.total_generations,
+            islands: j.migration_live.islands,
+            migration_history: j.migration_live.history,
+            migration_stats: j.migration_live.stats,
+            migration_live: j.migration_live,
+            config: lastState?.config,
+            trap: lastState?.trap,
+            current_island: j.current_island
+          }
+          // if lastState has hall etc, keep for other panels but migration uses live
+          // draw migration visuals live (even if tab not active, for badge updates)
+          drawMigration(migState)
+          drawMigrationTimeline(migState)
+          drawIsolationTable(migState)
+          // also update header badge for next migration
+          try{
+            let nextEl = document.getElementById('migrationStatsBadge')
+            if(nextEl && j.migration_live.next_migration_gen!=null){
+              let cur = j.migration_live.global_generation
+              let nxt = j.migration_live.next_migration_gen
+              let until = j.migration_live.generations_until_next
+              nextEl.textContent = `след. миграция gen ${nxt} (через ${until})`
+              nextEl.style.background = until<=1 ? "#0d2816" : "var(--chip)"
+              nextEl.style.borderColor = until<=1 ? "#1a5c2a" : "var(--border)"
+            }
+          }catch(e){}
+        }catch(e){}
+      }
     }catch(e){}
   }
 
