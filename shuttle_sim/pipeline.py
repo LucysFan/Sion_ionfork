@@ -82,11 +82,21 @@ def _tune_five_wire_for_height(cfg, desired_h_m, max_search=40):
             return cfg
     except Exception:
         pass
-    best = None
-    best_score = float('inf')
-    tops = [90,110,130,140,150,160,170,180,200,220]
-    cents = [110,130,150,170,180,190,200]
-    rfs = [(24,30e6),(48,30e6),(80,20e6),(80,30e6)]
+    # fast prioritized search for 150: small grid around desired, height first
+    # if desired is 150, focus on 130-170 region, not 90 or 240
+    if abs(desired_h_m - 150e-6) < 20e-6:
+        tops = [135,140,145,150,155,160,165,170]
+        cents = [135,140,145,150,155,160,165,170,180]
+        rfs = [(24,30e6),(32,30e6),(48,30e6),(60,30e6)]
+    elif abs(desired_h_m - 90e-6) < 15e-6:
+        tops = [85,90,95,100,110]
+        cents = [100,110,120,130]
+        rfs = [(24,30e6),(18,25e6)]
+    else:
+        tops = [90,110,130,140,150,160,170,180,200]
+        cents = [110,130,145,150,160,170,190]
+        rfs = [(24,30e6),(48,30e6),(80,30e6)]
+    candidates = []
     for top, cent in itertools.product(tops, cents):
         for rf, freq in rfs:
             cand = copy.deepcopy(cfg)
@@ -102,32 +112,33 @@ def _tune_five_wire_for_height(cfg, desired_h_m, max_search=40):
                 h = float(loc.position_m[2])
                 f0 = float(loc.omega_rad_s[0]/2/np.pi)
                 h_err = abs(h - desired_h_m)
-                if h_err > 18e-6:
+                if h_err > 20e-6:
                     continue
                 if not (0.33e6 < f0 < 1.3e6):
                     continue
-                # score: height error (per um) + f0 penalty (prefer 0.5-0.8, avoid <0.4)
-                f0_penalty = abs(f0 - 0.60e6)/0.60e6  # 0 at 0.60MHz
-                score = h_err*1e6/30.0 + f0_penalty*3.0
-                # bonus if f0 in good shuttle range 0.40-0.85
-                if 0.40e6 < f0 < 0.85e6:
-                    score -= 0.7
-                # heavy penalty if f0 <0.40 (weak)
-                if f0 < 0.40e6:
-                    score += 3.0
-                if score < best_score:
-                    best_score = score
-                    best = cand
-                    best['_tune_info'] = dict(top=top, cent=cent, rf=rf, freq=freq, h=h, f0=f0, h_err=h_err, score=score)
+                # height primary weight
+                score = h_err*1e6/3.0 + abs(f0-0.65e6)/0.65e6*1.2
+                if 0.45e6 < f0 < 0.85e6:
+                    score -= 0.2
+                candidates.append((h_err, score, cand, dict(top=top, cent=cent, rf=rf, freq=freq, h=h, f0=f0, h_err=h_err, score=score)))
             except Exception:
                 continue
-            if best_score < 0.3:
+            # early exit if we found tight candidate
+            if candidates and min(c[0] for c in candidates) < 2e-6 and len(candidates) > 5:
                 break
-        if best_score < 0.3:
+        if candidates and min(c[0] for c in candidates) < 2e-6 and len(candidates) > 5:
             break
-    if best is not None:
-        return best
-    return cfg
+    if not candidates:
+        return cfg
+    candidates.sort(key=lambda x: (x[0], x[1]))
+    tight = [c for c in candidates if c[0] < 3e-6]
+    pool = tight if tight else [c for c in candidates if c[0] < 8e-6]
+    if not pool:
+        pool = candidates[:3]
+    pool.sort(key=lambda x: x[1])
+    best = pool[0][2]
+    best['_tune_info'] = pool[0][3]
+    return best
 
 class Runner:
     def __init__(self,config):
