@@ -1132,27 +1132,36 @@ class GAEngine:
             print(f"state write fail {e}")
 
     def _evaluate_exact_hall(self):
-        # exact hall is very expensive (least_squares 321 solves) — skip for small runs or make cheap
-        if self.generations <= 2:
-            return
+        # audit 2026-10-30: validate every hall candidate, mark not_validated if skipped, use full nodes (not 81)
+        # Previously: skip if gens<=2, only 2 candidates, 81 nodes. Now: full validation for correctness (speed secondary).
         if self.global_gen % 5 !=0 and self.global_gen != self.generations:
+            # intermediate generations: mark not yet validated (dashboard/consumers can see)
+            for g in self.hall_of_fame:
+                if 'exact' not in g.metrics and 'exact_validated' not in g.metrics:
+                    g.metrics['exact_validated'] = False
+                    g.metrics['exact_status'] = 'not_validated'
             return
-        # use reduced nodes for speed (81 vs 321) — still validates quality, heavy exact already done in robustness
-        for g in self.hall_of_fame[:2]:
+        # validate all hall members with full fidelity (321 nodes, configured subdivisions)
+        for g in self.hall_of_fame:
             try:
-                orig_nodes = self.runner.cfg.get('validation_nodes')
-                self.runner.cfg['validation_nodes'] = 81
-                exact=evaluate_exact(g, self.runner)
+                baseline='sta'
+                try:
+                    for isl in self.islands:
+                        if isl.strategy == g.island:
+                            baseline = isl.baseline
+                            break
+                except: pass
+                exact=evaluate_exact(g, self.runner, baseline=baseline)
                 g.metrics['exact'] = exact
+                # evaluate_exact now sets exact_validated flag; always overwrite (was not_validated at intermediate gens)
+                g.metrics['exact_validated'] = bool(exact.get('exact_validated', True))
+                g.metrics['exact_status'] = 'validated' if g.metrics.get('exact_validated') else 'failed'
             except Exception as e:
                 try:
                     g.metrics['exact_error'] = str(e)[:300]
+                    g.metrics['exact_validated'] = False
+                    g.metrics['exact_status'] = 'error'
                 except: pass
-            finally:
-                if orig_nodes is not None:
-                    self.runner.cfg['validation_nodes'] = orig_nodes
-                elif 'validation_nodes' in self.runner.cfg:
-                    del self.runner.cfg['validation_nodes']
 
     def _get_migration_live(self):
         """Snapshot for live ring — no heavy compute, just current isolation/next migration."""
