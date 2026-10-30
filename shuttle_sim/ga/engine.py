@@ -751,26 +751,35 @@ class GAEngine:
                             freq_term += 1.0*_math.log1p(err/0.05e6)
                     except: pass
             except: pass
-            # height soft (pipeline now soft)
+            # height soft - proportional to violation distance (pipeline: 2*log1p(dist/1um))
             height_term = 0
             try:
-                if m.get('height_violation_msg'):
-                    height_term = 2*_math.log1p(1.0)  # ~1.38
-                elif 'height_violation' in m.get('quality_failures', []) if isinstance(m.get('quality_failures'), list) else False:
+                hv_msg = m.get('height_violation_msg')
+                hv_dist = m.get('height_violation_distance_m')
+                if hv_dist is None and hv_msg:
+                    try:
+                        import re as _re_h2
+                        mm = _re_h2.search(r'well height\s*([\d\.]+)\s*um\s*(above max|below min)\s*([\d\.]+)', hv_msg)
+                        if mm:
+                            hv_dist = abs(float(mm.group(1)) - float(mm.group(3))) * 1e-6
+                        else:
+                            nums = _re_h2.findall(r'[\d\.]+', hv_msg)
+                            if len(nums)>=2:
+                                hv_dist = abs(float(nums[0]) - float(nums[1])) * 1e-6
+                    except: hv_dist = 1e-6
+                if hv_msg and hv_dist is not None:
+                    height_term = 2*_math.log1p(max(0.0, float(hv_dist))/1e-6)
+                elif hv_msg:
                     height_term = 2*_math.log1p(1.0)
-                # also check explicit well heights if available in metrics (not yet stored, keep 0)
+                elif 'height_violation' in (m.get('quality_failures') or []):
+                    height_term = 2*_math.log1p(1.0)
             except: pass
-            # heating rate term (new 2026-10-30)
+            # heating rate term — only when max_heating_rate_hz set (pipeline soft heating)
             heating_term = 0
             try:
                 hr = m.get('heating_rate_hz')
                 if hr is not None:
                     allowed = task.get('max_heating_rate_hz', None)
-                    if allowed is None:
-                        try:
-                            allowed = float(task.get('max_n_total', 0.5))/float(task.get('duration_s', 1))
-                            if allowed > 100: allowed = 100
-                        except: allowed = 100
                     if allowed is not None and hr > float(allowed)*1.05:
                         heating_term = 2*_math.log1p(max(0.0, hr - float(allowed))/max(float(allowed), 50.0))
             except: heating_term=0

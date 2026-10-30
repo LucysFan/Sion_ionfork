@@ -589,7 +589,7 @@ input[type=range]{accent-color:var(--accent)}
         <div style="background:rgba(240,136,62,0.08);border:1px solid rgba(240,136,62,0.22);border-radius:8px;padding:8px"><b style="color:#f0883e">control</b><br><span style="font-size:11px;color:var(--muted)">θ близко к границам. Обычно &lt;0.05</span></div>
         <div style="background:rgba(255,107,158,0.08);border:1px solid rgba(255,107,158,0.22);border-radius:8px;padding:8px"><b style="color:#ff6b9e">freq gate</b><br><span style="font-size:11px;color:var(--muted)">если fmin&lt;f0: 2·ln(1+Δ/1e5). Провал на 200кГц→2.2</span></div>
         <div style="background:rgba(255,64,64,0.08);border:1px solid rgba(255,64,64,0.22);border-radius:8px;padding:8px"><b style="color:#ff4040">heating</b><br><span style="font-size:11px;color:var(--muted)">2·ln(1+(hr-100)/100). hr&gt;100 ph/s → штраф, hr=500→3.2</span></div>
-        <div style="background:rgba(158,124,255,0.08);border:1px solid rgba(158,124,255,0.22);border-radius:8px;padding:8px"><b style="color:#9e7cff">height</b><br><span style="font-size:11px;color:var(--muted)">яма вне 30–150мкм → 2·ln2≈1.38</span></div>
+        <div style="background:rgba(158,124,255,0.08);border:1px solid rgba(158,124,255,0.22);border-radius:8px;padding:8px"><b style="color:#9e7cff">height</b><br><span style="font-size:11px;color:var(--muted)">яма вне высоты → 2·ln(1+dist/1мкм)</span></div>
         <div style="background:rgba(255,208,90,0.08);border:1px solid rgba(255,208,90,0.22);border-radius:8px;padding:8px"><b style="color:#ffd05a">robust</b><br><span style="font-size:11px;color:var(--muted)">только R: 0.35·mean+0.65·max − primary. Показывает неустойчивость</span></div>
       </div>
     </div>
