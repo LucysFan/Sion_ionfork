@@ -137,10 +137,64 @@ def evaluate_genome(genome, runner, baseline='sta', exact_nodes=None, hardware=N
             if stashed['task_coeffs'] is not None:
                 runner.task['frequency_coeffs'] = stashed['task_coeffs']
             raise
+    # Detect segmented K/M/C islands: they evaluate stitched Kx(D/K) path
+    is_stitched = False
+    stitched_segments = None
+    is_periodic = False
+    periodic_repeats = None
+    if isinstance(island, str) and (island.startswith('K') or island.startswith('M') or island.startswith('C') or island in ('STITCH','KRAT')):
+        is_stitched = True
+        import re
+        m = re.match(r'^[KMC](\d+)$', island)
+        if m:
+            try:
+                stitched_segments = int(m.group(1))
+            except:
+                stitched_segments = 'auto'
+        elif island in ('K','M','C','STITCH','KRAT'):
+            stitched_segments = 'auto'
+        else:
+            stitched_segments = 'auto'
+        if isinstance(stitched_segments, int) and stitched_segments > 10:
+            stitched_segments = 10
+        if isinstance(stitched_segments, int) and stitched_segments < 2:
+            stitched_segments = 2
+    elif isinstance(island, str) and (island.startswith('P') or island in ('PERIODIC',)):
+        is_periodic = True
+        import re
+        m = re.match(r'^P(\d+)$', island)
+        if m:
+            try:
+                periodic_repeats = int(m.group(1))
+            except:
+                periodic_repeats = 'auto'
+        elif island in ('P','PERIODIC'):
+            periodic_repeats = 'auto'
+        else:
+            periodic_repeats = 'auto'
+        if isinstance(periodic_repeats, int) and periodic_repeats > 10:
+            periodic_repeats = 10
+        if isinstance(periodic_repeats, int) and periodic_repeats < 2:
+            periodic_repeats = 2
+
     try:
-        # cheap: exact_nodes=None → ROM linear response; expensive: pass exact_nodes
-        metrics = runner.evaluate(theta, baseline=baseline, hardware=hardware, stray=stray,
-                                  frequency_scale=effective_freq_scale, exact_nodes=exact_nodes, subdivisions=runner.cfg.get('subdivisions',4))
+        if is_stitched:
+            if do_prepare:
+                metrics = runner.evaluate(theta, baseline=baseline, hardware=hardware, stray=stray,
+                                          frequency_scale=effective_freq_scale, exact_nodes=exact_nodes, subdivisions=runner.cfg.get('subdivisions',4))
+            else:
+                metrics = runner.evaluate_segmented(theta, baseline=baseline, segments=stitched_segments, hardware=hardware, stray=stray,
+                                                   frequency_scale=effective_freq_scale, exact_nodes=exact_nodes)
+        elif is_periodic:
+            if do_prepare:
+                metrics = runner.evaluate(theta, baseline=baseline, hardware=hardware, stray=stray,
+                                          frequency_scale=effective_freq_scale, exact_nodes=exact_nodes, subdivisions=runner.cfg.get('subdivisions',4))
+            else:
+                metrics = runner.evaluate_krat_periodic(theta, baseline=baseline, repeats=periodic_repeats, hardware=hardware, stray=stray,
+                                                       frequency_scale=effective_freq_scale, exact_nodes=exact_nodes)
+        else:
+            metrics = runner.evaluate(theta, baseline=baseline, hardware=hardware, stray=stray,
+                                      frequency_scale=effective_freq_scale, exact_nodes=exact_nodes, subdivisions=runner.cfg.get('subdivisions',4))
         # For W, theta is voltage subset (8) but penalty should consider full genome (10) including freq coeffs
         theta_for_penalty = genome.theta
         bounds_for_penalty = genome.bounds

@@ -64,9 +64,96 @@ def save_csv(path,header,array):
         w=csv.writer(f);w.writerow(header);w.writerows(array)
 
 
+
+# --- Auto height tuning for five_wire (requested height -> geometry search) ---
+def _tune_five_wire_for_height(cfg, desired_h_m, max_search=40):
+    """Fast search for five_wire geometry near desired height with good f0."""
+    import copy, itertools
+    try:
+        from .field import load_trap
+        import numpy as np
+    except Exception:
+        return cfg
+    base = copy.deepcopy(cfg)
+    try:
+        trap0 = load_trap(base['trap'])
+        h0 = float(trap0.local(np.array(base['trap']['initial_dc_V']), np.array(base['trap']['minimum_seed_m'])).position_m[2])
+        if abs(h0 - desired_h_m) < 5e-6:
+            return cfg
+    except Exception:
+        pass
+    best = None
+    best_score = float('inf')
+    tops = [90,110,130,140,150,160,170,180,200,220]
+    cents = [110,130,150,170,180,190,200]
+    rfs = [(24,30e6),(48,30e6),(80,20e6),(80,30e6)]
+    for top, cent in itertools.product(tops, cents):
+        for rf, freq in rfs:
+            cand = copy.deepcopy(cfg)
+            cand['trap']['geometry']['top_rf'] = [20000, top]
+            cand['trap']['geometry']['bottom_rf'] = [20000, top]
+            cand['trap']['geometry']['central_dc'] = [20000, cent]
+            cand['trap']['rf_peak_V'] = rf
+            cand['trap']['rf_frequency_hz'] = freq
+            cand['trap']['minimum_seed_m'] = [0,0,float(desired_h_m)]
+            try:
+                tr = load_trap(cand['trap'])
+                loc = tr.local(np.array(cand['trap']['initial_dc_V']), np.array([0,0,float(desired_h_m)]))
+                h = float(loc.position_m[2])
+                f0 = float(loc.omega_rad_s[0]/2/np.pi)
+                h_err = abs(h - desired_h_m)
+                if h_err > 18e-6:
+                    continue
+                if not (0.33e6 < f0 < 1.3e6):
+                    continue
+                # score: height error (per um) + f0 penalty (prefer 0.5-0.8, avoid <0.4)
+                f0_penalty = abs(f0 - 0.60e6)/0.60e6  # 0 at 0.60MHz
+                score = h_err*1e6/30.0 + f0_penalty*3.0
+                # bonus if f0 in good shuttle range 0.40-0.85
+                if 0.40e6 < f0 < 0.85e6:
+                    score -= 0.7
+                # heavy penalty if f0 <0.40 (weak)
+                if f0 < 0.40e6:
+                    score += 3.0
+                if score < best_score:
+                    best_score = score
+                    best = cand
+                    best['_tune_info'] = dict(top=top, cent=cent, rf=rf, freq=freq, h=h, f0=f0, h_err=h_err, score=score)
+            except Exception:
+                continue
+            if best_score < 0.3:
+                break
+        if best_score < 0.3:
+            break
+    if best is not None:
+        return best
+    return cfg
+
 class Runner:
     def __init__(self,config):
         self.cfg=config
+        # --- auto height handling: if target_height_m set or seed differs and auto_tune requested ---
+        try:
+            desired_h = None
+            if 'target_height_m' in config['trap']:
+                desired_h = float(config['trap']['target_height_m'])
+            elif 'minimum_seed_m' in config['trap']:
+                try:
+                    seed_h = float(config['trap']['minimum_seed_m'][2])
+                    from .field import load_trap as _lt
+                    _tmp_trap = _lt(config['trap'])
+                    _h0 = float(_tmp_trap.local(np.array(config['trap']['initial_dc_V']), np.array(config['trap']['minimum_seed_m'])).position_m[2])
+                    if abs(_h0 - seed_h) > 7e-6 and config['trap'].get('kind') == 'sion_five_wire' and config['trap'].get('auto_tune_height', True):
+                        desired_h = seed_h
+                except Exception:
+                    pass
+            if desired_h is not None and config['trap'].get('kind') == 'sion_five_wire':
+                tuned = _tune_five_wire_for_height(config, desired_h)
+                if tuned is not config:
+                    config = tuned
+                    self.cfg = config
+        except Exception:
+            pass
         self.trap=load_trap(config['trap'])
         self.hw=Hardware(**config['hardware'])
         self.hw.validate(len(self.trap.indices))
@@ -346,6 +433,272 @@ class Runner:
         if keep:
             return result,dict(t=t,v=v,codes=codes,ct=ct,cmd=cmd,route=route,r=r,H=H,initial=init,final=final,diag=diag)
         return result
+
+
+    def commands_segmented(self, theta, baseline='smooth', segments=5):
+        """Stitched Kx(D/K) continuous path with holds between segments.
+        General for any D,T: segments = round(D/20um) if auto, else K.
+        Shared theta per segment, per-segment T0 = (total_T - (K-1)*hold)/K.
+        """
+        import math
+        from numpy.polynomial import Polynomial as P
+        theta = finite(theta, 'theta')
+        if theta.shape not in [(8,), (10,), (12,)]:
+            raise ValueError('8,10 or 12 required')
+        if isinstance(segments, str) and segments == 'auto':
+            seg_auto = int(round(self.task['distance_m'] / 20e-6))
+            segments = max(1, min(10, seg_auto))
+        segments = int(segments)
+        if segments <= 1:
+            return self.commands(theta, baseline)
+        if segments > 10:
+            raise ValueError('too many segments (max 10)')
+        total_D = float(self.task['distance_m'])
+        total_T = float(self.task['duration_s'])
+        hold = float(self.task['hold_s'])
+        seg_T = (total_T - (segments-1)*hold) / segments if total_T > (segments-1)*hold else total_T/segments
+        if seg_T <= 0:
+            seg_T = total_T/segments
+        fs = self.hw.sample_rate_hz
+        nseg = round(seg_T*fs)
+        nhold = round(hold*fs)
+        if nseg < 10:
+            raise Rejected('duration_too_short', 'segment duration too short')
+        all_t = []
+        all_s = []
+        all_holds = []
+        t_offset = 0.0
+        for i in range(segments):
+            s_local = np.linspace(0,1,nseg+1)
+            env = P([0,0,16,-32,16])
+            x = P([0,1])
+            shape = x + theta[0]*env + theta[1]*env*P([-1,2])
+            ss = shape(s_local)
+            if ss.min() < -1e-10 or ss.max() > 1+1e-10:
+                raise Rejected('route_corridor','nonphysical time-law overshoot in segmented')
+            if baseline == 'smooth':
+                poly = P([0,0,0,10,-15,6])(shape)
+                q = poly(s_local)
+            elif baseline == 'sta':
+                poly = P([0,0,0,0,35,-84,70,-20])(shape)
+                q = poly(s_local) + poly.deriv(2)(s_local)/(seg_T*self.initial.omega_rad_s[0])**2
+            else:
+                raise ValueError('baseline must be smooth or sta')
+            s_global_per = (i + q) / segments
+            t_local = np.linspace(0, seg_T, nseg+1)
+            if i < segments-1 and nhold>0:
+                t_seg = t_local[:-1] + t_offset
+                s_seg = s_global_per[:-1]
+                t_hold = np.arange(1, nhold+1)/fs + t_offset + seg_T
+                s_hold = np.full(nhold, (i+1)/segments)
+                all_t.append(np.concatenate([t_seg, t_hold]))
+                all_s.append(np.concatenate([s_seg, s_hold]))
+                all_holds.append(np.concatenate([np.zeros_like(t_seg, dtype=bool), np.ones(nhold, dtype=bool)]))
+                t_offset += seg_T + hold
+            else:
+                t_seg = t_local + t_offset
+                s_seg = s_global_per
+                holds_seg = np.zeros_like(t_seg, dtype=bool)
+                if nhold>0:
+                    t_hold = np.arange(1, nhold+1)/fs + t_offset + seg_T
+                    s_hold = np.full(nhold, 1.0)
+                    t_seg = np.concatenate([t_seg, t_hold])
+                    s_seg = np.concatenate([s_seg, s_hold])
+                    holds_seg = np.concatenate([holds_seg, np.ones(nhold, dtype=bool)])
+                all_t.append(t_seg)
+                all_s.append(s_seg)
+                all_holds.append(holds_seg)
+                t_offset += seg_T + (hold if nhold else 0)
+        t_all = np.concatenate(all_t)
+        s_all = np.concatenate(all_s)
+        route = s_all
+        if route.min() < self.sroute[0] or route.max() > self.sroute[-1]:
+            raise Rejected('route_corridor','reference outside supported route in segmented')
+        v = self.voltage_spline(route)
+        theta_volt = theta[2:12] if theta.shape[0]==12 else theta[2:10] if theta.shape[0]==10 else theta[2:8]
+        # stitched correction: per-segment envelope
+        corr_all = np.zeros_like(v)
+        # Build per-segment correction
+        pos = 0
+        for i in range(segments):
+            n = len(all_t[i])
+            is_hold = all_holds[i] if i < len(all_holds) else np.zeros(n, dtype=bool)
+            trans_idx = ~is_hold
+            if np.any(trans_idx):
+                n_trans = int(np.sum(trans_idx))
+                s_grid = np.linspace(0,1,n_trans)
+                env_seg = P([0,0,16,-32,16])(s_grid)
+                if theta.shape[0]==12:
+                    basis = np.column_stack([env_seg, env_seg*(2*s_grid-1), env_seg*(6*s_grid*s_grid-6*s_grid+1), env_seg*np.sin(2*math.pi*s_grid), env_seg*np.sin(4*math.pi*s_grid)])
+                    corr_seg = (basis @ theta_volt.reshape(5,2)) @ self.correction_modes
+                elif theta.shape[0]==10:
+                    basis = np.column_stack([env_seg, env_seg*(2*s_grid-1), env_seg*(6*s_grid*s_grid-6*s_grid+1), env_seg*np.sin(2*math.pi*s_grid)])
+                    corr_seg = (basis @ theta_volt.reshape(4,2)) @ self.correction_modes
+                else:
+                    basis = np.column_stack([env_seg, env_seg*(2*s_grid-1), env_seg*(6*s_grid*s_grid-6*s_grid+1)])
+                    corr_seg = (basis @ theta_volt.reshape(3,2)) @ self.correction_modes
+                # place
+                tmp = np.zeros((n, corr_seg.shape[1]))
+                tmp[trans_idx] = corr_seg
+                corr_all[pos:pos+n] += tmp
+            pos += n
+        # stitched correction ready
+        v = v + corr_all
+        if np.any(v < self.trap.lo) or np.any(v > self.trap.hi):
+            raise Rejected('infeasible_voltages','command outside electrode bounds in segmented')
+        return t_all, v, route
+
+    def evaluate_segmented(self, theta, baseline='smooth', segments=5, ideal=False, hardware=None, stray=None, exact_nodes=None, keep=False, frequency_scale=1., return_trajectory=False, trajectory_decimate=400, subdivisions=None):
+        """Evaluate stitched Kx(D/K) path as continuous. Segments auto if needed."""
+        if isinstance(segments, str) and segments == 'auto':
+            segments = max(1, min(10, int(round(self.task['distance_m']/20e-6))))
+        ct, cmd, route = self.commands_segmented(theta, baseline, segments)
+        hw = hardware or self.hw
+        t, v, codes, dist = hw.deliver(cmd, subdivisions or self.cfg.get('subdivisions',4), ideal)
+        if np.any(v < self.trap.lo) or np.any(v > self.trap.hi):
+            raise Rejected('hardware_saturation','delivered voltage outside trap bounds in segmented')
+        if ideal:
+            t = ct; v = cmd.copy()
+            if exact_nodes:
+                locals=[self.trap.local(vv,self.start+ss*self.task['distance_m']*self.direction,stray) for vv,ss in zip(v,route)]
+                r=np.array([z.position_m for z in locals]);H=np.array([z.hessian_J_m2 for z in locals])
+                final=locals[-1];diag=[]
+            else:
+                r,H,final,diag=self.rom(t,v,ct,route,stray,None)
+        else:
+            r,H,final,diag=self.rom(t,v,ct,route,stray,exact_nodes)
+        init=self.trap.local(v[0],self.start,stray)
+        if frequency_scale!=1.:
+            from .field import Local
+            H=H*frequency_scale**2
+            init=Local(init.position_m,init.hessian_J_m2*frequency_scale**2,init.omega_rad_s*frequency_scale,init.modes)
+            final=Local(final.position_m,final.hessian_J_m2*frequency_scale**2,final.omega_rad_s*frequency_scale,final.modes)
+        target=self.target
+        result=propagate(t,r,H,init,final,self.trap.mass,target,method='exact', hold='linear', return_trajectory=return_trajectory, trajectory_decimate=trajectory_decimate, path_samples_per_interval=self.cfg.get('path_samples_per_interval',8))
+        result['distortion']=dist
+        result['segments']=int(segments)
+        result['stitched']=True
+        result['accepted']=bool(result['n_total']<=self.task['max_n_total'] and result['position_error_m']<=self.task['position_tolerance_m'] and result['well_target_error_m']<=self.task['position_tolerance_m'])
+        result['quality_failures']=[]
+        if result['n_total']>self.task['max_n_total']:result['quality_failures'].append('excessive_excitation')
+        if result['position_error_m']>self.task['position_tolerance_m']:result['quality_failures'].append('transport_accuracy')
+        if result['well_target_error_m']>self.task['position_tolerance_m']:result['quality_failures'].append('well_target_accuracy')
+        result['model']='3D geometry-derived local harmonic Gaussian (segmented stitched)'
+        result['minimum_frequency_hz']=float(np.sqrt(np.linalg.eigvalsh(H/self.trap.mass).min())/(2*np.pi))
+        if keep:
+            return result,dict(t=t,v=v,codes=codes,ct=ct,cmd=cmd,route=route,r=r,H=H,initial=init,final=final,diag=diag)
+        return result
+
+
+
+    def commands_krat_periodic(self, theta, baseline='smooth', repeats=5):
+        """Krat periodic without intermediate stops: 100um as K x (100/K) repeated voltage, continuous motion.
+        repeats=5 means 5x20 for 100um, 10x10 etc. Finds optimal repeats that minimises phonons.
+        Trajectory s(t) is single smooth/STA over total T (no holds at 1/K), but voltage correction is K-periodic:
+        v = voltage_spline(route) + periodic_correction(route) where correction repeats K times.
+        This removes intermediate stops while keeping repetition benefit.
+        """
+        import math
+        from numpy.polynomial import Polynomial as P
+        theta = finite(theta, 'theta')
+        if theta.shape not in [(8,), (10,), (12,)]:
+            raise ValueError('8,10 or 12 required')
+        if isinstance(repeats, str) and repeats == 'auto':
+            repeats = int(round(self.task['distance_m'] / 20e-6))
+            repeats = max(1, min(10, repeats))
+        repeats = int(repeats)
+        if repeats <= 1:
+            return self.commands(theta, baseline)
+        if repeats > 10:
+            raise ValueError('too many repeats (max 10)')
+        # single trajectory over total time (no intermediate holds)
+        t,s,d,holds,T0 = self.grid()
+        from numpy.polynomial import Polynomial as P
+        env = P([0,0,16,-32,16]); x = P([0,1])
+        shape = x + theta[0]*env + theta[1]*env*P([-1,2])
+        ss = shape(s)
+        if ss.min() < -1e-10 or ss.max() > 1+1e-10:
+            raise Rejected('route_corridor','nonphysical time-law overshoot in periodic')
+        envelope = env(s)
+        if baseline == 'smooth':
+            poly = P([0,0,0,10,-15,6])(shape)
+            q = poly(s)
+        elif baseline == 'sta':
+            poly = P([0,0,0,0,35,-84,70,-20])(shape)
+            q = poly(s) + poly.deriv(2)(s)/(T0*self.initial.omega_rad_s[0])**2
+        else:
+            raise ValueError('baseline must be smooth or sta')
+        route = np.where(d>0, q, 1-q)
+        if route.min() < self.sroute[0] or route.max() > self.sroute[-1]:
+            raise Rejected('route_corridor','reference outside supported route in periodic')
+        v = self.voltage_spline(route)
+        # periodic correction: K repeats of base envelope
+        theta_volt = theta[2:12] if theta.shape[0]==12 else theta[2:10] if theta.shape[0]==10 else theta[2:8]
+        # Build K-periodic basis: for each s in [0,1], compute s_k = (repeats*s) %1, plus envelope per period
+        # Use same theta per period, so correction repeats K times
+        # For s in [0,1], s_k cycles 0..1 K times, envelope repeats
+        s_k = (repeats * route) % 1.0
+        # For periodic, envelope should be per period, not global envelope
+        # Use env(s_k) etc., but also need to handle holds: holds are at final 1.0 only, not intermediate
+        # During holds, s_k is 1.0, env=0, so correction zero
+        env_k = P([0,0,16,-32,16])(s_k)
+        # For hold regions, route=1.0, s_k=0, env_k=0, so no correction during final hold, good
+        if theta.shape[0]==12:
+            basis = np.column_stack([env_k, env_k*(2*s_k-1), env_k*(6*s_k*s_k-6*s_k+1), env_k*np.sin(2*math.pi*s_k), env_k*np.sin(4*math.pi*s_k)])
+            corr = (basis @ theta_volt.reshape(5,2)) @ self.correction_modes
+        elif theta.shape[0]==10:
+            basis = np.column_stack([env_k, env_k*(2*s_k-1), env_k*(6*s_k*s_k-6*s_k+1), env_k*np.sin(2*math.pi*s_k)])
+            corr = (basis @ theta_volt.reshape(4,2)) @ self.correction_modes
+        else:
+            basis = np.column_stack([env_k, env_k*(2*s_k-1), env_k*(6*s_k*s_k-6*s_k+1)])
+            corr = (basis @ theta_volt.reshape(3,2)) @ self.correction_modes
+        v = v + corr
+        if np.any(v < self.trap.lo) or np.any(v > self.trap.hi):
+            raise Rejected('infeasible_voltages','command outside electrode bounds in periodic')
+        return t, v, route
+
+    def evaluate_krat_periodic(self, theta, baseline='smooth', repeats=5, ideal=False, hardware=None, stray=None, exact_nodes=None, keep=False, frequency_scale=1., return_trajectory=False, trajectory_decimate=400, subdivisions=None):
+        """Evaluate periodic Krat without intermediate stops."""
+        if isinstance(repeats, str) and repeats == 'auto':
+            repeats = max(1, min(10, int(round(self.task['distance_m']/20e-6))))
+        ct, cmd, route = self.commands_krat_periodic(theta, baseline, repeats)
+        hw = hardware or self.hw
+        t, v, codes, dist = hw.deliver(cmd, subdivisions or self.cfg.get('subdivisions',4), ideal)
+        if np.any(v < self.trap.lo) or np.any(v > self.trap.hi):
+            raise Rejected('hardware_saturation','delivered voltage outside trap bounds in periodic')
+        if ideal:
+            t = ct; v = cmd.copy()
+            if exact_nodes:
+                locals=[self.trap.local(vv,self.start+ss*self.task['distance_m']*self.direction,stray) for vv,ss in zip(v,route)]
+                r=np.array([z.position_m for z in locals]);H=np.array([z.hessian_J_m2 for z in locals])
+                final=locals[-1];diag=[]
+            else:
+                r,H,final,diag=self.rom(t,v,ct,route,stray,None)
+        else:
+            r,H,final,diag=self.rom(t,v,ct,route,stray,exact_nodes)
+        init=self.trap.local(v[0],self.start,stray)
+        if frequency_scale!=1.:
+            from .field import Local
+            H=H*frequency_scale**2
+            init=Local(init.position_m,init.hessian_J_m2*frequency_scale**2,init.omega_rad_s*frequency_scale,init.modes)
+            final=Local(final.position_m,final.hessian_J_m2*frequency_scale**2,final.omega_rad_s*frequency_scale,final.modes)
+        target=self.target
+        result=propagate(t,r,H,init,final,self.trap.mass,target,method='exact', hold='linear', return_trajectory=return_trajectory, trajectory_decimate=trajectory_decimate, path_samples_per_interval=self.cfg.get('path_samples_per_interval',8))
+        result['distortion']=dist
+        result['repeats']=int(repeats)
+        result['periodic']=True
+        result['stitched']=False
+        result['accepted']=bool(result['n_total']<=self.task['max_n_total'] and result['position_error_m']<=self.task['position_tolerance_m'] and result['well_target_error_m']<=self.task['position_tolerance_m'])
+        result['quality_failures']=[]
+        if result['n_total']>self.task['max_n_total']:result['quality_failures'].append('excessive_excitation')
+        if result['position_error_m']>self.task['position_tolerance_m']:result['quality_failures'].append('transport_accuracy')
+        if result['well_target_error_m']>self.task['position_tolerance_m']:result['quality_failures'].append('well_target_accuracy')
+        result['model']='3D geometry-derived local harmonic Gaussian (krat periodic no-stop)'
+        result['minimum_frequency_hz']=float(np.sqrt(np.linalg.eigvalsh(H/self.trap.mass).min())/(2*np.pi))
+        if keep:
+            return result,dict(t=t,v=v,codes=codes,ct=ct,cmd=cmd,route=route,r=r,H=H,initial=init,final=final,diag=diag)
+        return result
+
 
     def scenarios(self,count,seed):
         spec=self.cfg['uncertainty'];rng=np.random.default_rng(seed);C=len(self.trap.indices)
