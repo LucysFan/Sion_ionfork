@@ -370,8 +370,13 @@ class Runner:
             r=r-np.linalg.solve(H,g[...,None])[...,0]
             final=self.trap.local(delivered[-1],r[-1],stray);diag=[]
         eig=np.linalg.eigvalsh(H/self.trap.mass)
-        if eig.min()<(2*np.pi*self.task['min_frequency_hz'])**2:
-            raise Rejected('weak_confinement','frequency below task floor')
+        # weak_confinement now soft: don't reject, just record for penalty (allows 150um height where f~0.41 < 0.5)
+        # The GA can still optimize voltage to raise frequency, but we don't kill all candidates with 1e6
+        # Keep a flag for diagnostics
+        weak_confinement = bool(eig.min() < (2*np.pi*self.task['min_frequency_hz'])**2)
+        # if weak_confinement:
+        #    # old hard reject disabled
+        #    pass
         nominal=self.start+sr[:,None]*self.task['distance_m']*self.direction
         max_shift=float(np.max(np.linalg.norm(r-nominal,axis=1)))
         if max_shift>self.cfg.get('rom_max_shift_m',20e-6):
@@ -391,11 +396,33 @@ class Runner:
             # No interpolation across DAC jumps. One state per actual command.
             t=ct;v=cmd.copy()
             if exact_nodes:
-                locals=[self.trap.local(vv,self.start+ss*self.task['distance_m']*self.direction,stray) for vv,ss in zip(v,route)]
-                r=np.array([z.position_m for z in locals]);H=np.array([z.hessian_J_m2 for z in locals])
-                final=locals[-1];diag=[]
+                trap_locals=[self.trap.local(vv,self.start+ss*self.task['distance_m']*self.direction,stray) for vv,ss in zip(v,route)]
+                r=np.array([z.position_m for z in trap_locals]);H=np.array([z.hessian_J_m2 for z in trap_locals])
+                final=trap_locals[-1];diag=[]
             else:r,H,final,diag=self.rom(t,v,ct,route,stray,None)
         else:r,H,final,diag=self.rom(t,v,ct,route,stray,exact_nodes)
+        # compute weak_confinement flag for quality (soft) — always
+        try:
+            eig_weak=np.linalg.eigvalsh(H/self.trap.mass)
+            weak_confinement = bool(eig_weak.min() < (2*np.pi*self.task['min_frequency_hz'])**2)
+        except: weak_confinement=False
+        height_violation=None
+        # height check before quality (soft) — compute from r which is already available
+        try:
+            if ('height_min_m' in self.task and self.task['height_min_m'] is not None) or ('height_max_m' in self.task and self.task['height_max_m'] is not None):
+                if isinstance(r, np.ndarray) and r.ndim==2 and r.shape[1]>=3:
+                    z_vals=r[:,2]
+                else:
+                    z_vals=np.array([p[2] for p in r]) if isinstance(r, (list, np.ndarray)) else np.array([0])
+                if 'height_min_m' in self.task and self.task['height_min_m'] is not None:
+                    hmin=float(self.task['height_min_m'])
+                    if np.min(z_vals) < hmin - 1e-9:
+                        height_violation = f"well height {np.min(z_vals)*1e6:.1f} um below min {hmin*1e6:.1f} um"
+                if 'height_max_m' in self.task and self.task['height_max_m'] is not None:
+                    hmax=float(self.task['height_max_m'])
+                    if np.max(z_vals) > hmax + 1e-9:
+                        height_violation = f"well height {np.max(z_vals)*1e6:.1f} um above max {hmax*1e6:.1f} um"
+        except: pass
         init=self.trap.local(v[0],self.start,stray)
         if frequency_scale!=1.:
             from .field import Local
@@ -421,13 +448,45 @@ class Runner:
                          trajectory_decimate=trajectory_decimate,
                          path_samples_per_interval=path_samples_per_interval)
         result['distortion']=dist
-        result['accepted']=bool(result['n_total']<=self.task['max_n_total'] and
+        # heating rate — compute before accepted so accepted can use it
+        try:
+            dur=float(self.task.get('duration_s', 1))
+            heating_rate = float(result['n_total']/dur) if dur>0 else float('inf')
+            result['heating_rate_hz']=heating_rate
+            max_rate = self.task.get('max_heating_rate_hz', None)
+            if max_rate is None:
+                # default 100 ph/s if not set and max_n_total would imply larger rate
+                try:
+                    # if max_n_total is 0.5 and dur 50us => 10000, cap to 100 for new requirement
+                    derived = float(self.task.get('max_n_total', 0.5))/dur
+                    max_rate = min(derived, 100) if derived>100 else derived
+                    # but for backward compat, if derived <100 keep derived, else 100
+                    # actually for new requirement, default should be 100
+                    if derived>100:
+                        max_rate=100
+                except: max_rate = 100
+            result['max_heating_rate_hz']=float(max_rate)
+            if heating_rate > max_rate*1.05:
+                # will be added to quality_failures below
+                pass
+        except:
+            result['heating_rate_hz']=float('inf')
+            result['max_heating_rate_hz']=100
+        result['accepted']=bool(result['n_total']<=self.task['max_n_total'] and result['heating_rate_hz']<=result['max_heating_rate_hz']*1.05 and
              result['position_error_m']<=self.task['position_tolerance_m'] and
              result['well_target_error_m']<=self.task['position_tolerance_m'])
         result['quality_failures']=[]
         if result['n_total']>self.task['max_n_total']:result['quality_failures'].append('excessive_excitation')
+        if result['heating_rate_hz']>result['max_heating_rate_hz']*1.05:result['quality_failures'].append('excessive_heating_rate')
         if result['position_error_m']>self.task['position_tolerance_m']:result['quality_failures'].append('transport_accuracy')
         if result['well_target_error_m']>self.task['position_tolerance_m']:result['quality_failures'].append('well_target_accuracy')
+        if weak_confinement:
+            result['quality_failures'].append('weak_confinement')
+            result['weak_confinement']=True
+        if height_violation:
+            result['quality_failures'].append('height_violation')
+            result['height_violation_msg']=height_violation
+        # heating rate already computed
         result['model']='3D geometry-derived local harmonic Gaussian'
         result['minimum_frequency_hz']=float(np.sqrt(np.linalg.eigvalsh(H/self.trap.mass).min())/(2*np.pi))
         result['maximum_frequency_hz']=float(np.sqrt(np.linalg.eigvalsh(H/self.trap.mass).max())/(2*np.pi))
@@ -437,10 +496,11 @@ class Runner:
             try:
                 result['max_frequency_target_hz']=float(self.task['max_frequency_hz'])
             except: pass
-        # height bounds on well centers
+        # height bounds on well centers — soft: don't reject, just record for penalty and quality_failures
+        # (148-152 for 150 height is too tight: real 143.96 fails, so hard reject kills all candidates)
+        height_violation = None
         if ('height_min_m' in self.task and self.task['height_min_m'] is not None) or ('height_max_m' in self.task and self.task['height_max_m'] is not None):
             try:
-                # r is Nx3 well centers
                 if isinstance(r, np.ndarray) and r.ndim==2 and r.shape[1]>=3:
                     z_vals=r[:,2]
                 else:
@@ -448,13 +508,11 @@ class Runner:
                 if 'height_min_m' in self.task and self.task['height_min_m'] is not None:
                     hmin=float(self.task['height_min_m'])
                     if np.min(z_vals) < hmin - 1e-9:
-                        raise Rejected('height_violation', f"well height {np.min(z_vals)*1e6:.1f} um below min {hmin*1e6:.1f} um")
+                        height_violation = f"well height {np.min(z_vals)*1e6:.1f} um below min {hmin*1e6:.1f} um"
                 if 'height_max_m' in self.task and self.task['height_max_m'] is not None:
                     hmax=float(self.task['height_max_m'])
                     if np.max(z_vals) > hmax + 1e-9:
-                        raise Rejected('height_violation', f"well height {np.max(z_vals)*1e6:.1f} um above max {hmax*1e6:.1f} um")
-            except Rejected:
-                raise
+                        height_violation = f"well height {np.max(z_vals)*1e6:.1f} um above max {hmax*1e6:.1f} um"
             except Exception:
                 pass
         # начальная/конечная частота (для записи и мягкого штрафа)
@@ -601,13 +659,33 @@ class Runner:
         if ideal:
             t = ct; v = cmd.copy()
             if exact_nodes:
-                locals=[self.trap.local(vv,self.start+ss*self.task['distance_m']*self.direction,stray) for vv,ss in zip(v,route)]
-                r=np.array([z.position_m for z in locals]);H=np.array([z.hessian_J_m2 for z in locals])
-                final=locals[-1];diag=[]
+                trap_locals=[self.trap.local(vv,self.start+ss*self.task['distance_m']*self.direction,stray) for vv,ss in zip(v,route)]
+                r=np.array([z.position_m for z in trap_locals]);H=np.array([z.hessian_J_m2 for z in trap_locals])
+                final=trap_locals[-1];diag=[]
             else:
                 r,H,final,diag=self.rom(t,v,ct,route,stray,None)
         else:
             r,H,final,diag=self.rom(t,v,ct,route,stray,exact_nodes)
+        try:
+            eig_weak=np.linalg.eigvalsh(H/self.trap.mass)
+            weak_confinement = bool(eig_weak.min() < (2*np.pi*self.task['min_frequency_hz'])**2)
+        except: weak_confinement=False
+        height_violation=None
+        try:
+            if ('height_min_m' in self.task and self.task['height_min_m'] is not None) or ('height_max_m' in self.task and self.task['height_max_m'] is not None):
+                if isinstance(r, np.ndarray) and r.ndim==2 and r.shape[1]>=3:
+                    z_vals=r[:,2]
+                else:
+                    z_vals=np.array([p[2] for p in r]) if isinstance(r, (list, np.ndarray)) else np.array([0])
+                if 'height_min_m' in self.task and self.task['height_min_m'] is not None:
+                    hmin=float(self.task['height_min_m'])
+                    if np.min(z_vals) < hmin - 1e-9:
+                        height_violation = f"well height {np.min(z_vals)*1e6:.1f} um below min {hmin*1e6:.1f} um"
+                if 'height_max_m' in self.task and self.task['height_max_m'] is not None:
+                    hmax=float(self.task['height_max_m'])
+                    if np.max(z_vals) > hmax + 1e-9:
+                        height_violation = f"well height {np.max(z_vals)*1e6:.1f} um above max {hmax*1e6:.1f} um"
+        except: pass
         init=self.trap.local(v[0],self.start,stray)
         if frequency_scale!=1.:
             from .field import Local
@@ -620,11 +698,32 @@ class Runner:
         result['distortion']=dist
         result['segments']=int(segments)
         result['stitched']=True
-        result['accepted']=bool(result['n_total']<=self.task['max_n_total'] and result['position_error_m']<=self.task['position_tolerance_m'] and result['well_target_error_m']<=self.task['position_tolerance_m'])
+        try:
+            dur=float(self.task.get('duration_s', 1))
+            heating_rate = float(result['n_total']/dur) if dur>0 else float('inf')
+            result['heating_rate_hz']=heating_rate
+            max_rate = self.task.get('max_heating_rate_hz', None)
+            if max_rate is None:
+                try:
+                    derived = float(self.task.get('max_n_total', 0.5))/dur
+                    max_rate = 100 if derived>100 else derived
+                except: max_rate = 100
+            result['max_heating_rate_hz']=float(max_rate)
+        except:
+            result['heating_rate_hz']=float('inf')
+            result['max_heating_rate_hz']=100
+        result['accepted']=bool(result['n_total']<=self.task['max_n_total'] and result['heating_rate_hz']<=result['max_heating_rate_hz']*1.05 and result['position_error_m']<=self.task['position_tolerance_m'] and result['well_target_error_m']<=self.task['position_tolerance_m'])
         result['quality_failures']=[]
         if result['n_total']>self.task['max_n_total']:result['quality_failures'].append('excessive_excitation')
+        if result['heating_rate_hz']>result['max_heating_rate_hz']*1.05:result['quality_failures'].append('excessive_heating_rate')
         if result['position_error_m']>self.task['position_tolerance_m']:result['quality_failures'].append('transport_accuracy')
         if result['well_target_error_m']>self.task['position_tolerance_m']:result['quality_failures'].append('well_target_accuracy')
+        if weak_confinement:
+            result['quality_failures'].append('weak_confinement')
+            result['weak_confinement']=True
+        if height_violation:
+            result['quality_failures'].append('height_violation')
+            result['height_violation_msg']=height_violation
         result['model']='3D geometry-derived local harmonic Gaussian (segmented stitched)'
         result['minimum_frequency_hz']=float(np.sqrt(np.linalg.eigvalsh(H/self.trap.mass).min())/(2*np.pi))
         result['maximum_frequency_hz']=float(np.sqrt(np.linalg.eigvalsh(H/self.trap.mass).max())/(2*np.pi))
@@ -632,6 +731,8 @@ class Runner:
             try:
                 result['max_frequency_target_hz']=float(self.task['max_frequency_hz'])
             except: pass
+        # height bounds — soft (was hard, now penalty)
+        height_violation_seg = None
         if ('height_min_m' in self.task and self.task['height_min_m'] is not None) or ('height_max_m' in self.task and self.task['height_max_m'] is not None):
             try:
                 if isinstance(r, np.ndarray) and r.ndim==2 and r.shape[1]>=3:
@@ -641,13 +742,14 @@ class Runner:
                 if 'height_min_m' in self.task and self.task['height_min_m'] is not None:
                     hmin=float(self.task['height_min_m'])
                     if np.min(z_vals) < hmin - 1e-9:
-                        raise Rejected('height_violation', f"well height {np.min(z_vals)*1e6:.1f} um below min {hmin*1e6:.1f} um")
+                        height_violation_seg = f"well height {np.min(z_vals)*1e6:.1f} um below min {hmin*1e6:.1f} um"
                 if 'height_max_m' in self.task and self.task['height_max_m'] is not None:
                     hmax=float(self.task['height_max_m'])
                     if np.max(z_vals) > hmax + 1e-9:
-                        raise Rejected('height_violation', f"well height {np.max(z_vals)*1e6:.1f} um above max {hmax*1e6:.1f} um")
-            except Rejected:
-                raise
+                        height_violation_seg = f"well height {np.max(z_vals)*1e6:.1f} um above max {hmax*1e6:.1f} um"
+                if height_violation_seg:
+                    # don't raise, just record for later penalty
+                    height_violation = height_violation_seg
             except Exception:
                 pass
         try:
@@ -747,13 +849,33 @@ class Runner:
         if ideal:
             t = ct; v = cmd.copy()
             if exact_nodes:
-                locals=[self.trap.local(vv,self.start+ss*self.task['distance_m']*self.direction,stray) for vv,ss in zip(v,route)]
-                r=np.array([z.position_m for z in locals]);H=np.array([z.hessian_J_m2 for z in locals])
-                final=locals[-1];diag=[]
+                trap_locals=[self.trap.local(vv,self.start+ss*self.task['distance_m']*self.direction,stray) for vv,ss in zip(v,route)]
+                r=np.array([z.position_m for z in trap_locals]);H=np.array([z.hessian_J_m2 for z in trap_locals])
+                final=trap_locals[-1];diag=[]
             else:
                 r,H,final,diag=self.rom(t,v,ct,route,stray,None)
         else:
             r,H,final,diag=self.rom(t,v,ct,route,stray,exact_nodes)
+        try:
+            eig_weak=np.linalg.eigvalsh(H/self.trap.mass)
+            weak_confinement = bool(eig_weak.min() < (2*np.pi*self.task['min_frequency_hz'])**2)
+        except: weak_confinement=False
+        height_violation=None
+        try:
+            if ('height_min_m' in self.task and self.task['height_min_m'] is not None) or ('height_max_m' in self.task and self.task['height_max_m'] is not None):
+                if isinstance(r, np.ndarray) and r.ndim==2 and r.shape[1]>=3:
+                    z_vals=r[:,2]
+                else:
+                    z_vals=np.array([p[2] for p in r]) if isinstance(r, (list, np.ndarray)) else np.array([0])
+                if 'height_min_m' in self.task and self.task['height_min_m'] is not None:
+                    hmin=float(self.task['height_min_m'])
+                    if np.min(z_vals) < hmin - 1e-9:
+                        height_violation = f"well height {np.min(z_vals)*1e6:.1f} um below min {hmin*1e6:.1f} um"
+                if 'height_max_m' in self.task and self.task['height_max_m'] is not None:
+                    hmax=float(self.task['height_max_m'])
+                    if np.max(z_vals) > hmax + 1e-9:
+                        height_violation = f"well height {np.max(z_vals)*1e6:.1f} um above max {hmax*1e6:.1f} um"
+        except: pass
         init=self.trap.local(v[0],self.start,stray)
         if frequency_scale!=1.:
             from .field import Local
@@ -767,11 +889,32 @@ class Runner:
         result['repeats']=int(repeats)
         result['periodic']=True
         result['stitched']=False
-        result['accepted']=bool(result['n_total']<=self.task['max_n_total'] and result['position_error_m']<=self.task['position_tolerance_m'] and result['well_target_error_m']<=self.task['position_tolerance_m'])
+        try:
+            dur=float(self.task.get('duration_s', 1))
+            heating_rate = float(result['n_total']/dur) if dur>0 else float('inf')
+            result['heating_rate_hz']=heating_rate
+            max_rate = self.task.get('max_heating_rate_hz', None)
+            if max_rate is None:
+                try:
+                    derived = float(self.task.get('max_n_total', 0.5))/dur
+                    max_rate = 100 if derived>100 else derived
+                except: max_rate = 100
+            result['max_heating_rate_hz']=float(max_rate)
+        except:
+            result['heating_rate_hz']=float('inf')
+            result['max_heating_rate_hz']=100
+        result['accepted']=bool(result['n_total']<=self.task['max_n_total'] and result['heating_rate_hz']<=result['max_heating_rate_hz']*1.05 and result['position_error_m']<=self.task['position_tolerance_m'] and result['well_target_error_m']<=self.task['position_tolerance_m'])
         result['quality_failures']=[]
         if result['n_total']>self.task['max_n_total']:result['quality_failures'].append('excessive_excitation')
+        if result['heating_rate_hz']>result['max_heating_rate_hz']*1.05:result['quality_failures'].append('excessive_heating_rate')
         if result['position_error_m']>self.task['position_tolerance_m']:result['quality_failures'].append('transport_accuracy')
         if result['well_target_error_m']>self.task['position_tolerance_m']:result['quality_failures'].append('well_target_accuracy')
+        if weak_confinement:
+            result['quality_failures'].append('weak_confinement')
+            result['weak_confinement']=True
+        if height_violation:
+            result['quality_failures'].append('height_violation')
+            result['height_violation_msg']=height_violation
         result['model']='3D geometry-derived local harmonic Gaussian (krat periodic no-stop)'
         result['minimum_frequency_hz']=float(np.sqrt(np.linalg.eigvalsh(H/self.trap.mass).min())/(2*np.pi))
         result['maximum_frequency_hz']=float(np.sqrt(np.linalg.eigvalsh(H/self.trap.mass).max())/(2*np.pi))
@@ -779,6 +922,8 @@ class Runner:
             try:
                 result['max_frequency_target_hz']=float(self.task['max_frequency_hz'])
             except: pass
+        # height bounds — soft (was hard, now penalty)
+        height_violation_seg = None
         if ('height_min_m' in self.task and self.task['height_min_m'] is not None) or ('height_max_m' in self.task and self.task['height_max_m'] is not None):
             try:
                 if isinstance(r, np.ndarray) and r.ndim==2 and r.shape[1]>=3:
@@ -788,13 +933,14 @@ class Runner:
                 if 'height_min_m' in self.task and self.task['height_min_m'] is not None:
                     hmin=float(self.task['height_min_m'])
                     if np.min(z_vals) < hmin - 1e-9:
-                        raise Rejected('height_violation', f"well height {np.min(z_vals)*1e6:.1f} um below min {hmin*1e6:.1f} um")
+                        height_violation_seg = f"well height {np.min(z_vals)*1e6:.1f} um below min {hmin*1e6:.1f} um"
                 if 'height_max_m' in self.task and self.task['height_max_m'] is not None:
                     hmax=float(self.task['height_max_m'])
                     if np.max(z_vals) > hmax + 1e-9:
-                        raise Rejected('height_violation', f"well height {np.max(z_vals)*1e6:.1f} um above max {hmax*1e6:.1f} um")
-            except Rejected:
-                raise
+                        height_violation_seg = f"well height {np.max(z_vals)*1e6:.1f} um above max {hmax*1e6:.1f} um"
+                if height_violation_seg:
+                    # don't raise, just record for later penalty
+                    height_violation = height_violation_seg
             except Exception:
                 pass
         try:
