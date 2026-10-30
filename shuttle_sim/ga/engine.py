@@ -817,11 +817,60 @@ class GAEngine:
                 # heavy recompute only when needed and heavy=True; light keeps cached
                 need_traj = ('trajectory' not in best.metrics or self.global_gen % 5 == 0 or self.global_gen == self.generations)
                 if need_traj and heavy:
-                    theta8 = best.to_theta8()
-                    best_baseline = 'smooth' if best.island in ('S','H') else 'sta'
+                    # use unified dispatcher for hall best (preserves W/K/P protocol, not to_theta8 truncation)
+                    best_baseline = 'sta'
+                    for isl in self.islands:
+                        if isl.strategy == best.island:
+                            best_baseline = isl.baseline
+                            break
                     use_exact_traj = (self.global_gen == self.generations)
-                    res_traj = self.runner.evaluate(theta8, baseline=best_baseline, exact_nodes=81 if use_exact_traj else None, subdivisions=self.runner.cfg.get('subdivisions',4), return_trajectory=True, trajectory_decimate=150)
-                    best.metrics['trajectory'] = res_traj.get('trajectory')
+                    from .fitness import _dispatch_evaluate
+                    exact_nodes_traj = self.runner.cfg.get('validation_nodes',321) if use_exact_traj else None
+                    subdiv_traj = self.runner.cfg.get('validation_subdivisions',4) if use_exact_traj else self.runner.cfg.get('subdivisions',4)
+                    # dispatch with trajectory
+                    try:
+                        # _dispatch_evaluate doesn't support return_trajectory, so we handle manually via runner.* but with island-aware dispatch
+                        # For trajectory we need keep + return_trajectory, so we manually dispatch but unified logic:
+                        island = best.island
+                        is_W_traj = island in ('W','frequency','freq') and len(best.theta)>=10
+                        is_stitched_traj = isinstance(island, str) and (island.startswith('K') or island.startswith('M') or island.startswith('C') or island in ('STITCH','KRAT'))
+                        is_periodic_traj = isinstance(island, str) and (island.startswith('P') or island in ('PERIODIC',))
+                        theta_traj = best.theta[:8].copy() if is_W_traj else best.theta
+                        freq_traj = best.theta[8:10].copy() if is_W_traj else None
+                        stashed_traj = None
+                        if is_W_traj:
+                            from .fitness import _prepare_for_W, _restore_after_W
+                            try:
+                                stashed_traj = dict(task_mode=self.runner.task.get('frequency_mode'), task_coeffs=self.runner.task.get('frequency_coeffs'),
+                                                    freq_mode=getattr(self.runner, 'frequency_mode','fixed'), freq_coeffs=getattr(self.runner,'frequency_coeffs',[0.0,0.0]),
+                                                    sroute=getattr(self.runner,'sroute',None), route_V=getattr(self.runner,'route_V',None), route_r=getattr(self.runner,'route_r',None),
+                                                    route_H=getattr(self.runner,'route_H',None), route_G=getattr(self.runner,'route_G',None), route_BH=getattr(self.runner,'route_BH',None),
+                                                    correction_modes=getattr(self.runner,'correction_modes',None), support_diagnostics=getattr(self.runner,'support_diagnostics',None),
+                                                    voltage_spline=getattr(self.runner,'voltage_spline',None), Hspline=getattr(self.runner,'Hspline',None),
+                                                    Gspline=getattr(self.runner,'Gspline',None), BHspline=getattr(self.runner,'BHspline',None))
+                                _prepare_for_W(self.runner, freq_traj)
+                            except: stashed_traj=None
+                        try:
+                            if is_stitched_traj:
+                                import re
+                                m=re.match(r'^[KMC](\d+)$', island)
+                                segs = int(m.group(1)) if m else 'auto'
+                                res_traj = self.runner.evaluate_segmented(theta_traj, baseline=best_baseline, segments=segs, exact_nodes=exact_nodes_traj, subdivisions=subdiv_traj, return_trajectory=True, trajectory_decimate=150)
+                            elif is_periodic_traj:
+                                import re
+                                m=re.match(r'^P(\d+)$', island)
+                                reps = int(m.group(1)) if m else 'auto'
+                                res_traj = self.runner.evaluate_krat_periodic(theta_traj, baseline=best_baseline, repeats=reps, exact_nodes=exact_nodes_traj, subdivisions=subdiv_traj, return_trajectory=True, trajectory_decimate=150)
+                            else:
+                                res_traj = self.runner.evaluate(theta_traj, baseline=best_baseline, exact_nodes=exact_nodes_traj, subdivisions=subdiv_traj, return_trajectory=True, trajectory_decimate=150)
+                        finally:
+                            if stashed_traj is not None:
+                                try:
+                                    _restore_after_W(self.runner, stashed_traj)
+                                except: pass
+                    except Exception as _e_traj:
+                        res_traj = {'error': str(_e_traj)[:300]}
+                    best.metrics['trajectory'] = res_traj.get('trajectory') if isinstance(res_traj, dict) else None
                     # честный classical по умолчанию (пользователь попросил honest), флаг отключает только если явно False
                     _classical_cfg = self.cfg.get('trajectory_classical', None)
                     if _classical_cfg is None:
@@ -830,7 +879,33 @@ class GAEngine:
                     if classical_enabled and ((self.global_gen % 4 == 0 and self.global_gen != 0) or self.global_gen == self.generations):
                         try:
                             from ..dynamics import validate_full_field_centroid
-                            _, trace = self.runner.evaluate(theta8, baseline=best_baseline, exact_nodes=120, subdivisions=4, keep=True)
+                            # for classical we need keep trace with same protocol (unified)
+                            is_W_c = island in ('W','frequency','freq') and len(best.theta)>=10
+                            theta_c = best.theta[:8].copy() if is_W_c else best.theta
+                            freq_c = best.theta[8:10].copy() if is_W_c else None
+                            stashed_c = None
+                            if is_W_c:
+                                try:
+                                    stashed_c = dict(task_mode=self.runner.task.get('frequency_mode'), task_coeffs=self.runner.task.get('frequency_coeffs'),
+                                                     freq_mode=getattr(self.runner, 'frequency_mode','fixed'), freq_coeffs=getattr(self.runner,'frequency_coeffs',[0.0,0.0]),
+                                                     sroute=getattr(self.runner,'sroute',None), route_V=getattr(self.runner,'route_V',None), route_r=getattr(self.runner,'route_r',None),
+                                                     route_H=getattr(self.runner,'route_H',None), route_G=getattr(self.runner,'route_G',None), route_BH=getattr(self.runner,'route_BH',None),
+                                                     correction_modes=getattr(self.runner,'correction_modes',None), support_diagnostics=getattr(self.runner,'support_diagnostics',None),
+                                                     voltage_spline=getattr(self.runner,'voltage_spline',None), Hspline=getattr(self.runner,'Hspline',None),
+                                                     Gspline=getattr(self.runner,'Gspline',None), BHspline=getattr(self.runner,'BHspline',None))
+                                    _prepare_for_W(self.runner, freq_c)
+                                except: stashed_c=None
+                            try:
+                                if is_stitched_traj:
+                                    _, trace = self.runner.evaluate_segmented(theta_c, baseline=best_baseline, segments=segs if 'segs' in locals() else 'auto', exact_nodes=120, subdivisions=4, keep=True)
+                                elif is_periodic_traj:
+                                    _, trace = self.runner.evaluate_krat_periodic(theta_c, baseline=best_baseline, repeats=reps if 'reps' in locals() else 'auto', exact_nodes=120, subdivisions=4, keep=True)
+                                else:
+                                    _, trace = self.runner.evaluate(theta_c, baseline=best_baseline, exact_nodes=120, subdivisions=4, keep=True)
+                            finally:
+                                if stashed_c is not None:
+                                    try: _restore_after_W(self.runner, stashed_c)
+                                    except: pass
                             # decimate for honest classical speed
                             try:
                                 tt = trace['t']; vv = trace['v']
@@ -921,52 +996,43 @@ class GAEngine:
             if should_recompute:
                 t0_rob = time.time()
                 hall_rob = []
-                for rank, g in enumerate(self.hall_of_fame[:2]):
+                for rank, g in enumerate(self.hall_of_fame):
                     if time.time()-t0_rob > 12: break
                     try:
-                        baseline = 'smooth' if g.island in ('S','H') else 'sta'
+                        baseline = 'sta'
                         for isl in self.islands:
                             if isl.strategy == g.island:
                                 baseline = isl.baseline
                                 break
                         from ..hardware import Hardware
+                        from .fitness import _dispatch_evaluate, _restore_after_W
                         count = int(self.runner.cfg.get('robust_samples', 4))
                         count = min(count, 6)
                         scenarios = self.runner.scenarios(count, self.runner.cfg['uncertainty']['seed'] + 100 + rank)
                         vals = []
-                        # for intermediate gens use cheap ROM (exact_nodes=None) for speed; final gen uses exact 81 for rigor
+                        accepted_vals = []
                         use_exact = (self.global_gen == self.generations)
+                        # use high fidelity for final gen, else cheap
+                        exact_nodes = self.runner.cfg.get('validation_nodes', 321) if use_exact else None
+                        subdivisions = self.runner.cfg.get('validation_subdivisions',4) if use_exact else 1
                         for sc in scenarios:
                             try:
-                                is_W = g.island in ('W','frequency','freq') and len(g.theta)>=10
-                                if is_W:
-                                    theta_v = g.theta[:8].copy()
-                                    freq_c = g.theta[8:10].copy()
-                                    from .fitness import _prepare_for_W
-                                    stashed = dict(task_mode=self.runner.task.get('frequency_mode'), task_coeffs=self.runner.task.get('frequency_coeffs'))
-                                    for attr in ['sroute','route_V','voltage_spline','route_r','route_H','route_G','route_BH','Hspline','Gspline','BHspline','correction_modes','support_diagnostics']:
-                                        if hasattr(self.runner, attr):
-                                            stashed[attr]=getattr(self.runner, attr)
-                                    _prepare_for_W(self.runner, freq_c)
-                                    m = self.runner.evaluate(theta_v, baseline=baseline, hardware=Hardware(**sc['hardware']), stray=sc['stray_V_m'], frequency_scale=sc['frequency_scale'], exact_nodes=81 if use_exact else None)
-                                    self.runner.task['frequency_mode']=stashed['task_mode'] or 'fixed'
-                                    self.runner.task['frequency_coeffs']=stashed['task_coeffs'] or [0.0,0.0]
-                                    for k in ['sroute','route_V','voltage_spline','route_r','route_H','route_G','route_BH','Hspline','Gspline','BHspline','correction_modes','support_diagnostics']:
-                                        if k in stashed and stashed[k] is not None:
-                                            setattr(self.runner, k, stashed[k])
-                                    try:
-                                        self.runner.prepare()
-                                    except: pass
-                                else:
-                                    m = self.runner.evaluate(g.theta, baseline=baseline, hardware=Hardware(**sc['hardware']), stray=sc['stray_V_m'], frequency_scale=sc['frequency_scale'], exact_nodes=81 if use_exact else None)
+                                # unified dispatcher handles W/K/P correctly and frequency_scale perturbation on top of W profile
+                                m, stashed, used = _dispatch_evaluate(self.runner, g, baseline, Hardware(**sc['hardware']), sc['stray_V_m'], sc['frequency_scale'], exact_nodes=exact_nodes, subdivisions=subdivisions, path_samples_per_interval=4)
+                                # dispatcher already restores, no extra needed
                                 vals.append(float(m.get('n_total', 1e6)))
+                                accepted_vals.append(bool(m.get('accepted', False)))
                             except Exception:
                                 vals.append(1e6)
+                                accepted_vals.append(False)
                         max_n = float(self.runner.task.get('max_n_total', 0.5))
-                        pass_frac = sum(1 for v in vals if v <= max_n*1.5) / len(vals) if vals else 0
-                        hall_rob.append(dict(rank=rank, island=g.island, baseline=baseline, theta=g.theta.tolist(), mean_n=float(np.mean(vals)) if vals else None, worst_n=float(np.max(vals)) if vals else None, cvar_20=float(np.sort(vals)[-max(1,int(np.ceil(0.2*len(vals))) ):].mean()) if vals else None, pass_fraction=float(pass_frac), vals=vals[:8]))
+                        # pass_fraction is now fraction of scenarios where accepted (all constraints) true, not just n_total*1.5
+                        # keep legacy n_total threshold as additional diagnostic but primary is accepted
+                        pass_frac_accepted = sum(1 for a in accepted_vals if a) / len(accepted_vals) if accepted_vals else 0
+                        pass_frac_n = sum(1 for v in vals if v <= max_n*1.5) / len(vals) if vals else 0
+                        hall_rob.append(dict(rank=rank, island=g.island, baseline=baseline, theta=g.theta.tolist(), mean_n=float(np.mean(vals)) if vals else None, worst_n=float(np.max(vals)) if vals else None, cvar_20=float(np.sort(vals)[-max(1,int(np.ceil(0.2*len(vals))) ):].mean()) if vals else None, pass_fraction=float(pass_frac_accepted), pass_fraction_n=float(pass_frac_n), vals=vals[:8], accepted_vals=accepted_vals[:8], threshold_n=float(max_n), threshold_accepted=True))
                     except Exception as e:
-                        hall_rob.append(dict(rank=rank, error=str(e)[:200]))
+                        hall_rob.append(dict(rank=rank, error=str(e)[:500]))
                 island_rob = []
                 for isl in self.islands:
                     if time.time()-t0_rob > 8: break
@@ -977,17 +1043,25 @@ class GAEngine:
                         baseline = isl.baseline
                         count = 2
                         from ..hardware import Hardware
+                        from .fitness import _dispatch_evaluate
                         scenarios = self.runner.scenarios(count, self.runner.cfg['uncertainty']['seed'] + 200 + isl.id)
                         vals=[]
+                        accepted_vals=[]
                         use_exact_island = (self.global_gen == self.generations)
+                        exact_nodes_island = self.runner.cfg.get('validation_nodes',321) if use_exact_island else None
+                        subdiv_island = self.runner.cfg.get('validation_subdivisions',4) if use_exact_island else 1
                         for sc in scenarios:
                             try:
-                                m = self.runner.evaluate(best.theta, baseline=baseline, hardware=Hardware(**sc['hardware']), stray=sc['stray_V_m'], frequency_scale=sc['frequency_scale'], exact_nodes=81 if use_exact_island else None)
+                                m, stashed, used = _dispatch_evaluate(self.runner, best, baseline, Hardware(**sc['hardware']), sc['stray_V_m'], sc['frequency_scale'], exact_nodes=exact_nodes_island, subdivisions=subdiv_island, path_samples_per_interval=4)
                                 vals.append(float(m.get('n_total',1e6)))
-                            except: vals.append(1e6)
+                                accepted_vals.append(bool(m.get('accepted', False)))
+                            except: 
+                                vals.append(1e6)
+                                accepted_vals.append(False)
                         max_n = float(self.runner.task.get('max_n_total',0.5))
-                        pass_frac = sum(1 for v in vals if v <= max_n*1.5)/len(vals)
-                        island_rob.append(dict(island=isl.strategy, baseline=baseline, best_fitness=float(best.fitness), mean_n=float(np.mean(vals)), worst_n=float(np.max(vals)), pass_fraction=float(pass_frac)))
+                        pass_frac = sum(1 for a in accepted_vals if a)/len(accepted_vals) if accepted_vals else 0
+                        pass_frac_n = sum(1 for v in vals if v <= max_n*1.5)/len(vals) if vals else 0
+                        island_rob.append(dict(island=isl.strategy, baseline=baseline, best_fitness=float(best.fitness), mean_n=float(np.mean(vals)), worst_n=float(np.max(vals)), pass_fraction=float(pass_frac), pass_fraction_n=float(pass_frac_n), vals=vals, accepted_vals=accepted_vals))
                     except: pass
                 robustness = dict(hall=hall_rob, islands=island_rob, threshold_n=float(self.runner.task.get('max_n_total',0.5)), gen=self.global_gen, timestamp=time.time())
                 self._robustness_cache[self.global_gen] = robustness
@@ -1132,27 +1206,36 @@ class GAEngine:
             print(f"state write fail {e}")
 
     def _evaluate_exact_hall(self):
-        # exact hall is very expensive (least_squares 321 solves) — skip for small runs or make cheap
-        if self.generations <= 2:
-            return
+        # audit 2026-10-30: validate every hall candidate, mark not_validated if skipped, use full nodes (not 81)
+        # Previously: skip if gens<=2, only 2 candidates, 81 nodes. Now: full validation for correctness (speed secondary).
         if self.global_gen % 5 !=0 and self.global_gen != self.generations:
+            # intermediate generations: mark not yet validated (dashboard/consumers can see)
+            for g in self.hall_of_fame:
+                if 'exact' not in g.metrics and 'exact_validated' not in g.metrics:
+                    g.metrics['exact_validated'] = False
+                    g.metrics['exact_status'] = 'not_validated'
             return
-        # use reduced nodes for speed (81 vs 321) — still validates quality, heavy exact already done in robustness
-        for g in self.hall_of_fame[:2]:
+        # validate all hall members with full fidelity (321 nodes, configured subdivisions)
+        for g in self.hall_of_fame:
             try:
-                orig_nodes = self.runner.cfg.get('validation_nodes')
-                self.runner.cfg['validation_nodes'] = 81
-                exact=evaluate_exact(g, self.runner)
+                baseline='sta'
+                try:
+                    for isl in self.islands:
+                        if isl.strategy == g.island:
+                            baseline = isl.baseline
+                            break
+                except: pass
+                exact=evaluate_exact(g, self.runner, baseline=baseline)
                 g.metrics['exact'] = exact
+                # evaluate_exact now sets exact_validated flag; always overwrite (was not_validated at intermediate gens)
+                g.metrics['exact_validated'] = bool(exact.get('exact_validated', True))
+                g.metrics['exact_status'] = 'validated' if g.metrics.get('exact_validated') else 'failed'
             except Exception as e:
                 try:
                     g.metrics['exact_error'] = str(e)[:300]
+                    g.metrics['exact_validated'] = False
+                    g.metrics['exact_status'] = 'error'
                 except: pass
-            finally:
-                if orig_nodes is not None:
-                    self.runner.cfg['validation_nodes'] = orig_nodes
-                elif 'validation_nodes' in self.runner.cfg:
-                    del self.runner.cfg['validation_nodes']
 
     def _get_migration_live(self):
         """Snapshot for live ring — no heavy compute, just current isolation/next migration."""

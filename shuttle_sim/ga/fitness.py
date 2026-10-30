@@ -34,22 +34,18 @@ def scalar_fitness(metrics, task, distortion=None, theta=None, control_bounds=No
             if fmax > fmax_allowed:
                 val += 2*np.log1p((fmax - fmax_allowed)/0.1e6)
         except: pass
-    # heating rate gate (new 2026-10-30: <100 ph/s)
+    # heating rate gate — only if explicitly configured (audit 00fbaf6: no hidden 100 ph/s)
+    # residual_excitation (n_total) is primary; heating_rate_hz is diagnostic unless max_heating_rate_hz set
     try:
         hr = metrics.get('heating_rate_hz')
         if hr is not None:
             allowed = task.get('max_heating_rate_hz', None)
             if allowed is None:
-                try:
-                    allowed = float(task.get('max_n_total', 0.5))/float(task.get('duration_s', 1))
-                    # cap to 100 for new requirement
-                    if allowed > 100:
-                        allowed = 100
-                except: allowed = 100
-            if allowed is not None and hr > float(allowed)*1.05:
-                # scale: 100 ph/s is target, excess 100 → log1p(1)=0.69*2=1.38, excess 1000 → log1p(10)=2.39*2=4.78
+                # no heating penalty unless explicitly requested (explicit user criterion)
+                pass
+            elif hr > float(allowed)*1.05:
+                # scale: allowed is target, excess allowed → log1p(1)=0.69*2=1.38
                 val += 2.0*np.log1p(max(0.0, hr - float(allowed))/max(float(allowed), 50.0))
-                # also store for breakdown
                 metrics['_heating_penalty'] = 2.0*np.log1p(max(0.0, hr - float(allowed))/max(float(allowed), 50.0))
     except: pass
     # height gates (soft, pipeline now soft)
@@ -101,172 +97,276 @@ def scalar_fitness(metrics, task, distortion=None, theta=None, control_bounds=No
     return float(val)
 
 _W_prepare_cache = {}
+_runner_caches = {}  # global fallback, but primary is per-runner isolated cache
+
+def _w_geom_hash(runner):
+    """Hash runner geometry/task for cache isolation (prevents mixing distances/protocols/traps).
+    Includes direction, start, mass, charge, RF, bounds and GDS identity.
+    """
+    try:
+        dist = float(runner.task.get('distance_m', 0))
+    except: dist = 0
+    try:
+        dur = float(runner.task.get('duration_s', 0))
+    except: dur = 0
+    proto = str(runner.task.get('protocol', 'one_way'))
+    cycles = int(runner.task.get('cycles', 1))
+    try:
+        kind = getattr(runner.trap, 'kind', None) or getattr(runner.cfg.get('trap',{}), 'kind', 'unknown')
+    except: kind = 'unknown'
+    try:
+        n_elec = len(getattr(runner.trap, 'indices', []))
+    except: n_elec = 0
+    try:
+        path = str(runner.cfg.get('trap',{}).get('path',''))[:200]
+    except: path = ''
+    # direction and start (opposite routes must not collide)
+    try:
+        direction = tuple(np.round(np.asarray(runner.task.get('direction', [1,0,0]), float), 6).tolist())
+    except: direction = (1.0,0.0,0.0)
+    try:
+        # start_m from task or trap seed
+        start = runner.start if hasattr(runner, 'start') else runner.cfg.get('trap',{}).get('minimum_seed_m', [0,0,90e-6])
+        start_t = tuple(np.round(np.asarray(start, float), 9).tolist())
+    except: start_t = (0.0,0.0,90e-6)
+    # mass, charge, RF
+    try:
+        mass_amu = float(runner.trap.mass / 1.66053906660e-27) if hasattr(runner.trap, 'mass') else float(runner.cfg.get('trap',{}).get('mass_amu', 40))
+    except: mass_amu = 40.0
+    try:
+        rf_hz = float(runner.trap.rf_frequency_hz) if hasattr(runner.trap, 'rf_frequency_hz') else float(runner.cfg.get('trap',{}).get('rf_frequency_hz', 20e6))
+    except: rf_hz = 20e6
+    try:
+        rf_peak = float(runner.trap.rf_peak_V) if hasattr(runner.trap, 'rf_peak_V') else float(runner.cfg.get('trap',{}).get('rf_peak_V', 160.0))
+    except: rf_peak = 160.0
+    try:
+        trap_cfg = runner.cfg.get('trap',{})
+        lower = float(trap_cfg.get('lower_V', -12.0))
+        upper = float(trap_cfg.get('upper_V', 12.0))
+        bounds = (lower, upper)
+    except: bounds = (-12.0, 12.0)
+    # hash of voltage_spline support (route) length and sroute range as proxy for geometry resolution
+    try:
+        sroute_hash = (len(getattr(runner, 'sroute', [])), float(np.round(getattr(runner, 'sroute', [0])[-1], 6)) if len(getattr(runner, 'sroute', []))>0 else 0)
+    except: sroute_hash = (0,0)
+    return (round(dist,9), round(dur,9), proto, cycles, str(kind), n_elec, path, direction, start_t, round(mass_amu,6), round(rf_hz,1), round(rf_peak,3), bounds, sroute_hash)
+
+def _w_cache_key(runner, freq_coeffs):
+    """Key isolated per runner geometry and frequency coeffs."""
+    coeffs = tuple(np.round(np.asarray(freq_coeffs, float), 4).tolist())
+    geom = _w_geom_hash(runner)
+    return (coeffs, geom)
+
+def _get_runner_w_cache(runner):
+    """Per-runner cache dict (isolated). Falls back to global with geom-isolated key if needed."""
+    if hasattr(runner, '_w_prepare_cache') and isinstance(runner._w_prepare_cache, dict):
+        return runner._w_prepare_cache
+    # use global geom-isolated cache as fallback, but also ensure per-runner attribute exists
+    runner._w_prepare_cache = {}
+    return runner._w_prepare_cache
 
 def _prepare_for_W(runner, freq_coeffs):
-    """Prepare runner for W island frequency variable mode with caching.
+    """Prepare runner for W island frequency variable mode with caching (isolated per runner/geometry).
     freq_coeffs: array length 2 in [-0.15,0.15], maps to ω(s)=ω0*(1+a·env+b·env·(2s-1)), clip ±18% in prepare.
     Returns True if prepared, raises Rejected on failure.
     """
-    key = tuple(np.round(np.asarray(freq_coeffs, float), 4).tolist())
-    if key in _W_prepare_cache:
-        # restore from cache by copying cached prepared arrays back onto runner
-        cached = _W_prepare_cache[key]
+    key = _w_cache_key(runner, freq_coeffs)
+    # try per-runner cache first
+    per = _get_runner_w_cache(runner)
+    if key in per:
+        cached = per[key]
         for k, v in cached.items():
             if isinstance(v, np.ndarray):
                 setattr(runner, k, v.copy() if hasattr(v, 'copy') else v)
             else:
                 setattr(runner, k, v.copy() if isinstance(v, (list, dict)) else v)
+        coeff_tuple = tuple(np.round(np.asarray(freq_coeffs, float),4).tolist())
         runner.frequency_mode = 'variable'
-        runner.frequency_coeffs = list(key)
+        runner.frequency_coeffs = list(coeff_tuple)
         runner.task['frequency_mode'] = 'variable'
-        runner.task['frequency_coeffs'] = list(key)
+        runner.task['frequency_coeffs'] = list(coeff_tuple)
         return True
+    # global cache disabled for correctness (audit P1: opposite routes/RF collided)
+    # keep only per-runner cache; global _W_prepare_cache is no longer used for hits
+    # if needed later, re-enable with full geom hash above and explicit validation
+    pass
     # not cached: do fresh prepare and cache result
+    coeff_list = list(map(float, np.asarray(freq_coeffs, float).tolist()))
     runner.task['frequency_mode'] = 'variable'
-    runner.task['frequency_coeffs'] = list(map(float, freq_coeffs))
+    runner.task['frequency_coeffs'] = coeff_list
     runner.prepare()
-    # cache prepared state (only the arrays that prepare touches)
     to_cache = {}
     for attr in ['sroute','frequency_mode','frequency_coeffs','route_V','voltage_spline','route_r','route_H','route_G','route_BH','Hspline','Gspline','BHspline','correction_modes','support_diagnostics']:
         if hasattr(runner, attr):
-            val = getattr(runner, attr)
-            # CubicSpline not easily copyable via copy, store reference and rebuild? For now store the arrays, splines will be rebuilt from arrays on restore via prepare cache hit path above we just copy spline objects
-            # Spline objects are fine to share (they are read-only)
-            to_cache[attr] = val
+            to_cache[attr] = getattr(runner, attr)
+    per[key] = to_cache
     _W_prepare_cache[key] = to_cache
-    # limit cache size
+    # also ensure runner-local global index for id-based isolation
+    _runner_caches[id(runner)] = per
+    if len(per) > 32:
+        oldest = next(iter(per))
+        del per[oldest]
     if len(_W_prepare_cache) > 64:
-        # drop oldest
         oldest = next(iter(_W_prepare_cache))
         del _W_prepare_cache[oldest]
     return True
 
-def evaluate_genome(genome, runner, baseline='sta', exact_nodes=None, hardware=None, stray=None, freq_scale=1.0):
-    """Evaluate one genome with cheap ROM (or exact if requested).
 
-    Populates genome.fitness, genome.metrics, genome.status.
-    Fix R6: extra genes for 10/12 dims are now extended voltage basis and are NOT ignored.
-    They are passed directly to runner.evaluate (which now supports 10/12 fully).
-    Split islands: V = pure voltage 10 генов (4 базиса×2 ΔV), W = pure frequency
-    10 генов (3 базиса×2 ΔV + 2 freq a·env+b·env·(2s-1) via FrequencyProfile variable).
-    This satisfies request: один остров крутит напряжение, другой частоту.
+def _evaluate_via_protocol(runner, theta, baseline, hardware, stray, freq_scale, exact_nodes, subdivisions, path_samples_per_interval):
+    """Unified protocol dispatcher for all callers (fitness/robust/exact/dashboard/export).
+    Handles stitched K/M/C and periodic P automatically based on baseline/island context.
+    Caller must provide island-specific baseline and handle W stm? This helper is generic for single protocol evaluation.
+    For island-aware dispatch, use evaluate_genome's island detection; this fallback is for export/dashboard where island/bounds known.
     """
-    # Decide theta handling per island
-    island = genome.island
+    # This low-level helper is for completeness; main dispatch is in evaluate_genome/evaluate_exact which inspect island.
+    # Direct call without island assumes generic one-way evaluation.
+    return runner.evaluate(theta, baseline=baseline, hardware=hardware, stray=stray, frequency_scale=freq_scale, exact_nodes=exact_nodes, subdivisions=subdivisions, path_samples_per_interval=path_samples_per_interval)
+
+def _dispatch_evaluate(runner, genome, baseline, hardware, stray, freq_scale, exact_nodes, subdivisions=4, path_samples_per_interval=4):
+    """Island-aware unified dispatcher: one genome -> one protocol everywhere (audit 2026-10-30).
+    Respects W frequency variable mode via _prepare_for_W when freq_scale==1, otherwise uniform scale.
+    Handles K stitched and P periodic by island name. Used by fitness, robust, exact, export, dashboard.
+    """
+    island = getattr(genome, 'island', None) if hasattr(genome, 'island') else None
+    # W split: first 8 voltage, last 2 freq if dim>=10
     is_W = island in ('W', 'frequency', 'freq')
     is_V = island in ('V', 'variable', 'voltage')
-    # For W, split theta: first 8 are voltage/warp, last 2 are frequency
-    if is_W and genome.dim >= 10:
+    if is_W and getattr(genome, 'dim', 8) >= 10 and hasattr(genome, 'theta'):
         theta_voltage = genome.theta[:8].copy()
         freq_coeffs = genome.theta[8:10].copy()
-        # voltage part stays 8 dims (2 warp +6 volt), frequency via variable profile
         theta = theta_voltage
-        use_W_prepare = True
+        # W profile is always applied; frequency_scale is additional uniform perturbation on top (audit P1)
+        use_prepare = True
     else:
-        # V and others: full theta as voltage (including extended harmonic for V)
-        theta = genome.theta if genome.dim in (8, 10, 12) else genome.to_theta8()
+        theta = genome.theta if hasattr(genome, 'theta') else genome
         freq_coeffs = None
-        use_W_prepare = False
-    # If W and caller already supplied freq_scale !=1 (robust scenario), we respect caller's scale and not do variable prepare
-    effective_freq_scale = freq_scale
-    # For W with variable frequency we will use prepare, not frequency_scale uniform
-    do_prepare = use_W_prepare and freq_scale == 1.0
-    # Stash runner state for W prepare so other islands not polluted
-    stashed = None
-    if do_prepare:
-        # stash global runner task and prepared arrays
-        stashed = dict(
-            task_mode=runner.task.get('frequency_mode'),
-            task_coeffs=runner.task.get('frequency_coeffs'),
-            freq_mode=getattr(runner, 'frequency_mode', 'fixed'),
-            freq_coeffs=getattr(runner, 'frequency_coeffs', [0.0,0.0]),
-            sroute=getattr(runner, 'sroute', None),
-            route_V=getattr(runner, 'route_V', None),
-            route_r=getattr(runner, 'route_r', None),
-            route_H=getattr(runner, 'route_H', None),
-            route_G=getattr(runner, 'route_G', None),
-            route_BH=getattr(runner, 'route_BH', None),
-            correction_modes=getattr(runner, 'correction_modes', None),
-            support_diagnostics=getattr(runner, 'support_diagnostics', None),
-            # splines are derived from above, will be restored via cache or prepare
-            voltage_spline=getattr(runner, 'voltage_spline', None),
-            Hspline=getattr(runner, 'Hspline', None),
-            Gspline=getattr(runner, 'Gspline', None),
-            BHspline=getattr(runner, 'BHspline', None),
-        )
+        use_prepare = False
+        if hasattr(genome, 'to_theta8') and getattr(genome, 'dim', 8) not in (8,10,12):
+            theta = genome.to_theta8()
+    # stitched / periodic detection
+    is_stitched = False; stitched_segments=None; is_periodic=False; periodic_repeats=None
+    if isinstance(island, str) and (island.startswith('K') or island.startswith('M') or island.startswith('C') or island in ('STITCH','KRAT')):
+        is_stitched=True
+        import re
+        m=re.match(r'^[KMC](\d+)$', island)
+        if m:
+            try: stitched_segments=int(m.group(1))
+            except: stitched_segments='auto'
+        elif island in ('K','M','C','STITCH','KRAT'):
+            stitched_segments='auto'
+        else: stitched_segments='auto'
+        if isinstance(stitched_segments,int) and stitched_segments>10: stitched_segments=10
+        if isinstance(stitched_segments,int) and stitched_segments<2: stitched_segments=2
+    elif isinstance(island, str) and (island.startswith('P') or island in ('PERIODIC',)):
+        is_periodic=True
+        import re
+        m=re.match(r'^P(\d+)$', island)
+        if m:
+            try: periodic_repeats=int(m.group(1))
+            except: periodic_repeats='auto'
+        elif island in ('P','PERIODIC'): periodic_repeats='auto'
+        else: periodic_repeats='auto'
+        if isinstance(periodic_repeats,int) and periodic_repeats>10: periodic_repeats=10
+        if isinstance(periodic_repeats,int) and periodic_repeats<2: periodic_repeats=2
+    # handle W prepare with exception-safe snapshot (audit P1)
+    # Use context-manager style: stash, prepare, evaluate, always restore in finally
+    stashed=None
+    if use_prepare:
+        stashed=dict(task_mode=runner.task.get('frequency_mode'), task_coeffs=runner.task.get('frequency_coeffs'),
+                     freq_mode=getattr(runner,'frequency_mode','fixed'), freq_coeffs=getattr(runner,'frequency_coeffs',[0.0,0.0]),
+                     sroute=getattr(runner,'sroute',None), route_V=getattr(runner,'route_V',None), route_r=getattr(runner,'route_r',None),
+                     route_H=getattr(runner,'route_H',None), route_G=getattr(runner,'route_G',None), route_BH=getattr(runner,'route_BH',None),
+                     correction_modes=getattr(runner,'correction_modes',None), support_diagnostics=getattr(runner,'support_diagnostics',None),
+                     voltage_spline=getattr(runner,'voltage_spline',None), Hspline=getattr(runner,'Hspline',None),
+                     Gspline=getattr(runner,'Gspline',None), BHspline=getattr(runner,'BHspline',None))
         try:
             _prepare_for_W(runner, freq_coeffs)
-        except Exception as ex:
-            # restore before re-raising as Rejected
-            for k, v in stashed.items():
-                if k.startswith('task_'):
-                    continue
-                if v is not None:
-                    setattr(runner, k if not k.startswith('task_') else k, v)
-            # also restore task
-            if stashed['task_mode'] is not None:
-                runner.task['frequency_mode'] = stashed['task_mode']
-            if stashed['task_coeffs'] is not None:
-                runner.task['frequency_coeffs'] = stashed['task_coeffs']
+        except Exception:
+            # restore stash before propagating prepare failure
+            try:
+                for k,v in stashed.items():
+                    if k.startswith('task_'): continue
+                    if v is not None:
+                        setattr(runner, k, v)
+                if stashed['task_mode'] is not None: runner.task['frequency_mode']=stashed['task_mode']
+                if stashed['task_coeffs'] is not None: runner.task['frequency_coeffs']=stashed['task_coeffs']
+            except: pass
             raise
-    # Detect segmented K/M/C islands: they evaluate stitched Kx(D/K) path
-    is_stitched = False
-    stitched_segments = None
-    is_periodic = False
-    periodic_repeats = None
-    if isinstance(island, str) and (island.startswith('K') or island.startswith('M') or island.startswith('C') or island in ('STITCH','KRAT')):
-        is_stitched = True
-        import re
-        m = re.match(r'^[KMC](\d+)$', island)
-        if m:
-            try:
-                stitched_segments = int(m.group(1))
-            except:
-                stitched_segments = 'auto'
-        elif island in ('K','M','C','STITCH','KRAT'):
-            stitched_segments = 'auto'
-        else:
-            stitched_segments = 'auto'
-        if isinstance(stitched_segments, int) and stitched_segments > 10:
-            stitched_segments = 10
-        if isinstance(stitched_segments, int) and stitched_segments < 2:
-            stitched_segments = 2
-    elif isinstance(island, str) and (island.startswith('P') or island in ('PERIODIC',)):
-        is_periodic = True
-        import re
-        m = re.match(r'^P(\d+)$', island)
-        if m:
-            try:
-                periodic_repeats = int(m.group(1))
-            except:
-                periodic_repeats = 'auto'
-        elif island in ('P','PERIODIC'):
-            periodic_repeats = 'auto'
-        else:
-            periodic_repeats = 'auto'
-        if isinstance(periodic_repeats, int) and periodic_repeats > 10:
-            periodic_repeats = 10
-        if isinstance(periodic_repeats, int) and periodic_repeats < 2:
-            periodic_repeats = 2
-
+    # now evaluate with guaranteed restore in finally
     try:
         if is_stitched:
-            if do_prepare:
-                metrics = runner.evaluate(theta, baseline=baseline, hardware=hardware, stray=stray,
-                                          frequency_scale=effective_freq_scale, exact_nodes=exact_nodes, subdivisions=min(1, runner.cfg.get('subdivisions',4)), path_samples_per_interval=4)
-            else:
-                metrics = runner.evaluate_segmented(theta, baseline=baseline, segments=stitched_segments, hardware=hardware, stray=stray,
-                                                   frequency_scale=effective_freq_scale, exact_nodes=exact_nodes, subdivisions=min(1, runner.cfg.get('subdivisions',4)), path_samples_per_interval=4)
+            metrics=runner.evaluate_segmented(theta, baseline=baseline, segments=stitched_segments, hardware=hardware, stray=stray, frequency_scale=freq_scale, exact_nodes=exact_nodes, subdivisions=(subdivisions if subdivisions is not None else runner.cfg.get('subdivisions',4)), path_samples_per_interval=path_samples_per_interval)
         elif is_periodic:
-            if do_prepare:
-                metrics = runner.evaluate(theta, baseline=baseline, hardware=hardware, stray=stray,
-                                          frequency_scale=effective_freq_scale, exact_nodes=exact_nodes, subdivisions=min(1, runner.cfg.get('subdivisions',4)), path_samples_per_interval=4)
-            else:
-                metrics = runner.evaluate_krat_periodic(theta, baseline=baseline, repeats=periodic_repeats, hardware=hardware, stray=stray,
-                                                       frequency_scale=effective_freq_scale, exact_nodes=exact_nodes, subdivisions=min(1, runner.cfg.get('subdivisions',4)), path_samples_per_interval=4)
+            metrics=runner.evaluate_krat_periodic(theta, baseline=baseline, repeats=periodic_repeats, hardware=hardware, stray=stray, frequency_scale=freq_scale, exact_nodes=exact_nodes, subdivisions=(subdivisions if subdivisions is not None else runner.cfg.get('subdivisions',4)), path_samples_per_interval=path_samples_per_interval)
         else:
-                metrics = runner.evaluate(theta, baseline=baseline, hardware=hardware, stray=stray,
-                                          frequency_scale=effective_freq_scale, exact_nodes=exact_nodes, subdivisions=min(1, runner.cfg.get('subdivisions',4)), path_samples_per_interval=4)
+            metrics=runner.evaluate(theta, baseline=baseline, hardware=hardware, stray=stray, frequency_scale=freq_scale, exact_nodes=exact_nodes, subdivisions=(subdivisions if subdivisions is not None else runner.cfg.get('subdivisions',4)), path_samples_per_interval=path_samples_per_interval)
+        return metrics, stashed, use_prepare
+    finally:
+        # always restore W snapshot, even if evaluate raised
+        if stashed is not None and use_prepare:
+            try:
+                _restore_after_W(runner, stashed)
+            except: pass
+
+def _restore_after_W(runner, stashed):
+    if stashed is None: return
+    try:
+        runner.task['frequency_mode'] = stashed['task_mode'] if stashed['task_mode'] is not None else 'fixed'
+        runner.task['frequency_coeffs'] = stashed['task_coeffs'] if stashed['task_coeffs'] is not None else [0.0,0.0]
+        if stashed['task_mode'] in (None,'fixed') or stashed['freq_mode']=='fixed':
+            # try per-runner cache for fixed
+            per=_get_runner_w_cache(runner)
+            fixed_key=_w_cache_key(runner, [0.0,0.0])
+            # re-derive fixed geometry key is with zeros and current geom (which for fixed is same)
+            # Instead we can simply re-prepare fixed if not cached
+            found=False
+            for k in list(per.keys()):
+                if k[0]==(0.0,0.0):
+                    cached=per[k]
+                    for kk,v in cached.items():
+                        setattr(runner, kk, v)
+                    runner.frequency_mode='fixed'
+                    runner.frequency_coeffs=[0.0,0.0]
+                    runner.task['frequency_mode']='fixed'
+                    runner.task['frequency_coeffs']=[0.0,0.0]
+                    found=True
+                    break
+            if not found:
+                # rebuild fixed via prepare
+                runner.prepare()
+                # cache it
+                to_cache={}
+                for attr in ['sroute','frequency_mode','frequency_coeffs','route_V','voltage_spline','route_r','route_H','route_G','route_BH','Hspline','Gspline','BHspline','correction_modes','support_diagnostics']:
+                    if hasattr(runner, attr): to_cache[attr]=getattr(runner, attr)
+                # construct fixed key properly
+                try:
+                    fk=_w_cache_key(runner, [0.0,0.0])
+                    per[fk]=to_cache
+                    _W_prepare_cache[fk]=to_cache
+                except: pass
+        else:
+            for k in ['frequency_mode','frequency_coeffs','sroute','route_V','route_r','route_H','route_G','route_BH','correction_modes','support_diagnostics','voltage_spline','Hspline','Gspline','BHspline']:
+                if stashed.get(k) is not None:
+                    setattr(runner, k, stashed[k])
+    except Exception:
+        try:
+            runner.task['frequency_mode']='fixed'
+            runner.task['frequency_coeffs']=[0.0,0.0]
+            runner.prepare()
+        except: pass
+
+def evaluate_genome(genome, runner, baseline='sta', exact_nodes=None, hardware=None, stray=None, freq_scale=1.0):
+    """Evaluate one genome with cheap ROM (or exact if requested). Unified dispatcher.
+    Populates genome.fitness, genome.metrics, genome.status.
+    Fix R6: extra genes for 10/12 dims are now extended voltage basis and are NOT ignored.
+    Split islands: V = pure voltage 10 генов (4 базиса×2 ΔV), W = pure frequency
+    10 генов (3 базиса×2 ΔV + 2 freq a·env+b·env·(2s-1) via FrequencyProfile variable).
+    Unified protocol: one genome -> one protocol everywhere (audit 2026-10-30).
+    """
+    # Unified island-aware dispatch
+    effective_freq_scale = freq_scale
+    try:
+        metrics, stashed, used_prepare = _dispatch_evaluate(runner, genome, baseline, hardware, stray, effective_freq_scale, exact_nodes, subdivisions=1, path_samples_per_interval=4)
         # For W, theta is voltage subset (8) but penalty should consider full genome (10) including freq coeffs
         theta_for_penalty = genome.theta
         bounds_for_penalty = genome.bounds
@@ -281,22 +381,20 @@ def evaluate_genome(genome, runner, baseline='sta', exact_nodes=None, hardware=N
             vals=[fit]
             for sc in train:
                 try:
-                    # For R island keep scenario's frequency_scale; for V-derived frequency we already applied above only to primary fit
-                    m2=runner.evaluate(theta,'sta', hardware=Hardware(**sc['hardware']), stray=sc['stray_V_m'], frequency_scale=sc['frequency_scale'], exact_nodes=exact_nodes)
+                    # For R island keep scenario's frequency_scale; use unified dispatcher for same genome
+                    m2, st2, _ = _dispatch_evaluate(runner, genome, 'sta', hardware=Hardware(**sc['hardware']), stray=sc['stray_V_m'], freq_scale=sc['frequency_scale'], exact_nodes=exact_nodes, subdivisions=4, path_samples_per_interval=4)
+                    try:
+                        _restore_after_W(runner, st2)
+                    except: pass
                     vals.append(scalar_fitness(
-                        m2, runner.task, m2.get('distortion'), theta, genome.bounds,
+                        m2, runner.task, m2.get('distortion'), theta_for_penalty, genome.bounds,
                         runner.cfg.get('control_regularization_weight',1e-4),
                         loss_weights=runner.loss_weights))
                 except Exception as ex_rob:
-                    # Было 1e6 → давало 8.83e5 (0.35*mean+0.65*max) и полностью убивало R-остров:
-                    # даже если основной fit ~0.5, два фейла 1e6 давали (0.5+2e6)/3≈666k среднее, max 1e6 → 883k.
-                    # Делаем умеренный штраф, чтобы робастность учитывалась но не душила остров и позволяла миграцию.
                     try:
                         code = getattr(ex_rob, 'code', str(ex_rob)) if hasattr(ex_rob, 'code') else str(ex_rob)
                     except: code='robust_fail'
-                    # мягкий штраф: primary + 6..8 (эквивалент ~5-10 n) вместо 1e6
                     vals.append(float(fit) + 7.0)
-            # cap robust vals to avoid одного выброса 1e6 который снова даст 8e5 — клипуем к fit+10
             try:
                 vals = [min(float(v), float(fit)+10.0) if float(v) > float(fit)+10 else float(v) for v in vals]
             except: pass
@@ -311,103 +409,49 @@ def evaluate_genome(genome, runner, baseline='sta', exact_nodes=None, hardware=N
         genome.fitness = 1e6
         genome.metrics = {'error':str(ex), 'code':ex.code}
         genome.status = ex.code
+        stashed = None
+        used_prepare = False
     except Exception as ex:
         genome.fitness = 1e6
         genome.metrics = {'error':str(ex), 'code':'numerical_failure'}
         genome.status = 'numerical_failure'
+        stashed = None
+        try:
+            used_prepare
+        except: used_prepare=False
     finally:
-        if stashed is not None and do_prepare:
-            # restore runner to original fixed mode regardless of success/failure
-            # Use prepare to rebuild fixed splines reliably (avoid stale spline objects)
-            try:
-                runner.task['frequency_mode'] = stashed['task_mode'] if stashed['task_mode'] is not None else 'fixed'
-                runner.task['frequency_coeffs'] = stashed['task_coeffs'] if stashed['task_coeffs'] is not None else [0.0,0.0]
-                # If original was fixed, do a fresh prepare to rebuild splines from fixed route
-                # If we have cached fixed state, use it; otherwise prepare
-                if stashed['task_mode'] in (None, 'fixed') or stashed['freq_mode'] == 'fixed':
-                    # Check if we have a cached fixed prepare (key (0,0))
-                    fixed_key = (0.0, 0.0)
-                    if fixed_key in _W_prepare_cache:
-                        cached = _W_prepare_cache[fixed_key]
-                        for k, v in cached.items():
-                            setattr(runner, k, v)
-                        runner.frequency_mode = 'fixed'
-                        runner.frequency_coeffs = [0.0, 0.0]
-                        runner.task['frequency_mode'] = 'fixed'
-                        runner.task['frequency_coeffs'] = [0.0, 0.0]
-                    else:
-                        runner.prepare()
-                        # cache fixed for future
-                        to_cache = {}
-                        for attr in ['sroute','frequency_mode','frequency_coeffs','route_V','voltage_spline','route_r','route_H','route_G','route_BH','Hspline','Gspline','BHspline','correction_modes','support_diagnostics']:
-                            if hasattr(runner, attr):
-                                to_cache[attr] = getattr(runner, attr)
-                        _W_prepare_cache[fixed_key] = to_cache
-                else:
-                    for k in ['frequency_mode','frequency_coeffs','sroute','route_V','route_r','route_H','route_G','route_BH','correction_modes','support_diagnostics','voltage_spline','Hspline','Gspline','BHspline']:
-                        if stashed.get(k) is not None:
-                            setattr(runner, k, stashed[k])
-            except Exception:
-                try:
-                    runner.task['frequency_mode'] = 'fixed'
-                    runner.task['frequency_coeffs'] = [0.0, 0.0]
-                    runner.prepare()
-                except Exception:
-                    pass
+        try:
+            if 'stashed' in locals() and stashed is not None and 'used_prepare' in locals() and used_prepare:
+                _restore_after_W(runner, stashed)
+        except: pass
+        # also ensure robust interim stashes already restored
     return genome
 
 def evaluate_exact(genome, runner, baseline='sta', hardware=None):
-    """Full exact validation for hall of fame (slow) – uses full theta (8/10/12) so extra genes are validated.
+    """Full exact validation for hall of fame (slow) – uses unified dispatcher.
     For W island, frequency coeffs are handled via variable prepare as in evaluate_genome.
+    Isolated per geometry, same as evaluate_genome (audit fix).
+    exact_evaluated = calculation completed at high fidelity
+    exact_validated = constraints passed (accepted) at high fidelity, not just completion
     """
-    island = genome.island
-    is_W = island in ('W', 'frequency', 'freq')
-    if is_W and genome.dim >= 10:
-        theta = genome.theta[:8].copy()
-        freq_coeffs = genome.theta[8:10].copy()
-        stashed = dict(
-            task_mode=runner.task.get('frequency_mode'),
-            task_coeffs=runner.task.get('frequency_coeffs'),
-            freq_mode=getattr(runner, 'frequency_mode', 'fixed'),
-            freq_coeffs=getattr(runner, 'frequency_coeffs', [0.0,0.0]),
-            sroute=getattr(runner, 'sroute', None),
-            route_V=getattr(runner, 'route_V', None),
-            route_r=getattr(runner, 'route_r', None),
-            route_H=getattr(runner, 'route_H', None),
-            route_G=getattr(runner, 'route_G', None),
-            route_BH=getattr(runner, 'route_BH', None),
-            correction_modes=getattr(runner, 'correction_modes', None),
-            support_diagnostics=getattr(runner, 'support_diagnostics', None),
-            voltage_spline=getattr(runner, 'voltage_spline', None),
-            Hspline=getattr(runner, 'Hspline', None),
-            Gspline=getattr(runner, 'Gspline', None),
-            BHspline=getattr(runner, 'BHspline', None),
-        )
-        try:
-            _prepare_for_W(runner, freq_coeffs)
-            nodes=runner.cfg.get('validation_nodes',321)
-            subdiv=runner.cfg.get('validation_subdivisions',4)
-            m=runner.evaluate(theta, baseline, hardware=hardware, exact_nodes=nodes, subdivisions=subdiv)
-            m['exact_nodes']=nodes
-            return m
-        except Rejected as ex:
-            nodes=runner.cfg.get('validation_nodes',321)
-            return {'error':str(ex), 'code':ex.code, 'exact_nodes':nodes}
-        finally:
-            try:
-                runner.task['frequency_mode'] = stashed['task_mode'] if stashed['task_mode'] is not None else 'fixed'
-                runner.task['frequency_coeffs'] = stashed['task_coeffs'] if stashed['task_coeffs'] is not None else [0.0,0.0]
-                for k in ['frequency_mode','frequency_coeffs','sroute','route_V','route_r','route_H','route_G','route_BH','correction_modes','support_diagnostics','voltage_spline','Hspline','Gspline','BHspline']:
-                    if stashed.get(k) is not None:
-                        setattr(runner, k, stashed[k])
-            except Exception:
-                pass
-    theta = genome.theta if genome.dim in (8,10,12) else genome.to_theta8()
     nodes=runner.cfg.get('validation_nodes',321)
     subdiv=runner.cfg.get('validation_subdivisions',4)
     try:
-        m=runner.evaluate(theta, baseline, hardware=hardware, exact_nodes=nodes, subdivisions=subdiv)
-        m['exact_nodes']=nodes
-        return m
+        metrics, stashed, used_prepare = _dispatch_evaluate(runner, genome, baseline, hardware, None, 1.0, exact_nodes=nodes, subdivisions=subdiv, path_samples_per_interval=8)
+        metrics['exact_nodes']=nodes
+        metrics['actual_exact_nodes']=nodes
+        metrics['actual_subdivisions']=subdiv
+        metrics['exact_evaluated']=True
+        # exact_validated should reflect constraints, not just completion (audit)
+        # keep legacy exact_validated as constraints for backward compat, but also expose split flags
+        is_accepted = bool(metrics.get('accepted', False))
+        is_high = bool(metrics.get('numerical_validation_passed', True))  # high fidelity already
+        metrics['exact_validated']=bool(is_accepted and is_high)
+        metrics['exact_constraints_passed']=is_accepted
+        metrics['exact_numerical_validation_passed']=is_high
+        # ensure restoration was already done by dispatcher; extra no-op
+        return metrics
     except Rejected as ex:
-        return {'error':str(ex), 'code':ex.code, 'exact_nodes':nodes}
+        return {'error':str(ex), 'code':ex.code, 'exact_nodes':nodes, 'actual_exact_nodes':nodes, 'actual_subdivisions':subdiv, 'exact_evaluated':False, 'exact_validated':False, 'exact_constraints_passed':False, 'exact_numerical_validation_passed':False}
+    except Exception as ex:
+        return {'error':str(ex), 'code':'numerical_failure', 'exact_nodes':nodes, 'actual_exact_nodes':nodes, 'actual_subdivisions':subdiv, 'exact_evaluated':False, 'exact_validated':False, 'exact_constraints_passed':False, 'exact_numerical_validation_passed':False}

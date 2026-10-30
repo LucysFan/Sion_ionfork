@@ -1444,7 +1444,7 @@ def main():
     ap = argparse.ArgumentParser(description="Shuttling live dashboard server")
     ap.add_argument("--out", default="output/ga_run")
     ap.add_argument("--port", type=int, default=8000)
-    ap.add_argument("--host", default="0.0.0.0")
+    ap.add_argument("--host", default="127.0.0.1")
     args = ap.parse_args()
     out = pathlib.Path(args.out)
     static = pathlib.Path(__file__).parent / "static"

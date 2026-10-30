@@ -107,8 +107,8 @@ def main():
     # ensure dashboard server if requested
     dash_proc = None
     if args.dashboard:
-        print(f"[get_shuttle] поднимаю дашборд на 0.0.0.0:{args.port} → http://localhost:{args.port}  (вкладки Setup/Training/GA/Trap)")
-        dash_proc = subprocess.Popen([sys.executable, "-m", "shuttle_sim.dashboard.server", "--out", str(out), "--port", str(args.port), "--host", "0.0.0.0"])
+        print(f"[get_shuttle] поднимаю дашборд на 127.0.0.1:{args.port} → http://localhost:{args.port}  (вкладки Setup/Training/GA/Trap)")
+        dash_proc = subprocess.Popen([sys.executable, "-m", "shuttle_sim.dashboard.server", "--out", str(out), "--port", str(args.port), "--host", "127.0.0.1"])
         time.sleep(1.2)
         if dash_proc.poll() is not None:
             print("[get_shuttle] дашборд не стартанул — продолжаю без него", file=sys.stderr)
@@ -176,13 +176,109 @@ def main():
                             baseline = isl.baseline
                             break
                 except: pass
-                # метрики уже внутри g.metrics, но пересчитаем exact для консистентности (N4)
-                # для скорости hall используем 161 узел, только для best потом 321
+                # метрики уже внутри g.metrics, но пересчитаем exact для консистентности (N4) через единый диспетчер
+                # один геном -> один протокол везде (audit 2026-10-30): используем fitness.evaluate_exact для K/P/W
                 try:
-                    eval_nodes = 161 if rank > 0 else runner.cfg.get("validation_nodes",321)
-                    metrics = runner.evaluate(np.asarray(g.theta), baseline=baseline, exact_nodes=eval_nodes, subdivisions=runner.cfg.get("validation_subdivisions",4))
-                except Exception:
-                    metrics = g.metrics if hasattr(g,"metrics") else {}
+                    from shuttle_sim.ga.fitness import evaluate_exact as _eval_exact
+                    # для скорости hall используем 161 узел для rank>0, но через unified dispatcher (изоляция W, K/P)
+                    # временно подменяем validation_nodes/subdivisions в cfg, evaluate_exact возьмет их
+                    orig_nodes = runner.cfg.get('validation_nodes')
+                    orig_sub = runner.cfg.get('validation_subdivisions')
+                    try:
+                        eval_nodes = 161 if rank > 0 else runner.cfg.get("validation_nodes",321)
+                        runner.cfg['validation_nodes'] = eval_nodes
+                        # keep subdivisions as is
+                        metrics = _eval_exact(g, runner, baseline=baseline)
+                        # metrics already contains exact_nodes and exact_validated
+                    finally:
+                        if orig_nodes is not None:
+                            runner.cfg['validation_nodes'] = orig_nodes
+                        elif 'validation_nodes' in runner.cfg:
+                            del runner.cfg['validation_nodes']
+                        if orig_sub is not None:
+                            runner.cfg['validation_subdivisions'] = orig_sub
+                except Exception as _e:
+                    # fallback to genome metrics if exact fails
+                    try:
+                        metrics = g.metrics if hasattr(g,"metrics") else {}
+                    except: metrics = {}
+                # hash export control from actual command array (audit: not just theta)
+                try:
+                    import hashlib, json, numpy as _np
+                    # try to get actual cmd for hash (canonical: time, channel order, voltages)
+                    cmd_hash = None
+                    control_hash_theta = hashlib.sha256(json.dumps(g.theta.tolist()).encode()).hexdigest()[:12]
+                    metrics['_export_control_hash_theta'] = control_hash_theta
+                    try:
+                        # generate actual commands via runner (island-aware) for hash
+                        theta_arr = _np.asarray(g.theta)
+                        # handle W split for cmd generation
+                        if g.island in ('W','frequency','freq') and len(theta_arr)>=10:
+                            theta_cmd = theta_arr[:8]
+                            # need to prepare W to get correct voltage basis (use runner's current prepared state)
+                            # For hash we can approximate via runner.commands with prepared W if needed
+                            # To avoid mutating runner, we try direct commands for generic, else fallback to theta hash
+                            try:
+                                from shuttle_sim.ga.fitness import _prepare_for_W, _restore_after_W, _w_cache_key, _get_runner_w_cache
+                                freq_c = theta_arr[8:10]
+                                stashed_cmd = dict(task_mode=runner.task.get('frequency_mode'), task_coeffs=runner.task.get('frequency_coeffs'),
+                                                   freq_mode=getattr(runner,'frequency_mode','fixed'), freq_coeffs=getattr(runner,'frequency_coeffs',[0.0,0.0]),
+                                                   sroute=getattr(runner,'sroute',None), route_V=getattr(runner,'route_V',None), route_r=getattr(runner,'route_r',None),
+                                                   route_H=getattr(runner,'route_H',None), route_G=getattr(runner,'route_G',None), route_BH=getattr(runner,'route_BH',None),
+                                                   correction_modes=getattr(runner,'correction_modes',None), support_diagnostics=getattr(runner,'support_diagnostics',None),
+                                                   voltage_spline=getattr(runner,'voltage_spline',None), Hspline=getattr(runner,'Hspline',None),
+                                                   Gspline=getattr(runner,'Gspline',None), BHspline=getattr(runner,'BHspline',None))
+                                _prepare_for_W(runner, freq_c)
+                                # now generate cmd for the prepared runner
+                                if g.island.startswith('K') or g.island.startswith('M') or g.island.startswith('C') or g.island in ('STITCH','KRAT'):
+                                    import re
+                                    m=re.match(r'^[KMC](\d+)$', g.island)
+                                    segs=int(m.group(1)) if m else 'auto'
+                                    _, cmd_arr, _ = runner.commands_segmented(theta_cmd, baseline=baseline, segments=segs)
+                                elif g.island.startswith('P') or g.island in ('PERIODIC',):
+                                    import re
+                                    m=re.match(r'^P(\d+)$', g.island)
+                                    reps=int(m.group(1)) if m else 'auto'
+                                    _, cmd_arr, _ = runner.commands_krat_periodic(theta_cmd, baseline=baseline, repeats=reps)
+                                else:
+                                    _, cmd_arr, _ = runner.commands(theta_cmd, baseline=baseline)
+                                _restore_after_W(runner, stashed_cmd)
+                            except:
+                                try: _restore_after_W(runner, stashed_cmd)
+                                except: pass
+                                # fallback generic
+                                _, cmd_arr, _ = runner.commands(theta_arr, baseline=baseline)
+                        else:
+                            if g.island.startswith('K') or g.island.startswith('M') or g.island.startswith('C') or g.island in ('STITCH','KRAT'):
+                                import re
+                                m=re.match(r'^[KMC](\d+)$', g.island)
+                                segs=int(m.group(1)) if m else 'auto'
+                                _, cmd_arr, _ = runner.commands_segmented(theta_arr, baseline=baseline, segments=segs)
+                            elif g.island.startswith('P') or g.island in ('PERIODIC',):
+                                import re
+                                m=re.match(r'^P(\d+)$', g.island)
+                                reps=int(m.group(1)) if m else 'auto'
+                                _, cmd_arr, _ = runner.commands_krat_periodic(theta_arr, baseline=baseline, repeats=reps)
+                            else:
+                                _, cmd_arr, _ = runner.commands(theta_arr, baseline=baseline)
+                        # canonical hash: time, channel order, voltages (flattened)
+                        cmd_bytes = cmd_arr.tobytes() if isinstance(cmd_arr, _np.ndarray) else str(cmd_arr).encode()
+                        # also include electrode order
+                        order = ','.join(getattr(runner.trap, 'names', []))
+                        cmd_hash = hashlib.sha256(cmd_bytes).hexdigest()[:16]
+                        order_hash = hashlib.sha256(order.encode()).hexdigest()[:8]
+                        metrics['_export_control_hash'] = f"{cmd_hash[:12]}-{order_hash}"
+                        metrics['_export_control_hash_cmd'] = cmd_hash
+                    except Exception as _e_hash:
+                        metrics['_export_control_hash'] = control_hash_theta
+                        metrics['_export_control_hash_error'] = str(_e_hash)[:200]
+                    metrics['_export_protocol'] = runner.task.get('protocol','one_way')
+                    metrics['_export_cycles'] = runner.task.get('cycles',1)
+                    # also store actual fidelity from metrics
+                    metrics['_export_actual_subdivisions'] = metrics.get('actual_subdivisions')
+                    metrics['_export_actual_exact_nodes'] = metrics.get('actual_exact_nodes')
+                    metrics['_export_hardware_dt_s'] = metrics.get('hardware_dt_s')
+                except: pass
                 rec = {
                     "rank": rank,
                     "theta": g.theta.tolist(),
@@ -197,12 +293,70 @@ def main():
                 hall_json.append(rec)
                 # отдельный файл на алгоритм
                 (hall_dir / f"algo_{rank:03d}.json").write_text(json.dumps(rec, indent=2, ensure_ascii=False), encoding="utf-8")
-                # также waveform для топ-1 (не 3, экономия)
+                # также waveform для топ-1 — через единый диспетчер (K/P/W корректно)
                 if rank < 1:
                     try:
-                        from shuttle_sim.pipeline import Runner as R2  # reuse
-                        tr = runner.evaluate(np.asarray(g.theta), baseline=baseline, exact_nodes=161, subdivisions=runner.cfg.get("validation_subdivisions",4), keep=True)
-                        # tr is (result, trace)
+                        from shuttle_sim.ga.fitness import _dispatch_evaluate, _restore_after_W
+                        # waveform need keep=True: use dispatcher with keep
+                        # _dispatch_evaluate doesn't support keep, so call runner.* directly via island logic but with stash handling
+                        # Reuse _dispatch_evaluate path but with keep: we manually dispatch
+                        import numpy as np
+                        # isolate W if needed via _dispatch_evaluate's stash mechanism, but for keep we do direct
+                        # For simplicity, call _dispatch_evaluate then also get trace via runner.evaluate with keep handling through same island
+                        # We'll attempt to get trace via unified path: use _dispatch but with keep via underlying runner calls
+                        # Fallback: direct runner dispatch based on island
+                        island = g.island
+                        theta_arr = np.asarray(g.theta)
+                        # Determine if stitched/periodic/W
+                        is_stitched = isinstance(island, str) and (island.startswith('K') or island.startswith('M') or island.startswith('C') or island in ('STITCH','KRAT'))
+                        is_periodic = isinstance(island, str) and (island.startswith('P') or island in ('PERIODIC',))
+                        is_W = island in ('W','frequency','freq') and len(theta_arr)>=10
+                        # For W, theta voltage part
+                        if is_W:
+                            theta_use = theta_arr[:8]
+                            freq_coeffs = theta_arr[8:10]
+                            # prepare W temporarily
+                            from shuttle_sim.ga.fitness import _prepare_for_W, _restore_after_W, _get_runner_w_cache, _w_cache_key
+                            stashed=None
+                            try:
+                                stashed=dict(task_mode=runner.task.get('frequency_mode'), task_coeffs=runner.task.get('frequency_coeffs'),
+                                             freq_mode=getattr(runner,'frequency_mode','fixed'), freq_coeffs=getattr(runner,'frequency_coeffs',[0.0,0.0]),
+                                             sroute=getattr(runner,'sroute',None), route_V=getattr(runner,'route_V',None), route_r=getattr(runner,'route_r',None),
+                                             route_H=getattr(runner,'route_H',None), route_G=getattr(runner,'route_G',None), route_BH=getattr(runner,'route_BH',None),
+                                             correction_modes=getattr(runner,'correction_modes',None), support_diagnostics=getattr(runner,'support_diagnostics',None),
+                                             voltage_spline=getattr(runner,'voltage_spline',None), Hspline=getattr(runner,'Hspline',None),
+                                             Gspline=getattr(runner,'Gspline',None), BHspline=getattr(runner,'BHspline',None))
+                                _prepare_for_W(runner, freq_coeffs)
+                                # now dispatch based on protocol
+                                if is_stitched:
+                                    import re
+                                    m=re.match(r'^[KMC](\d+)$', island)
+                                    segs=int(m.group(1)) if m else 'auto'
+                                    tr = runner.evaluate_segmented(theta_use, baseline=baseline, segments=segs, keep=True)
+                                elif is_periodic:
+                                    import re
+                                    m=re.match(r'^P(\d+)$', island)
+                                    reps=int(m.group(1)) if m else 'auto'
+                                    tr = runner.evaluate_krat_periodic(theta_use, baseline=baseline, repeats=reps, keep=True)
+                                else:
+                                    tr = runner.evaluate(theta_use, baseline=baseline, keep=True)
+                            finally:
+                                if stashed is not None:
+                                    try: _restore_after_W(runner, stashed)
+                                    except: pass
+                        else:
+                            if is_stitched:
+                                import re
+                                m=re.match(r'^[KMC](\d+)$', island)
+                                segs=int(m.group(1)) if m else 'auto'
+                                tr = runner.evaluate_segmented(theta_arr, baseline=baseline, segments=segs, keep=True)
+                            elif is_periodic:
+                                import re
+                                m=re.match(r'^P(\d+)$', island)
+                                reps=int(m.group(1)) if m else 'auto'
+                                tr = runner.evaluate_krat_periodic(theta_arr, baseline=baseline, repeats=reps, keep=True)
+                            else:
+                                tr = runner.evaluate(theta_arr, baseline=baseline, keep=True)
                         if isinstance(tr, tuple):
                             _, trace = tr
                             import csv
@@ -216,11 +370,82 @@ def main():
 
             (out / "ga_hall.json").write_text(json.dumps(hall_json, indent=2, ensure_ascii=False), encoding="utf-8")
 
-            # итоговый best — для прошивки
+            # итоговый best — для прошивки через unified dispatcher (хеш control vs final evaluation фиксируется)
             best = hall[0]
             baseline0 = hall_json[0]["baseline"]
             try:
-                metrics0 = runner.evaluate(np.asarray(best.theta), baseline=baseline0, exact_nodes=321)
+                from shuttle_sim.ga.fitness import evaluate_exact as _eval_best
+                import hashlib, json as _json
+                # ensure full validation nodes for best
+                orig_nodes_best = runner.cfg.get('validation_nodes')
+                try:
+                    runner.cfg['validation_nodes'] = 321
+                    metrics0 = _eval_best(best, runner, baseline=baseline0)
+                finally:
+                    if orig_nodes_best is not None:
+                        runner.cfg['validation_nodes'] = orig_nodes_best
+                    elif 'validation_nodes' in runner.cfg:
+                        del runner.cfg['validation_nodes']
+                # hash separation: control (actual cmd) vs final metrics for round-trip/repeated semantics
+                try:
+                    import numpy as _np2
+                    # control hash from actual cmd (same as hall, but for best)
+                    try:
+                        theta_arr2 = _np2.asarray(best.theta)
+                        if best.island in ('W','frequency','freq') and len(theta_arr2)>=10:
+                            theta_cmd2 = theta_arr2[:8]
+                            freq_c2 = theta_arr2[8:10]
+                            stashed2 = dict(task_mode=runner.task.get('frequency_mode'), task_coeffs=runner.task.get('frequency_coeffs'),
+                                            freq_mode=getattr(runner,'frequency_mode','fixed'), freq_coeffs=getattr(runner,'frequency_coeffs',[0.0,0.0]),
+                                            sroute=getattr(runner,'sroute',None), route_V=getattr(runner,'route_V',None), route_r=getattr(runner,'route_r',None),
+                                            route_H=getattr(runner,'route_H',None), route_G=getattr(runner,'route_G',None), route_BH=getattr(runner,'route_BH',None),
+                                            correction_modes=getattr(runner,'correction_modes',None), support_diagnostics=getattr(runner,'support_diagnostics',None),
+                                            voltage_spline=getattr(runner,'voltage_spline',None), Hspline=getattr(runner,'Hspline',None),
+                                            Gspline=getattr(runner,'Gspline',None), BHspline=getattr(runner,'BHspline',None))
+                            from shuttle_sim.ga.fitness import _prepare_for_W, _restore_after_W
+                            _prepare_for_W(runner, freq_c2)
+                            if baseline0.startswith('K') or baseline0.startswith('M') or baseline0.startswith('C') or baseline0 in ('STITCH','KRAT'):
+                                import re as _re2
+                                m2=_re2.match(r'^[KMC](\d+)$', best.island)
+                                segs2=int(m2.group(1)) if m2 else 'auto'
+                                _, cmd_arr2, _ = runner.commands_segmented(theta_cmd2, baseline=baseline0, segments=segs2)
+                            elif best.island.startswith('P') or best.island in ('PERIODIC',):
+                                import re as _re2b
+                                m2b=_re2b.match(r'^P(\d+)$', best.island)
+                                reps2=int(m2b.group(1)) if m2b else 'auto'
+                                _, cmd_arr2, _ = runner.commands_krat_periodic(theta_cmd2, baseline=baseline0, repeats=reps2)
+                            else:
+                                _, cmd_arr2, _ = runner.commands(theta_cmd2, baseline=baseline0)
+                            _restore_after_W(runner, stashed2)
+                        else:
+                            if best.island.startswith('K') or best.island.startswith('M') or best.island.startswith('C') or best.island in ('STITCH','KRAT'):
+                                import re as _re3
+                                m3=_re3.match(r'^[KMC](\d+)$', best.island)
+                                segs3=int(m3.group(1)) if m3 else 'auto'
+                                _, cmd_arr2, _ = runner.commands_segmented(theta_arr2, baseline=baseline0, segments=segs3)
+                            elif best.island.startswith('P') or best.island in ('PERIODIC',):
+                                import re as _re3b
+                                m3b=_re3b.match(r'^P(\d+)$', best.island)
+                                reps3=int(m3b.group(1)) if m3b else 'auto'
+                                _, cmd_arr2, _ = runner.commands_krat_periodic(theta_arr2, baseline=baseline0, repeats=reps3)
+                            else:
+                                _, cmd_arr2, _ = runner.commands(theta_arr2, baseline=baseline0)
+                        ctrl_h = hashlib.sha256(cmd_arr2.tobytes()).hexdigest()[:16]
+                        order2 = ','.join(getattr(runner.trap, 'names', []))
+                        order_h2 = hashlib.sha256(order2.encode()).hexdigest()[:8]
+                        metrics0['_control_hash'] = f"{ctrl_h[:12]}-{order_h2}"
+                        metrics0['_control_hash_cmd'] = ctrl_h
+                    except Exception as _e_best_hash:
+                        ctrl_h = hashlib.sha256(_json.dumps(best.theta.tolist()).encode()).hexdigest()[:16]
+                        metrics0['_control_hash'] = ctrl_h
+                        metrics0['_control_hash_error'] = str(_e_best_hash)[:200]
+                    metrics_h = hashlib.sha256(_json.dumps({k: float(v) for k,v in metrics0.items() if isinstance(v,(int,float))}, sort_keys=True).encode()).hexdigest()[:16]
+                    metrics0['_metrics_hash'] = metrics_h
+                    metrics0['_export_semantics'] = f"{runner.task.get('protocol','one_way')}_c{runner.task.get('cycles',1)}"
+                    metrics0['_export_actual_subdivisions'] = metrics0.get('actual_subdivisions')
+                    metrics0['_export_actual_exact_nodes'] = metrics0.get('actual_exact_nodes')
+                    metrics0['_export_hardware_dt_s'] = metrics0.get('hardware_dt_s')
+                except: pass
                 (out / "ga_best.json").write_text(json.dumps({"theta": best.theta.tolist(), "fitness": float(best.fitness), "baseline": baseline0, "metrics": metrics0, "island": best.island}, indent=2, ensure_ascii=False), encoding="utf-8")
             except Exception as e:
                 print(f"best export fail {e}")
