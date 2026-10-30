@@ -548,7 +548,7 @@ class Runner:
             raise Rejected('infeasible_voltages','command outside electrode bounds in segmented')
         return t_all, v, route
 
-    def evaluate_segmented(self, theta, baseline='smooth', segments=5, ideal=False, hardware=None, stray=None, exact_nodes=None, keep=False, frequency_scale=1., return_trajectory=False, trajectory_decimate=400, subdivisions=None):
+    def evaluate_segmented(self, theta, baseline='smooth', segments=5, ideal=False, hardware=None, stray=None, exact_nodes=None, keep=False, frequency_scale=1., return_trajectory=False, trajectory_decimate=400, subdivisions=None, path_samples_per_interval=None):
         """Evaluate stitched Kx(D/K) path as continuous. Segments auto if needed."""
         if isinstance(segments, str) and segments == 'auto':
             segments = max(1, min(10, int(round(self.task['distance_m']/20e-6))))
@@ -574,7 +574,8 @@ class Runner:
             init=Local(init.position_m,init.hessian_J_m2*frequency_scale**2,init.omega_rad_s*frequency_scale,init.modes)
             final=Local(final.position_m,final.hessian_J_m2*frequency_scale**2,final.omega_rad_s*frequency_scale,final.modes)
         target=self.target
-        result=propagate(t,r,H,init,final,self.trap.mass,target,method='exact', hold='linear', return_trajectory=return_trajectory, trajectory_decimate=trajectory_decimate, path_samples_per_interval=self.cfg.get('path_samples_per_interval',8))
+        _ps = path_samples_per_interval if path_samples_per_interval is not None else self.cfg.get('path_samples_per_interval',8)
+        result=propagate(t,r,H,init,final,self.trap.mass,target,method='exact', hold='linear', return_trajectory=return_trajectory, trajectory_decimate=trajectory_decimate, path_samples_per_interval=_ps)
         result['distortion']=dist
         result['segments']=int(segments)
         result['stitched']=True
@@ -657,7 +658,7 @@ class Runner:
             raise Rejected('infeasible_voltages','command outside electrode bounds in periodic')
         return t, v, route
 
-    def evaluate_krat_periodic(self, theta, baseline='smooth', repeats=5, ideal=False, hardware=None, stray=None, exact_nodes=None, keep=False, frequency_scale=1., return_trajectory=False, trajectory_decimate=400, subdivisions=None):
+    def evaluate_krat_periodic(self, theta, baseline='smooth', repeats=5, ideal=False, hardware=None, stray=None, exact_nodes=None, keep=False, frequency_scale=1., return_trajectory=False, trajectory_decimate=400, subdivisions=None, path_samples_per_interval=None):
         """Evaluate periodic Krat without intermediate stops."""
         if isinstance(repeats, str) and repeats == 'auto':
             repeats = max(1, min(10, int(round(self.task['distance_m']/20e-6))))
@@ -683,7 +684,8 @@ class Runner:
             init=Local(init.position_m,init.hessian_J_m2*frequency_scale**2,init.omega_rad_s*frequency_scale,init.modes)
             final=Local(final.position_m,final.hessian_J_m2*frequency_scale**2,final.omega_rad_s*frequency_scale,final.modes)
         target=self.target
-        result=propagate(t,r,H,init,final,self.trap.mass,target,method='exact', hold='linear', return_trajectory=return_trajectory, trajectory_decimate=trajectory_decimate, path_samples_per_interval=self.cfg.get('path_samples_per_interval',8))
+        _ps = path_samples_per_interval if path_samples_per_interval is not None else self.cfg.get('path_samples_per_interval',8)
+        result=propagate(t,r,H,init,final,self.trap.mass,target,method='exact', hold='linear', return_trajectory=return_trajectory, trajectory_decimate=trajectory_decimate, path_samples_per_interval=_ps)
         result['distortion']=dist
         result['repeats']=int(repeats)
         result['periodic']=True

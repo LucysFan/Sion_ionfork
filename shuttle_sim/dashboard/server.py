@@ -447,15 +447,26 @@ def build_trap_preview(gds_path=None, cfg=None):
 
 def _load_active_config(out_dir):
     """Load active config JSON and normalize relative GDS path if present."""
-    for cand in (
+    # Prefer five_wire for 100um fallback if gds needs gdspy missing
+    candidates = [
         pathlib.Path(out_dir) / "config.json",
         pathlib.Path("configs/unified_live.json"),
         pathlib.Path("configs/shuttle_gds.json"),
         pathlib.Path("configs/shuttle_reference.json"),
-    ):
+        pathlib.Path("configs/shuttle_90um_100um_100us.json"),
+    ]
+    for cand in candidates:
         if cand.exists():
-            cfg = json.loads(cand.read_text(encoding="utf-8"))
+            try:
+                cfg = json.loads(cand.read_text(encoding="utf-8"))
+            except Exception:
+                continue
             if cfg.get("trap", {}).get("kind") == "gds" and cfg["trap"].get("path"):
+                # check if gdspy available, if not fallback to five_wire
+                try:
+                    import gdspy
+                except Exception:
+                    continue
                 resolved = _resolve_gds_path(cfg["trap"]["path"], cfg_dir=cand.parent)
                 if resolved is not None:
                     cfg["trap"]["path"] = str(resolved)
@@ -936,7 +947,21 @@ class Handler(SimpleHTTPRequestHandler):
             try:
                 base_cfg, _ = _load_active_config(self.out_dir)
                 if base_cfg is None:
-                    base_cfg = json.loads(pathlib.Path("configs/shuttle_gds.json").read_text(encoding="utf-8"))
+                    # fallback to five_wire that works without gdspy (100um needs -20..20)
+                    for _cand in (pathlib.Path("configs/shuttle_90um_100um_100us.json"), pathlib.Path("configs/shuttle_reference.json"), pathlib.Path("configs/shuttle_gds.json")):
+                        if _cand.exists():
+                            try:
+                                base_cfg = json.loads(_cand.read_text(encoding="utf-8"))
+                                if base_cfg.get("trap",{}).get("kind")=="gds":
+                                    try:
+                                        import gdspy
+                                    except Exception:
+                                        continue
+                                break
+                            except Exception:
+                                continue
+                    if base_cfg is None:
+                        base_cfg = json.loads(pathlib.Path("configs/shuttle_reference.json").read_text(encoding="utf-8"))
                 if "trap" in data and "task" in data:
                     cfg = data
                 else:
@@ -1076,10 +1101,81 @@ class Handler(SimpleHTTPRequestHandler):
 
                 cfg, _ = _load_active_config(self.out_dir)
                 if cfg is None:
-                    cfg = json.loads(pathlib.Path("configs/shuttle_gds.json").read_text(encoding="utf-8"))
+                    for _cand in (pathlib.Path("configs/shuttle_90um_100um_100us.json"), pathlib.Path("configs/shuttle_reference.json"), pathlib.Path("configs/shuttle_gds.json")):
+                        if _cand.exists():
+                            try:
+                                cfg = json.loads(_cand.read_text(encoding="utf-8"))
+                                if cfg.get("trap",{}).get("kind")=="gds":
+                                    try:
+                                        import gdspy
+                                    except Exception:
+                                        continue
+                                break
+                            except Exception:
+                                continue
+                    if cfg is None:
+                        cfg = json.loads(pathlib.Path("configs/shuttle_reference.json").read_text(encoding="utf-8"))
+                # if loaded cfg is gds but gdspy missing, fallback to five_wire
+                if cfg.get("trap",{}).get("kind")=="gds":
+                    try:
+                        import gdspy
+                    except Exception:
+                        try:
+                            fb = json.loads(pathlib.Path("configs/shuttle_90um_100um_100us.json").read_text(encoding="utf-8"))
+                            fb["task"] = cfg.get("task", fb["task"])
+                            fb["hardware"] = cfg.get("hardware", fb["hardware"])
+                            if "ga" in cfg:
+                                fb["ga"] = cfg["ga"]
+                            cfg = fb
+                        except Exception:
+                            pass
 
                 if distance is not None:
                     cfg["task"]["distance_m"] = float(distance)
+                    # auto-expand voltage bounds for large D
+                    try:
+                        if float(distance) >= 60e-6:
+                            cfg.setdefault("trap", {})["lower_V"] = -20
+                            cfg["trap"]["upper_V"] = 20
+                            cfg.setdefault("hardware", {})["dac_min_V"] = -20
+                            cfg["hardware"]["dac_max_V"] = 20
+                            try:
+                                cfg["hardware"]["lower_V"] = -20
+                                cfg["hardware"]["upper_V"] = 20
+                            except:
+                                pass
+                            # if trap is gds and distance large, switch to five_wire that supports 100um without gdspy
+                            if cfg.get("trap",{}).get("kind") == "gds":
+                                try:
+                                    import gdspy
+                                    has_gdspy = True
+                                except Exception:
+                                    has_gdspy = False
+                                if not has_gdspy or float(distance) >= 60e-6:
+                                    try:
+                                        fb = json.loads(pathlib.Path("configs/shuttle_90um_100um_100us.json").read_text(encoding="utf-8"))
+                                        fb["task"]["distance_m"] = float(distance)
+                                        # keep duration if provided else scale with distance
+                                        if duration is not None:
+                                            fb["task"]["duration_s"] = float(duration)
+                                        elif "duration_s" in cfg["task"]:
+                                            # keep original duration if set, else use distance as duration (100um->100us)
+                                            pass
+                                        fb["task"]["hold_s"] = cfg["task"].get("hold_s", 2e-6)
+                                        fb["task"]["protocol"] = cfg["task"].get("protocol", "one_way")
+                                        # preserve hardware bounds we just set
+                                        fb["trap"]["lower_V"] = -20
+                                        fb["trap"]["upper_V"] = 20
+                                        fb["hardware"]["dac_min_V"] = -20
+                                        fb["hardware"]["dac_max_V"] = 20
+                                        # keep ga islands from original cfg if any, else use fb's
+                                        if "ga" in cfg and cfg["ga"].get("islands"):
+                                            fb["ga"] = cfg["ga"]
+                                        cfg = fb
+                                    except Exception as e:
+                                        print(f"fallback to five_wire failed {e}")
+                    except Exception:
+                        pass
                 if duration is not None:
                     cfg["task"]["duration_s"] = float(duration)
                 if gds_path:

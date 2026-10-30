@@ -1804,7 +1804,7 @@ function drawFitness(state){
   for(let i=0;i<=3;i++){ let t=i/3, lv=logMin + t*(logMax-logMin), v=Math.pow(10,lv)-0.1; let y=H-20 - t*(H-40); if(v>0) ctx.fillText(fmtFit(Math.max(0,v)), W-46, y+3)}
   ctx.fillText("0", 6, H-16)
   let leg=document.getElementById('fitnessLegend')
-  if(leg) leg.innerHTML=["S","A","V","W","R","H","Q1","Q2","F","K","K5","K3","K2"].filter(k=>ser[k]&&ser[k].length).map(k=>`<span><i style="width:12px;height:3px;background:${islandColor(k)};display:inline-block;border-radius:99px"></i>${NAMES[k]||k}</span>`).join('')+`<span><i style="width:12px;height:3px;background:#fff;display:inline-block"></i> global best</span>`
+  if(leg) leg.innerHTML=["S","A","V","W","R","H","Q1","Q2","F","K","K5","K3","K2","P","P5","P10","P2","P3"].filter(k=>ser[k]&&ser[k].length).map(k=>`<span><i style="width:12px;height:3px;background:${islandColor(k)};display:inline-block;border-radius:99px"></i>${NAMES[k]||k}</span>`).join('')+`<span><i style="width:12px;height:3px;background:#fff;display:inline-block"></i> global best</span>`
 }
 
 function drawDivers(state){

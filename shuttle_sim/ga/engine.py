@@ -146,10 +146,21 @@ class GAEngine:
             isl.initialize()
             self.islands.append(isl)
         if not self.islands:
-            # default 6 islands — разные базы, не только STA (STA «не радует» в эксперименте)
-            # V = variable voltage (4 базиса×2 ΔV), W = variable frequency ω(s) via FrequencyProfile
+            # default 6 islands — разные базы, не только STA
+            # For large D (≥80um) reduce pop to keep GA tractable (100um 10 islands *20 pop *1.3s = 260s per gen -> too long)
+            try:
+                _dist_m = float(getattr(getattr(self, 'runner', None), 'task', {}).get('distance_m', 0) or 0)
+            except:
+                _dist_m = 0
+            _large = _dist_m >= 80e-6
             _def_pop = int(_global_pop) if (_global_pop is not None and int(_global_pop)>0) else None
-            defaults=[("S", _def_pop if _def_pop else 20, "smooth"),("A", _def_pop if _def_pop else 20,"sta"),("V", _def_pop if _def_pop else 20,"sta"),("W", _def_pop if _def_pop else 20,"sta"),("R", _def_pop if _def_pop else 25,"sta"),("H", _def_pop if _def_pop else 20,"smooth")]
+            if _def_pop is None:
+                if _large:
+                    defaults=[("S", 6, "smooth"),("A", 6,"sta"),("V", 6,"sta"),("W", 6,"sta"),("R", 6,"sta"),("H", 6,"smooth")]
+                else:
+                    defaults=[("S", 20, "smooth"),("A", 20,"sta"),("V", 20,"sta"),("W", 20,"sta"),("R", 25,"sta"),("H", 20,"smooth")]
+            else:
+                defaults=[("S", _def_pop, "smooth"),("A", _def_pop,"sta"),("V", _def_pop,"sta"),("W", _def_pop,"sta"),("R", _def_pop,"sta"),("H", _def_pop,"smooth")]
             # S=smooth адиабатика, A=STA короткий, V=voltage, W=frequency, R=robust, H=hardware/lowpass
             for i,(s,p,b) in enumerate(defaults):
                 isl=Island(i,s,p, rng=self.rng.integers(0,1<<31), baseline=b)
@@ -163,18 +174,25 @@ class GAEngine:
             has_krat = any(str(isl.strategy).startswith('K') or str(isl.strategy).startswith('M') or str(isl.strategy).startswith('C') for isl in self.islands)
             has_periodic = any(str(isl.strategy).startswith('P') for isl in self.islands)
             auto_add = config.get('auto_add_krat', True)
-            auto_add_p = config.get('auto_add_periodic', auto_add)
+            # periodic default True independent of krat (so 100um always gets P even if krat config has auto_add_krat:false)
+            if 'auto_add_periodic' in config:
+                auto_add_p = bool(config.get('auto_add_periodic'))
+            else:
+                auto_add_p = True
             dist_m = float(getattr(getattr(self, 'runner', None), 'task', {}).get('distance_m', 0) if hasattr(self, 'runner') else config.get('task',{}).get('distance_m',0) or 0)
             if dist_m >= 25e-6:
                 import math
                 k_auto = max(2, min(10, int(round(dist_m/20e-6)))) if dist_m else 5
                 to_add = []
                 if auto_add and not has_krat:
-                    to_add.append(('K', 12, 'sta', 'auto'))
+                    # smaller pops for large D to keep GA tractable (100um 10 islands *12 pop =120 evals *4s=480s per gen -> too long)
+                    _pop_k = 6 if dist_m >= 80e-6 else 8
+                    to_add.append(('K', _pop_k, 'sta', 'auto'))
                     if k_auto != 5:
-                        to_add.append(('K5', 12, 'sta', 5))
+                        to_add.append(('K5', 8, 'sta', 5))
                 if auto_add_p and not has_periodic:
-                    to_add.append(('P', 12, 'sta', 'auto'))
+                    _pop_p = 6 if dist_m >= 80e-6 else 8
+                    to_add.append(('P', _pop_p, 'sta', 'auto'))
                     # also add explicit alternatives for optimal repeat search
                     # 5x20 is often best for 100um, but 10x10 and 2x50 must also be tried — hall picks min n
                     alt = []
@@ -190,7 +208,8 @@ class GAEngine:
                     for rep in alt[:2]:
                         strat = f'P{rep}'
                         if not any(s==strat for s,_,_,_ in to_add):
-                            to_add.append((strat, 10, 'sta', rep))
+                            _pop_alt = 4 if dist_m >= 80e-6 else 6
+                            to_add.append((strat, _pop_alt, 'sta', rep))
                 for strat, pop, base, segs in to_add:
                     if any(isl.strategy==strat for isl in self.islands):
                         continue

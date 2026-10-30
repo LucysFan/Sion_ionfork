@@ -181,20 +181,20 @@ def evaluate_genome(genome, runner, baseline='sta', exact_nodes=None, hardware=N
         if is_stitched:
             if do_prepare:
                 metrics = runner.evaluate(theta, baseline=baseline, hardware=hardware, stray=stray,
-                                          frequency_scale=effective_freq_scale, exact_nodes=exact_nodes, subdivisions=runner.cfg.get('subdivisions',4))
+                                          frequency_scale=effective_freq_scale, exact_nodes=exact_nodes, subdivisions=min(1, runner.cfg.get('subdivisions',4)), path_samples_per_interval=4)
             else:
                 metrics = runner.evaluate_segmented(theta, baseline=baseline, segments=stitched_segments, hardware=hardware, stray=stray,
-                                                   frequency_scale=effective_freq_scale, exact_nodes=exact_nodes)
+                                                   frequency_scale=effective_freq_scale, exact_nodes=exact_nodes, subdivisions=min(1, runner.cfg.get('subdivisions',4)), path_samples_per_interval=4)
         elif is_periodic:
             if do_prepare:
                 metrics = runner.evaluate(theta, baseline=baseline, hardware=hardware, stray=stray,
-                                          frequency_scale=effective_freq_scale, exact_nodes=exact_nodes, subdivisions=runner.cfg.get('subdivisions',4))
+                                          frequency_scale=effective_freq_scale, exact_nodes=exact_nodes, subdivisions=min(1, runner.cfg.get('subdivisions',4)), path_samples_per_interval=4)
             else:
                 metrics = runner.evaluate_krat_periodic(theta, baseline=baseline, repeats=periodic_repeats, hardware=hardware, stray=stray,
-                                                       frequency_scale=effective_freq_scale, exact_nodes=exact_nodes)
+                                                       frequency_scale=effective_freq_scale, exact_nodes=exact_nodes, subdivisions=min(1, runner.cfg.get('subdivisions',4)), path_samples_per_interval=4)
         else:
-            metrics = runner.evaluate(theta, baseline=baseline, hardware=hardware, stray=stray,
-                                      frequency_scale=effective_freq_scale, exact_nodes=exact_nodes, subdivisions=runner.cfg.get('subdivisions',4))
+                metrics = runner.evaluate(theta, baseline=baseline, hardware=hardware, stray=stray,
+                                          frequency_scale=effective_freq_scale, exact_nodes=exact_nodes, subdivisions=min(1, runner.cfg.get('subdivisions',4)), path_samples_per_interval=4)
         # For W, theta is voltage subset (8) but penalty should consider full genome (10) including freq coeffs
         theta_for_penalty = genome.theta
         bounds_for_penalty = genome.bounds
