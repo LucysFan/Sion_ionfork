@@ -430,6 +430,47 @@ class Runner:
         if result['well_target_error_m']>self.task['position_tolerance_m']:result['quality_failures'].append('well_target_accuracy')
         result['model']='3D geometry-derived local harmonic Gaussian'
         result['minimum_frequency_hz']=float(np.sqrt(np.linalg.eigvalsh(H/self.trap.mass).min())/(2*np.pi))
+        result['maximum_frequency_hz']=float(np.sqrt(np.linalg.eigvalsh(H/self.trap.mass).max())/(2*np.pi))
+        # max frequency bound (manual) — soft, not hard reject (penalty in fitness)
+        # keep for diagnostics only; no Rejected here to avoid killing all islands when max default too low (2.24 vs 1.2)
+        if 'max_frequency_hz' in self.task and self.task['max_frequency_hz'] is not None:
+            try:
+                result['max_frequency_target_hz']=float(self.task['max_frequency_hz'])
+            except: pass
+        # height bounds on well centers
+        if ('height_min_m' in self.task and self.task['height_min_m'] is not None) or ('height_max_m' in self.task and self.task['height_max_m'] is not None):
+            try:
+                # r is Nx3 well centers
+                if isinstance(r, np.ndarray) and r.ndim==2 and r.shape[1]>=3:
+                    z_vals=r[:,2]
+                else:
+                    z_vals=np.array([p[2] for p in r]) if isinstance(r, (list, np.ndarray)) else np.array([0])
+                if 'height_min_m' in self.task and self.task['height_min_m'] is not None:
+                    hmin=float(self.task['height_min_m'])
+                    if np.min(z_vals) < hmin - 1e-9:
+                        raise Rejected('height_violation', f"well height {np.min(z_vals)*1e6:.1f} um below min {hmin*1e6:.1f} um")
+                if 'height_max_m' in self.task and self.task['height_max_m'] is not None:
+                    hmax=float(self.task['height_max_m'])
+                    if np.max(z_vals) > hmax + 1e-9:
+                        raise Rejected('height_violation', f"well height {np.max(z_vals)*1e6:.1f} um above max {hmax*1e6:.1f} um")
+            except Rejected:
+                raise
+            except Exception:
+                pass
+        # начальная/конечная частота (для записи и мягкого штрафа)
+        try:
+            f_start=float(np.sqrt(np.linalg.eigvalsh(H[0]/self.trap.mass).min())/(2*np.pi))
+            f_end=float(np.sqrt(np.linalg.eigvalsh(H[-1]/self.trap.mass).min())/(2*np.pi))
+            result['frequency_start_hz']=f_start
+            result['frequency_end_hz']=f_end
+            if 'frequency_initial_hz' in self.task and self.task['frequency_initial_hz'] is not None:
+                result['frequency_initial_target_hz']=float(self.task['frequency_initial_hz'])
+                result['frequency_initial_error_hz']=float(abs(f_start - float(self.task['frequency_initial_hz'])))
+            if 'frequency_final_hz' in self.task and self.task['frequency_final_hz'] is not None:
+                result['frequency_final_target_hz']=float(self.task['frequency_final_hz'])
+                result['frequency_final_error_hz']=float(abs(f_end - float(self.task['frequency_final_hz'])))
+        except Exception:
+            pass
         if keep:
             return result,dict(t=t,v=v,codes=codes,ct=ct,cmd=cmd,route=route,r=r,H=H,initial=init,final=final,diag=diag)
         return result

@@ -113,6 +113,25 @@ class GAEngine:
             except:
                 return 0
         total_gens = int(config.get('generations', 20))
+        # карантин из дашборда: глобальный и per-island
+        _global_quarantine_raw = config.get('quarantine_until', None)
+        if _global_quarantine_raw is None:
+            _global_quarantine_raw = config.get('ga', {}).get('quarantine_until', None) if isinstance(config.get('ga'), dict) else None
+        if _global_quarantine_raw is None:
+            # legacy alias isolated_until at top level
+            _global_quarantine_raw = config.get('isolated_until', None)
+            if _global_quarantine_raw is None and isinstance(config.get('ga'), dict):
+                _global_quarantine_raw = config['ga'].get('isolated_until', None)
+        _per_island_quarantine = {}
+        # несколько возможных мест хранения per-island
+        for src in [config.get('_quarantine_per_island'), config.get('quarantine_per_island'), (config.get('ga', {}) or {}).get('_quarantine_per_island'), (config.get('ga', {}) or {}).get('quarantine_per_island')]:
+            if isinstance(src, dict):
+                for k,v in src.items():
+                    _per_island_quarantine[str(k)] = v
+            elif isinstance(src, list):
+                for item in src:
+                    if isinstance(item, dict) and 'island' in item:
+                        _per_island_quarantine[str(item['island'])] = item.get('isolated_until', item.get('isolated_until_raw', item.get('value')))
         for i, icfg in enumerate(config.get('islands', [])):
             strat=icfg.get('strategy','S')
             pop=icfg.get('pop',20)
@@ -139,6 +158,13 @@ class GAEngine:
             if 'isolated_until_ratio' in icfg and 'isolated_until' not in icfg:
                 raw_iso = icfg['isolated_until_ratio']
             isolated_until = _resolve_isolated_until(raw_iso, total_gens)
+            # dashboard override: per-island и глобальный карантин для K/P
+            if strat in _per_island_quarantine:
+                raw_iso = _per_island_quarantine[strat]
+                isolated_until = _resolve_isolated_until(raw_iso, total_gens)
+            elif _global_quarantine_raw is not None and isinstance(strat, str) and strat[0] in ('K','M','C','P') and raw_iso == total_gens:
+                raw_iso = _global_quarantine_raw
+                isolated_until = _resolve_isolated_until(raw_iso, total_gens)
             isl=Island(i, strat, pop, rng=self.rng.integers(0,1<<31), baseline=base, isolated_until=isolated_until, segments=segs)
             # сохраним исходное значение для дашборда/дебага
             isl.isolated_until_raw = raw_iso
@@ -213,10 +239,15 @@ class GAEngine:
                 for strat, pop, base, segs in to_add:
                     if any(isl.strategy==strat for isl in self.islands):
                         continue
-                    iso = total_gens
+                    raw_iso_auto = total_gens
+                    if strat in _per_island_quarantine:
+                        raw_iso_auto = _per_island_quarantine[strat]
+                    elif _global_quarantine_raw is not None:
+                        raw_iso_auto = _global_quarantine_raw
+                    iso = _resolve_isolated_until(raw_iso_auto, total_gens)
                     isl = Island(len(self.islands), strat, pop, rng=self.rng.integers(0,1<<31), baseline=base, isolated_until=iso, segments=segs)
-                    isl.isolated_until_raw = iso
-                    isl.isolated_until_percent = 100.0
+                    isl.isolated_until_raw = raw_iso_auto
+                    isl.isolated_until_percent = (iso/total_gens*100) if total_gens else 0
                     isl.initialize()
                     self.islands.append(isl)
         except Exception as e:

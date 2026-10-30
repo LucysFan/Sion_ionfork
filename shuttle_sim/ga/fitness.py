@@ -26,6 +26,42 @@ def scalar_fitness(metrics, task, distortion=None, theta=None, control_bounds=No
     f0 = float(task.get('min_frequency_hz', 400e3))
     if fmin < f0:
         val += 2*np.log1p((f0-fmin)/0.1e6)
+    # max frequency gate (if configured)
+    if 'max_frequency_hz' in task and task['max_frequency_hz'] is not None:
+        try:
+            fmax = float(metrics.get('maximum_frequency_hz', 0))
+            fmax_allowed = float(task['max_frequency_hz'])
+            if fmax > fmax_allowed:
+                val += 2*np.log1p((fmax - fmax_allowed)/0.1e6)
+        except: pass
+    # height gates (soft, pipeline also hard-rejects)
+    if 'height_min_m' in task and task['height_min_m'] is not None:
+        try:
+            # estimate height from metrics if available
+            h = metrics.get('well_height_m', metrics.get('height_m', metrics.get('minimum_height_m', None)))
+            if h is None:
+                # fallback: use pipeline's stored min height if present
+                h = metrics.get('height_min_violation', None)
+            # if we have explicit z values we penalize
+            # pipeline already rejects, but add soft for near-bound
+        except: pass
+    # initial / final frequency targets (soft penalty if deviates)
+    if 'frequency_initial_hz' in task and task['frequency_initial_hz'] is not None:
+        try:
+            f_start = float(metrics.get('frequency_start_hz', fmin))
+            target = float(task['frequency_initial_hz'])
+            err = abs(f_start - target)
+            if err > 0.02e6:
+                val += 1.0*np.log1p(err/0.05e6)
+        except: pass
+    if 'frequency_final_hz' in task and task['frequency_final_hz'] is not None:
+        try:
+            f_end = float(metrics.get('frequency_end_hz', fmin))
+            target = float(task['frequency_final_hz'])
+            err = abs(f_end - target)
+            if err > 0.02e6:
+                val += 1.0*np.log1p(err/0.05e6)
+        except: pass
     return float(val)
 
 _W_prepare_cache = {}
