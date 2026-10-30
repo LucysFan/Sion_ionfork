@@ -103,6 +103,28 @@ def scalar_fitness(metrics, task, distortion=None, theta=None, control_bounds=No
             # if we have explicit z values we penalize
             # pipeline already rejects, but add soft for near-bound
         except: pass
+    # corridor violation soft penalty (if well deviates beyond corridor_halfwidth)
+    try:
+        cv_msg = metrics.get('corridor_violation_msg')
+        cv_dist = None
+        if cv_msg:
+            import re as _re_c2
+            mm = _re_c2.search(r'corridor\s*([\d\.]+)\s*um\s*>\s*([\d\.]+)', cv_msg)
+            if mm:
+                cv_dist = abs(float(mm.group(1)) - float(mm.group(2))) * 1e-6
+            else:
+                nums = _re_c2.findall(r'[\d\.]+', cv_msg)
+                if len(nums)>=2:
+                    cv_dist = abs(float(nums[0]) - float(nums[1])) * 1e-6
+                else:
+                    cv_dist = 1e-6
+            if cv_dist is not None:
+                val += 2.0*np.log1p(max(0.0, float(cv_dist))/1e-6)
+                metrics['_corridor_penalty'] = 2.0*np.log1p(max(0.0, float(cv_dist))/1e-6)
+        elif 'corridor_violation' in (metrics.get('quality_failures') or []):
+            val += 2.0*np.log1p(1.0)
+            metrics['_corridor_penalty'] = 2.0*np.log1p(1.0)
+    except: pass
     # initial / final frequency targets (soft penalty if deviates)
     if 'frequency_initial_hz' in task and task['frequency_initial_hz'] is not None:
         try:
@@ -403,7 +425,7 @@ def evaluate_genome(genome, runner, baseline='sta', exact_nodes=None, hardware=N
         # robust aggregation if island R: evaluate on 2 train scenarios and take worst
         if genome.island in ('R','robust'):
             from ..hardware import Hardware
-            train = runner.scenarios(runner.cfg.get('robust_training_samples',2), runner.cfg['uncertainty']['seed']+1)
+            train = runner.scenarios(runner.cfg.get('robust_training_samples',4), runner.cfg['uncertainty']['seed']+1)
             vals=[fit]
             for sc in train:
                 try:
