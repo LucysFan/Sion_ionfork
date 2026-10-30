@@ -51,11 +51,37 @@ def scalar_fitness(metrics, task, distortion=None, theta=None, control_bounds=No
     # height gates (soft, pipeline now soft)
     try:
         hv_msg = metrics.get('height_violation_msg')
+        hv_dist = metrics.get('height_violation_distance_m')
+        # fallback: parse from message if numeric not stored
+        if hv_dist is None and hv_msg:
+            try:
+                import re as _re_h
+                # message like "well height 199.9 um above max 152.0 um" or below min
+                m = _re_h.search(r'well height\s*([\d\.]+)\s*um\s*(above max|below min)\s*([\d\.]+)', hv_msg)
+                if m:
+                    actual = float(m.group(1))
+                    bound = float(m.group(3))
+                    hv_dist = abs(actual - bound) * 1e-6
+                else:
+                    # try generic number
+                    nums = _re_h.findall(r'[\d\.]+', hv_msg)
+                    if len(nums)>=2:
+                        hv_dist = abs(float(nums[0]) - float(nums[1])) * 1e-6
+                    else:
+                        hv_dist = 1e-6
+            except:
+                hv_dist = 1e-6
         if hv_msg:
-            # height violation present → penalize
-            # estimate violation distance from message or use fixed
-            val += 2.0*np.log1p(1.0)  # ~1.38
-            metrics['_height_penalty'] = 2.0*np.log1p(1.0)
+            # proportional penalty: 1 um scale, log1p(distance/1um)
+            try:
+                d = float(hv_dist) if hv_dist is not None else 1e-6
+                # scale 1e-6 (1 um) ; also consider 5e-6 for wider tolerance? use 1e-6
+                val += 2.0*np.log1p(max(0.0, d)/1e-6)
+                metrics['_height_penalty'] = 2.0*np.log1p(max(0.0, d)/1e-6)
+                metrics['_height_violation_distance_m'] = float(d)
+            except:
+                val += 2.0*np.log1p(1.0)
+                metrics['_height_penalty'] = 2.0*np.log1p(1.0)
         else:
             # also check if height bounds violated via explicit well heights if pipeline didn't set msg
             if ('height_min_m' in task and task['height_min_m'] is not None) or ('height_max_m' in task and task['height_max_m'] is not None):
@@ -273,7 +299,7 @@ def _dispatch_evaluate(runner, genome, baseline, hardware, stray, freq_scale, ex
     stashed=None
     if use_prepare:
         stashed=dict(task_mode=runner.task.get('frequency_mode'), task_coeffs=runner.task.get('frequency_coeffs'),
-                     freq_mode=getattr(runner,'frequency_mode','fixed'), freq_coeffs=getattr(runner,'frequency_coeffs',[0.0,0.0]),
+                     frequency_mode=getattr(runner,'frequency_mode','fixed'), frequency_coeffs=getattr(runner,'frequency_coeffs',[0.0,0.0]),
                      sroute=getattr(runner,'sroute',None), route_V=getattr(runner,'route_V',None), route_r=getattr(runner,'route_r',None),
                      route_H=getattr(runner,'route_H',None), route_G=getattr(runner,'route_G',None), route_BH=getattr(runner,'route_BH',None),
                      correction_modes=getattr(runner,'correction_modes',None), support_diagnostics=getattr(runner,'support_diagnostics',None),
@@ -313,7 +339,7 @@ def _restore_after_W(runner, stashed):
     try:
         runner.task['frequency_mode'] = stashed['task_mode'] if stashed['task_mode'] is not None else 'fixed'
         runner.task['frequency_coeffs'] = stashed['task_coeffs'] if stashed['task_coeffs'] is not None else [0.0,0.0]
-        if stashed['task_mode'] in (None,'fixed') or stashed['freq_mode']=='fixed':
+        if stashed['task_mode'] in (None,'fixed') or stashed['frequency_mode']=='fixed':
             # try per-runner cache for fixed
             per=_get_runner_w_cache(runner)
             fixed_key=_w_cache_key(runner, [0.0,0.0])
@@ -383,9 +409,7 @@ def evaluate_genome(genome, runner, baseline='sta', exact_nodes=None, hardware=N
                 try:
                     # For R island keep scenario's frequency_scale; use unified dispatcher for same genome
                     m2, st2, _ = _dispatch_evaluate(runner, genome, 'sta', hardware=Hardware(**sc['hardware']), stray=sc['stray_V_m'], freq_scale=sc['frequency_scale'], exact_nodes=exact_nodes, subdivisions=4, path_samples_per_interval=4)
-                    try:
-                        _restore_after_W(runner, st2)
-                    except: pass
+                    # no double restore: _dispatch_evaluate already restores
                     vals.append(scalar_fitness(
                         m2, runner.task, m2.get('distortion'), theta_for_penalty, genome.bounds,
                         runner.cfg.get('control_regularization_weight',1e-4),
@@ -420,11 +444,8 @@ def evaluate_genome(genome, runner, baseline='sta', exact_nodes=None, hardware=N
             used_prepare
         except: used_prepare=False
     finally:
-        try:
-            if 'stashed' in locals() and stashed is not None and 'used_prepare' in locals() and used_prepare:
-                _restore_after_W(runner, stashed)
-        except: pass
-        # also ensure robust interim stashes already restored
+        # _dispatch_evaluate already restores via finally; no double restore needed
+        pass
     return genome
 
 def evaluate_exact(genome, runner, baseline='sta', hardware=None):
