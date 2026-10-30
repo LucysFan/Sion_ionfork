@@ -751,13 +751,29 @@ class GAEngine:
                             freq_term += 1.0*_math.log1p(err/0.05e6)
                     except: pass
             except: pass
-            # height soft (pipeline hard-rejects, но для breakdown показываем близость к границе)
+            # height soft (pipeline now soft)
             height_term = 0
             try:
-                # если есть well_height_m или частота высоты — не хранится, поэтому height_term остаётся 0
-                # оставляем для будущего, чтобы не ломать сумму
-                pass
+                if m.get('height_violation_msg'):
+                    height_term = 2*_math.log1p(1.0)  # ~1.38
+                elif 'height_violation' in m.get('quality_failures', []) if isinstance(m.get('quality_failures'), list) else False:
+                    height_term = 2*_math.log1p(1.0)
+                # also check explicit well heights if available in metrics (not yet stored, keep 0)
             except: pass
+            # heating rate term (new 2026-10-30)
+            heating_term = 0
+            try:
+                hr = m.get('heating_rate_hz')
+                if hr is not None:
+                    allowed = task.get('max_heating_rate_hz', None)
+                    if allowed is None:
+                        try:
+                            allowed = float(task.get('max_n_total', 0.5))/float(task.get('duration_s', 1))
+                            if allowed > 100: allowed = 100
+                        except: allowed = 100
+                    if allowed is not None and hr > float(allowed)*1.05:
+                        heating_term = 2*_math.log1p(max(0.0, hr - float(allowed))/max(float(allowed), 50.0))
+            except: heating_term=0
             # robust для R — уже в fitness, выделяем отдельно?
             robust_extra = 0
             try:
@@ -767,11 +783,11 @@ class GAEngine:
                     # часть сверх обычного loss: 0.35*mean+0.65*max vs primary => approx max-mean
                     robust_extra = float(0.65*(max_v-mean_v))
             except: pass
-            total = n_term+pos_term+well_term+lag_term+distortion_term+control_term+freq_term+height_term+robust_extra
+            total = n_term+pos_term+well_term+lag_term+distortion_term+control_term+freq_term+height_term+heating_term+robust_extra
             # невязка vs реальный fitness (из-за округлений/biased) — height_term пока 0, для совместимости с суммой
-            return dict(n=n_term, pos=pos_term, well=well_term, lag=lag_term, distortion=distortion_term, control=control_term, freq=freq_term, height=height_term, robust=robust_extra, sum=total, fitness=float(genome.fitness) if genome.fitness else total)
+            return dict(n=n_term, pos=pos_term, well=well_term, lag=lag_term, distortion=distortion_term, control=control_term, freq=freq_term, height=height_term, heating=heating_term, robust=robust_extra, sum=total, fitness=float(genome.fitness) if genome.fitness else total)
         except Exception as e:
-            return dict(n=0,pos=0,well=0,lag=0,distortion=0,control=0,freq=0,robust=0,sum=float(genome.fitness or 0), error=str(e))
+            return dict(n=0,pos=0,well=0,lag=0,distortion=0,control=0,freq=0,height=0,heating=0,robust=0,sum=float(genome.fitness or 0), error=str(e))
 
     def _write_state(self, heavy=True):
         # build dashboard state; heavy=False skips expensive trajectory/robust/sion for per-island quick updates
@@ -997,7 +1013,7 @@ class GAEngine:
             config=self.cfg,
             loss_breakdown=loss_breakdown,
             loss_weights=dict(self.runner.loss_weights or {"n":1.0,"pos":1.0,"well":1.0,"lag":0.0}),
-            loss_formula=r"F = w_n·ln(1+n/n0) + w_pos·ln(1+(pos/tol)²) + w_well·ln(1+(well/tol)²) + w_lag·ln(1+(lag/dist)²) + 0.5·ln(1+max(0,rms-0.1)/0.1) + λ·mean(((θ-θc)/scale)²) + 2·ln(1+max(0,f0-fmin)/1e5)  ;  + robust 0.35·mean+0.65·max",
+            loss_formula=r"F = w_n·ln(1+n/n0) + w_pos·ln(1+(pos/tol)²) + w_well·ln(1+(well/tol)²) + w_lag·ln(1+(lag/dist)²) + 0.5·ln(1+max(0,rms-0.1)/0.1) + λ·mean(((θ-θc)/scale)²) + 2·ln(1+max(0,f0-fmin)/1e5) + height + heating(2·ln(1+(hr-100)/100)) + robust 0.35·mean+0.65·max",
             loss_history=getattr(self, '_loss_history', []),
             pop_size=int(self.islands[0].pop_size if self.islands else (getattr(self,'_global_pop',None) or 20)),
             total_pop=sum(isl.pop_size for isl in self.islands),

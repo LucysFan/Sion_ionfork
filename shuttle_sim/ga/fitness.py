@@ -34,7 +34,43 @@ def scalar_fitness(metrics, task, distortion=None, theta=None, control_bounds=No
             if fmax > fmax_allowed:
                 val += 2*np.log1p((fmax - fmax_allowed)/0.1e6)
         except: pass
-    # height gates (soft, pipeline also hard-rejects)
+    # heating rate gate (new 2026-10-30: <100 ph/s)
+    try:
+        hr = metrics.get('heating_rate_hz')
+        if hr is not None:
+            allowed = task.get('max_heating_rate_hz', None)
+            if allowed is None:
+                try:
+                    allowed = float(task.get('max_n_total', 0.5))/float(task.get('duration_s', 1))
+                    # cap to 100 for new requirement
+                    if allowed > 100:
+                        allowed = 100
+                except: allowed = 100
+            if allowed is not None and hr > float(allowed)*1.05:
+                # scale: 100 ph/s is target, excess 100 → log1p(1)=0.69*2=1.38, excess 1000 → log1p(10)=2.39*2=4.78
+                val += 2.0*np.log1p(max(0.0, hr - float(allowed))/max(float(allowed), 50.0))
+                # also store for breakdown
+                metrics['_heating_penalty'] = 2.0*np.log1p(max(0.0, hr - float(allowed))/max(float(allowed), 50.0))
+    except: pass
+    # height gates (soft, pipeline now soft)
+    try:
+        hv_msg = metrics.get('height_violation_msg')
+        if hv_msg:
+            # height violation present → penalize
+            # estimate violation distance from message or use fixed
+            val += 2.0*np.log1p(1.0)  # ~1.38
+            metrics['_height_penalty'] = 2.0*np.log1p(1.0)
+        else:
+            # also check if height bounds violated via explicit well heights if pipeline didn't set msg
+            if ('height_min_m' in task and task['height_min_m'] is not None) or ('height_max_m' in task and task['height_max_m'] is not None):
+                # if metrics has well heights, check
+                # pipeline now stores height_violation but not heights; we can check via n_total? fallback no penalty
+                pass
+        # also penalize weak_confinement already handled via fmin, but ensure
+        if metrics.get('weak_confinement'):
+            # weak already penalized via fmin< f0, but add extra if needed
+            pass
+    except: pass
     if 'height_min_m' in task and task['height_min_m'] is not None:
         try:
             # estimate height from metrics if available
