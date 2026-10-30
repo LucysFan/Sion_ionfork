@@ -462,18 +462,18 @@ class Runner:
         # heating rate — computed as residual excitation per total propagation time
         # max_heating_rate_hz is ONLY enforced if explicitly set in task (explicit user criterion)
         # else it's diagnostic only (no universal 100 ph/s default)
+        # heating is NOT background heating; residual excitation per protocol duration (audit)
         try:
-            # total propagation time from delivered trace (covers round_trip/repeated)
             total_dur=float(t[-1]-t[0]) if len(t)>1 else float(self.task.get('duration_s',1))
             if not np.isfinite(total_dur) or total_dur<=0:
                 total_dur=float(self.task.get('duration_s',1))
             heating_rate = float(result['n_total']/total_dur) if total_dur>0 else float('inf')
-            result['heating_rate_hz']=heating_rate
+            result['heating_rate_hz']=heating_rate  # legacy alias
             result['heating_rate_duration_s']=float(total_dur)
-            # residual excitation vs background heating separation:
-            # n_total is coherent+incoherent residual; heating_rate_hz is n_total/total_dur as diagnostic
-            # true stochastic background would be separate (not inferred from n_total alone)
+            result['protocol_duration_s']=float(total_dur)
             result['residual_excitation_quanta']=float(result['n_total'])
+            result['excitation_per_protocol_second']=float(heating_rate)
+            result['background_heating_rate_quanta_s']=None  # stochastic background is separate, not inferred here
             max_rate = self.task.get('max_heating_rate_hz', None)
             if max_rate is not None:
                 result['max_heating_rate_hz']=float(max_rate)
@@ -483,7 +483,10 @@ class Runner:
             result['heating_rate_hz']=float('inf')
             result['max_heating_rate_hz']=None
             result['heating_rate_duration_s']=None
+            result['protocol_duration_s']=None
             result['residual_excitation_quanta']=float(result.get('n_total', float('inf')))
+            result['excitation_per_protocol_second']=float('inf')
+            result['background_heating_rate_quanta_s']=None
         # strict acceptance: all hard constraints (including confinement & height & corridor & explicit heating)
         # soft search score (scalar_fitness) keeps penalties but accepted is hard
         result['quality_failures']=[]
@@ -511,22 +514,56 @@ class Runner:
             result['corridor_violation_msg']=corridor_violation
         else:
             result['corridor_violation_msg']=None
-        # accepted = feasible = all hard constraints passed
-        # heating checked only if explicitly set; corridor/weak/height always hard for accepted
+        # accepted = constraints_passed (hard); validation requires high fidelity too
         _heating_ok=True
         try:
             _mr=self.task.get('max_heating_rate_hz', None)
             if _mr is not None:
                 _heating_ok=bool(result['heating_rate_hz']<=float(_mr)*1.05)
         except: _heating_ok=True
-        result['accepted']=bool(
+        constraints_passed = bool(
             result['n_total']<=self.task['max_n_total'] and _heating_ok and
             result['position_error_m']<=self.task['position_tolerance_m'] and
             result['well_target_error_m']<=self.task['position_tolerance_m'] and
             not weak_confinement and height_violation is None and corridor_violation is None)
-        # feasible is synonym for accepted (hard); search_score is separate via scalar_fitness
-        result['feasible']=bool(result['accepted'])
-        result['validation_passed']=bool(result['accepted'])
+        result['accepted']=constraints_passed
+        result['constraints_passed']=constraints_passed
+        result['feasible']=constraints_passed
+        # validation_passed requires high fidelity numerical verification, not just cheap accepted
+        # cheap evaluate (exact_nodes is None or subdivisions==1) is not considered validated
+        try:
+            # is_high_fidelity if exact_nodes provided and subdivisions >= validation threshold
+            is_high_fidelity = False
+            if exact_nodes is not None:
+                try:
+                    # exact_nodes provided -> high fidelity if also subdivisions >= validation
+                    cfg_sub = int(self.cfg.get('validation_subdivisions',4))
+                    cur_sub = int(subdivisions) if subdivisions is not None else int(self.cfg.get('subdivisions',4))
+                    if cur_sub >= cfg_sub:
+                        is_high_fidelity = True
+                except:
+                    is_high_fidelity = True
+            # also require not cheap path_samples
+            result['evaluation_completed']=True
+            result['numerical_validation_passed']=bool(is_high_fidelity)
+            result['validation_passed']=bool(constraints_passed and is_high_fidelity)
+            # legacy alias for hall: exact_validated semantics split
+            result['exact_evaluated']=bool(is_high_fidelity)  # calculation completed at high fidelity
+            result['exact_constraints_passed']=constraints_passed
+        except:
+            result['evaluation_completed']=True
+            result['numerical_validation_passed']=False
+            result['validation_passed']=False
+            result['exact_evaluated']=False
+            result['exact_constraints_passed']=constraints_passed
+        # record actual fidelity for audit
+        try:
+            result['actual_subdivisions']=int(subdivisions) if subdivisions is not None else int(self.cfg.get('subdivisions',4))
+            result['actual_exact_nodes']=int(exact_nodes) if exact_nodes is not None else None
+            result['hardware_dt_s']=float(1.0/self.hw.sample_rate_hz) if hasattr(self.hw, 'sample_rate_hz') else None
+            result['actual_path_samples_per_interval']=int(path_samples_per_interval)
+            result['method']=method
+        except: pass
         # heating rate already computed
         result['model']='3D geometry-derived local harmonic Gaussian'
         result['minimum_frequency_hz']=float(np.sqrt(np.linalg.eigvalsh(H/self.trap.mass).min())/(2*np.pi))
@@ -725,7 +762,8 @@ class Runner:
             if max_shift>corridor+1e-9:
                 corridor_violation=f"corridor {max_shift*1e6:.1f} um > {corridor*1e6:.1f} um"
         except: corridor_violation=None
-        target=self.target
+        # final target depends on protocol (audit P1: round-trip P evaluated not relative to return)
+        target=self.target if self.task.get('protocol','one_way')=='one_way' else self.start
         _ps = path_samples_per_interval if path_samples_per_interval is not None else self.cfg.get('path_samples_per_interval',8)
         result=propagate(t,r,H,init,final,self.trap.mass,target,method='exact', hold='linear', return_trajectory=return_trajectory, trajectory_decimate=trajectory_decimate, path_samples_per_interval=_ps)
         result['distortion']=dist
@@ -738,7 +776,10 @@ class Runner:
             heating_rate = float(result['n_total']/total_dur) if total_dur>0 else float('inf')
             result['heating_rate_hz']=heating_rate
             result['heating_rate_duration_s']=float(total_dur)
+            result['protocol_duration_s']=float(total_dur)
             result['residual_excitation_quanta']=float(result['n_total'])
+            result['excitation_per_protocol_second']=float(heating_rate)
+            result['background_heating_rate_quanta_s']=None
             max_rate = self.task.get('max_heating_rate_hz', None)
             if max_rate is not None:
                 result['max_heating_rate_hz']=float(max_rate)
@@ -748,7 +789,10 @@ class Runner:
             result['heating_rate_hz']=float('inf')
             result['max_heating_rate_hz']=None
             result['heating_rate_duration_s']=None
+            result['protocol_duration_s']=None
             result['residual_excitation_quanta']=float(result.get('n_total', float('inf')))
+            result['excitation_per_protocol_second']=float('inf')
+            result['background_heating_rate_quanta_s']=None
         result['quality_failures']=[]
         if result['n_total']>self.task['max_n_total']:result['quality_failures'].append('excessive_excitation')
         try:
@@ -779,13 +823,42 @@ class Runner:
             if _mr is not None:
                 _heating_ok=bool(result['heating_rate_hz']<=float(_mr)*1.05)
         except: _heating_ok=True
-        result['accepted']=bool(
+        constraints_passed = bool(
             result['n_total']<=self.task['max_n_total'] and _heating_ok and
             result['position_error_m']<=self.task['position_tolerance_m'] and
             result['well_target_error_m']<=self.task['position_tolerance_m'] and
             not weak_confinement and height_violation is None and corridor_violation is None)
-        result['feasible']=bool(result['accepted'])
-        result['validation_passed']=bool(result['accepted'])
+        result['accepted']=constraints_passed
+        result['constraints_passed']=constraints_passed
+        result['feasible']=constraints_passed
+        try:
+            is_high_fidelity = False
+            if exact_nodes is not None:
+                try:
+                    cfg_sub = int(self.cfg.get('validation_subdivisions',4))
+                    cur_sub = int(subdivisions) if subdivisions is not None else int(self.cfg.get('subdivisions',4))
+                    if cur_sub >= cfg_sub:
+                        is_high_fidelity = True
+                except:
+                    is_high_fidelity = True
+            result['evaluation_completed']=True
+            result['numerical_validation_passed']=bool(is_high_fidelity)
+            result['validation_passed']=bool(constraints_passed and is_high_fidelity)
+            result['exact_evaluated']=bool(is_high_fidelity)
+            result['exact_constraints_passed']=constraints_passed
+        except:
+            result['evaluation_completed']=True
+            result['numerical_validation_passed']=False
+            result['validation_passed']=False
+            result['exact_evaluated']=False
+            result['exact_constraints_passed']=constraints_passed
+        try:
+            result['actual_subdivisions']=int(subdivisions) if subdivisions is not None else int(self.cfg.get('subdivisions',4))
+            result['actual_exact_nodes']=int(exact_nodes) if exact_nodes is not None else None
+            result['hardware_dt_s']=float(1.0/self.hw.sample_rate_hz) if hasattr(self.hw, 'sample_rate_hz') else None
+            result['actual_path_samples_per_interval']=int(_ps if '_ps' in locals() else path_samples_per_interval)
+            result['method']=method if 'method' in locals() else 'exact'
+        except: pass
         result['model']='3D geometry-derived local harmonic Gaussian (segmented stitched)'
         result['minimum_frequency_hz']=float(np.sqrt(np.linalg.eigvalsh(H/self.trap.mass).min())/(2*np.pi))
         result['maximum_frequency_hz']=float(np.sqrt(np.linalg.eigvalsh(H/self.trap.mass).max())/(2*np.pi))
@@ -934,7 +1007,7 @@ class Runner:
             if max_shift>corridor+1e-9:
                 corridor_violation=f"corridor {max_shift*1e6:.1f} um > {corridor*1e6:.1f} um"
         except: corridor_violation=None
-        target=self.target
+        target=self.target if self.task.get('protocol','one_way')=='one_way' else self.start
         _ps = path_samples_per_interval if path_samples_per_interval is not None else self.cfg.get('path_samples_per_interval',8)
         result=propagate(t,r,H,init,final,self.trap.mass,target,method='exact', hold='linear', return_trajectory=return_trajectory, trajectory_decimate=trajectory_decimate, path_samples_per_interval=_ps)
         result['distortion']=dist
@@ -948,7 +1021,10 @@ class Runner:
             heating_rate = float(result['n_total']/total_dur) if total_dur>0 else float('inf')
             result['heating_rate_hz']=heating_rate
             result['heating_rate_duration_s']=float(total_dur)
+            result['protocol_duration_s']=float(total_dur)
             result['residual_excitation_quanta']=float(result['n_total'])
+            result['excitation_per_protocol_second']=float(heating_rate)
+            result['background_heating_rate_quanta_s']=None
             max_rate = self.task.get('max_heating_rate_hz', None)
             if max_rate is not None:
                 result['max_heating_rate_hz']=float(max_rate)
@@ -958,7 +1034,10 @@ class Runner:
             result['heating_rate_hz']=float('inf')
             result['max_heating_rate_hz']=None
             result['heating_rate_duration_s']=None
+            result['protocol_duration_s']=None
             result['residual_excitation_quanta']=float(result.get('n_total', float('inf')))
+            result['excitation_per_protocol_second']=float('inf')
+            result['background_heating_rate_quanta_s']=None
         result['quality_failures']=[]
         if result['n_total']>self.task['max_n_total']:result['quality_failures'].append('excessive_excitation')
         try:
@@ -989,13 +1068,42 @@ class Runner:
             if _mr is not None:
                 _heating_ok=bool(result['heating_rate_hz']<=float(_mr)*1.05)
         except: _heating_ok=True
-        result['accepted']=bool(
+        constraints_passed = bool(
             result['n_total']<=self.task['max_n_total'] and _heating_ok and
             result['position_error_m']<=self.task['position_tolerance_m'] and
             result['well_target_error_m']<=self.task['position_tolerance_m'] and
             not weak_confinement and height_violation is None and corridor_violation is None)
-        result['feasible']=bool(result['accepted'])
-        result['validation_passed']=bool(result['accepted'])
+        result['accepted']=constraints_passed
+        result['constraints_passed']=constraints_passed
+        result['feasible']=constraints_passed
+        try:
+            is_high_fidelity = False
+            if exact_nodes is not None:
+                try:
+                    cfg_sub = int(self.cfg.get('validation_subdivisions',4))
+                    cur_sub = int(subdivisions) if subdivisions is not None else int(self.cfg.get('subdivisions',4))
+                    if cur_sub >= cfg_sub:
+                        is_high_fidelity = True
+                except:
+                    is_high_fidelity = True
+            result['evaluation_completed']=True
+            result['numerical_validation_passed']=bool(is_high_fidelity)
+            result['validation_passed']=bool(constraints_passed and is_high_fidelity)
+            result['exact_evaluated']=bool(is_high_fidelity)
+            result['exact_constraints_passed']=constraints_passed
+        except:
+            result['evaluation_completed']=True
+            result['numerical_validation_passed']=False
+            result['validation_passed']=False
+            result['exact_evaluated']=False
+            result['exact_constraints_passed']=constraints_passed
+        try:
+            result['actual_subdivisions']=int(subdivisions) if subdivisions is not None else int(self.cfg.get('subdivisions',4))
+            result['actual_exact_nodes']=int(exact_nodes) if exact_nodes is not None else None
+            result['hardware_dt_s']=float(1.0/self.hw.sample_rate_hz) if hasattr(self.hw, 'sample_rate_hz') else None
+            result['actual_path_samples_per_interval']=int(_ps if '_ps' in locals() else path_samples_per_interval)
+            result['method']=method if 'method' in locals() else 'exact'
+        except: pass
         result['model']='3D geometry-derived local harmonic Gaussian (krat periodic no-stop)'
         result['minimum_frequency_hz']=float(np.sqrt(np.linalg.eigvalsh(H/self.trap.mass).min())/(2*np.pi))
         result['maximum_frequency_hz']=float(np.sqrt(np.linalg.eigvalsh(H/self.trap.mass).max())/(2*np.pi))

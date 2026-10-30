@@ -100,7 +100,9 @@ _W_prepare_cache = {}
 _runner_caches = {}  # global fallback, but primary is per-runner isolated cache
 
 def _w_geom_hash(runner):
-    """Hash runner geometry/task for cache isolation (prevents mixing distances/protocols/traps)."""
+    """Hash runner geometry/task for cache isolation (prevents mixing distances/protocols/traps).
+    Includes direction, start, mass, charge, RF, bounds and GDS identity.
+    """
     try:
         dist = float(runner.task.get('distance_m', 0))
     except: dist = 0
@@ -116,9 +118,38 @@ def _w_geom_hash(runner):
         n_elec = len(getattr(runner.trap, 'indices', []))
     except: n_elec = 0
     try:
-        path = str(runner.cfg.get('trap',{}).get('path',''))[:120]
+        path = str(runner.cfg.get('trap',{}).get('path',''))[:200]
     except: path = ''
-    return (round(dist,9), round(dur,9), proto, cycles, str(kind), n_elec, path)
+    # direction and start (opposite routes must not collide)
+    try:
+        direction = tuple(np.round(np.asarray(runner.task.get('direction', [1,0,0]), float), 6).tolist())
+    except: direction = (1.0,0.0,0.0)
+    try:
+        # start_m from task or trap seed
+        start = runner.start if hasattr(runner, 'start') else runner.cfg.get('trap',{}).get('minimum_seed_m', [0,0,90e-6])
+        start_t = tuple(np.round(np.asarray(start, float), 9).tolist())
+    except: start_t = (0.0,0.0,90e-6)
+    # mass, charge, RF
+    try:
+        mass_amu = float(runner.trap.mass / 1.66053906660e-27) if hasattr(runner.trap, 'mass') else float(runner.cfg.get('trap',{}).get('mass_amu', 40))
+    except: mass_amu = 40.0
+    try:
+        rf_hz = float(runner.trap.rf_frequency_hz) if hasattr(runner.trap, 'rf_frequency_hz') else float(runner.cfg.get('trap',{}).get('rf_frequency_hz', 20e6))
+    except: rf_hz = 20e6
+    try:
+        rf_peak = float(runner.trap.rf_peak_V) if hasattr(runner.trap, 'rf_peak_V') else float(runner.cfg.get('trap',{}).get('rf_peak_V', 160.0))
+    except: rf_peak = 160.0
+    try:
+        trap_cfg = runner.cfg.get('trap',{})
+        lower = float(trap_cfg.get('lower_V', -12.0))
+        upper = float(trap_cfg.get('upper_V', 12.0))
+        bounds = (lower, upper)
+    except: bounds = (-12.0, 12.0)
+    # hash of voltage_spline support (route) length and sroute range as proxy for geometry resolution
+    try:
+        sroute_hash = (len(getattr(runner, 'sroute', [])), float(np.round(getattr(runner, 'sroute', [0])[-1], 6)) if len(getattr(runner, 'sroute', []))>0 else 0)
+    except: sroute_hash = (0,0)
+    return (round(dist,9), round(dur,9), proto, cycles, str(kind), n_elec, path, direction, start_t, round(mass_amu,6), round(rf_hz,1), round(rf_peak,3), bounds, sroute_hash)
 
 def _w_cache_key(runner, freq_coeffs):
     """Key isolated per runner geometry and frequency coeffs."""
@@ -155,22 +186,10 @@ def _prepare_for_W(runner, freq_coeffs):
         runner.task['frequency_mode'] = 'variable'
         runner.task['frequency_coeffs'] = list(coeff_tuple)
         return True
-    # also check global geom-isolated cache for cross-runner hits with same geometry (speed)
-    if key in _W_prepare_cache:
-        cached = _W_prepare_cache[key]
-        # copy into per-runner as well
-        per[key] = cached
-        for k, v in cached.items():
-            if isinstance(v, np.ndarray):
-                setattr(runner, k, v.copy() if hasattr(v, 'copy') else v)
-            else:
-                setattr(runner, k, v.copy() if isinstance(v, (list, dict)) else v)
-        coeff_tuple = tuple(np.round(np.asarray(freq_coeffs, float),4).tolist())
-        runner.frequency_mode = 'variable'
-        runner.frequency_coeffs = list(coeff_tuple)
-        runner.task['frequency_mode'] = 'variable'
-        runner.task['frequency_coeffs'] = list(coeff_tuple)
-        return True
+    # global cache disabled for correctness (audit P1: opposite routes/RF collided)
+    # keep only per-runner cache; global _W_prepare_cache is no longer used for hits
+    # if needed later, re-enable with full geom hash above and explicit validation
+    pass
     # not cached: do fresh prepare and cache result
     coeff_list = list(map(float, np.asarray(freq_coeffs, float).tolist()))
     runner.task['frequency_mode'] = 'variable'
@@ -216,7 +235,8 @@ def _dispatch_evaluate(runner, genome, baseline, hardware, stray, freq_scale, ex
         theta_voltage = genome.theta[:8].copy()
         freq_coeffs = genome.theta[8:10].copy()
         theta = theta_voltage
-        use_prepare = (freq_scale == 1.0)
+        # W profile is always applied; frequency_scale is additional uniform perturbation on top (audit P1)
+        use_prepare = True
     else:
         theta = genome.theta if hasattr(genome, 'theta') else genome
         freq_coeffs = None
@@ -248,7 +268,8 @@ def _dispatch_evaluate(runner, genome, baseline, hardware, stray, freq_scale, ex
         else: periodic_repeats='auto'
         if isinstance(periodic_repeats,int) and periodic_repeats>10: periodic_repeats=10
         if isinstance(periodic_repeats,int) and periodic_repeats<2: periodic_repeats=2
-    # handle W prepare stash/restore
+    # handle W prepare with exception-safe snapshot (audit P1)
+    # Use context-manager style: stash, prepare, evaluate, always restore in finally
     stashed=None
     if use_prepare:
         stashed=dict(task_mode=runner.task.get('frequency_mode'), task_coeffs=runner.task.get('frequency_coeffs'),
@@ -260,34 +281,32 @@ def _dispatch_evaluate(runner, genome, baseline, hardware, stray, freq_scale, ex
                      Gspline=getattr(runner,'Gspline',None), BHspline=getattr(runner,'BHspline',None))
         try:
             _prepare_for_W(runner, freq_coeffs)
-        except Exception as ex:
-            # restore before raise
-            for k,v in stashed.items():
-                if k.startswith('task_'): continue
-                if v is not None:
-                    setattr(runner, k, v)
-            if stashed['task_mode'] is not None: runner.task['frequency_mode']=stashed['task_mode']
-            if stashed['task_coeffs'] is not None: runner.task['frequency_coeffs']=stashed['task_coeffs']
+        except Exception:
+            # restore stash before propagating prepare failure
+            try:
+                for k,v in stashed.items():
+                    if k.startswith('task_'): continue
+                    if v is not None:
+                        setattr(runner, k, v)
+                if stashed['task_mode'] is not None: runner.task['frequency_mode']=stashed['task_mode']
+                if stashed['task_coeffs'] is not None: runner.task['frequency_coeffs']=stashed['task_coeffs']
+            except: pass
             raise
+    # now evaluate with guaranteed restore in finally
     try:
         if is_stitched:
-            if use_prepare:
-                metrics=runner.evaluate(theta, baseline=baseline, hardware=hardware, stray=stray, frequency_scale=freq_scale, exact_nodes=exact_nodes, subdivisions=min(1, subdivisions or 4), path_samples_per_interval=path_samples_per_interval)
-            else:
-                metrics=runner.evaluate_segmented(theta, baseline=baseline, segments=stitched_segments, hardware=hardware, stray=stray, frequency_scale=freq_scale, exact_nodes=exact_nodes, subdivisions=min(1, subdivisions or 4), path_samples_per_interval=path_samples_per_interval)
+            metrics=runner.evaluate_segmented(theta, baseline=baseline, segments=stitched_segments, hardware=hardware, stray=stray, frequency_scale=freq_scale, exact_nodes=exact_nodes, subdivisions=(subdivisions if subdivisions is not None else runner.cfg.get('subdivisions',4)), path_samples_per_interval=path_samples_per_interval)
         elif is_periodic:
-            if use_prepare:
-                metrics=runner.evaluate(theta, baseline=baseline, hardware=hardware, stray=stray, frequency_scale=freq_scale, exact_nodes=exact_nodes, subdivisions=min(1, subdivisions or 4), path_samples_per_interval=path_samples_per_interval)
-            else:
-                metrics=runner.evaluate_krat_periodic(theta, baseline=baseline, repeats=periodic_repeats, hardware=hardware, stray=stray, frequency_scale=freq_scale, exact_nodes=exact_nodes, subdivisions=min(1, subdivisions or 4), path_samples_per_interval=path_samples_per_interval)
+            metrics=runner.evaluate_krat_periodic(theta, baseline=baseline, repeats=periodic_repeats, hardware=hardware, stray=stray, frequency_scale=freq_scale, exact_nodes=exact_nodes, subdivisions=(subdivisions if subdivisions is not None else runner.cfg.get('subdivisions',4)), path_samples_per_interval=path_samples_per_interval)
         else:
-            metrics=runner.evaluate(theta, baseline=baseline, hardware=hardware, stray=stray, frequency_scale=freq_scale, exact_nodes=exact_nodes, subdivisions=min(1, subdivisions or 4), path_samples_per_interval=path_samples_per_interval)
+            metrics=runner.evaluate(theta, baseline=baseline, hardware=hardware, stray=stray, frequency_scale=freq_scale, exact_nodes=exact_nodes, subdivisions=(subdivisions if subdivisions is not None else runner.cfg.get('subdivisions',4)), path_samples_per_interval=path_samples_per_interval)
         return metrics, stashed, use_prepare
-    except Exception:
-        # ensure caller will restore via finally; re-raise
-        raise
     finally:
-        pass # restoration handled by caller via stashed
+        # always restore W snapshot, even if evaluate raised
+        if stashed is not None and use_prepare:
+            try:
+                _restore_after_W(runner, stashed)
+            except: pass
 
 def _restore_after_W(runner, stashed):
     if stashed is None: return
@@ -347,7 +366,7 @@ def evaluate_genome(genome, runner, baseline='sta', exact_nodes=None, hardware=N
     # Unified island-aware dispatch
     effective_freq_scale = freq_scale
     try:
-        metrics, stashed, used_prepare = _dispatch_evaluate(runner, genome, baseline, hardware, stray, effective_freq_scale, exact_nodes, subdivisions=4, path_samples_per_interval=4)
+        metrics, stashed, used_prepare = _dispatch_evaluate(runner, genome, baseline, hardware, stray, effective_freq_scale, exact_nodes, subdivisions=1, path_samples_per_interval=4)
         # For W, theta is voltage subset (8) but penalty should consider full genome (10) including freq coeffs
         theta_for_penalty = genome.theta
         bounds_for_penalty = genome.bounds
@@ -412,29 +431,27 @@ def evaluate_exact(genome, runner, baseline='sta', hardware=None):
     """Full exact validation for hall of fame (slow) – uses unified dispatcher.
     For W island, frequency coeffs are handled via variable prepare as in evaluate_genome.
     Isolated per geometry, same as evaluate_genome (audit fix).
+    exact_evaluated = calculation completed at high fidelity
+    exact_validated = constraints passed (accepted) at high fidelity, not just completion
     """
-    # Use unified dispatcher with full validation nodes/subdivisions
     nodes=runner.cfg.get('validation_nodes',321)
     subdiv=runner.cfg.get('validation_subdivisions',4)
     try:
         metrics, stashed, used_prepare = _dispatch_evaluate(runner, genome, baseline, hardware, None, 1.0, exact_nodes=nodes, subdivisions=subdiv, path_samples_per_interval=8)
         metrics['exact_nodes']=nodes
-        metrics['exact_validated']=True
-        # ensure restoration
-        try:
-            if stashed is not None and used_prepare:
-                _restore_after_W(runner, stashed)
-        except: pass
+        metrics['actual_exact_nodes']=nodes
+        metrics['actual_subdivisions']=subdiv
+        metrics['exact_evaluated']=True
+        # exact_validated should reflect constraints, not just completion (audit)
+        # keep legacy exact_validated as constraints for backward compat, but also expose split flags
+        is_accepted = bool(metrics.get('accepted', False))
+        is_high = bool(metrics.get('numerical_validation_passed', True))  # high fidelity already
+        metrics['exact_validated']=bool(is_accepted and is_high)
+        metrics['exact_constraints_passed']=is_accepted
+        metrics['exact_numerical_validation_passed']=is_high
+        # ensure restoration was already done by dispatcher; extra no-op
         return metrics
     except Rejected as ex:
-        try:
-            if 'stashed' in locals() and stashed is not None and used_prepare:
-                _restore_after_W(runner, stashed)
-        except: pass
-        return {'error':str(ex), 'code':ex.code, 'exact_nodes':nodes, 'exact_validated':False}
+        return {'error':str(ex), 'code':ex.code, 'exact_nodes':nodes, 'actual_exact_nodes':nodes, 'actual_subdivisions':subdiv, 'exact_evaluated':False, 'exact_validated':False, 'exact_constraints_passed':False, 'exact_numerical_validation_passed':False}
     except Exception as ex:
-        try:
-            if 'stashed' in locals() and stashed is not None and used_prepare:
-                _restore_after_W(runner, stashed)
-        except: pass
-        return {'error':str(ex), 'code':'numerical_failure', 'exact_nodes':nodes, 'exact_validated':False}
+        return {'error':str(ex), 'code':'numerical_failure', 'exact_nodes':nodes, 'actual_exact_nodes':nodes, 'actual_subdivisions':subdiv, 'exact_evaluated':False, 'exact_validated':False, 'exact_constraints_passed':False, 'exact_numerical_validation_passed':False}
