@@ -4,12 +4,34 @@ from .genome import Genome
 from .fitness import evaluate_genome
 
 class Island:
-    def __init__(self, island_id, strategy, pop_size=20, rng=None, baseline='sta', isolated_until=0):
+    def __init__(self, island_id, strategy, pop_size=20, rng=None, baseline='sta', isolated_until=0, segments=None):
         self.id = island_id
-        self.strategy = strategy  # name S/A/V/R/H/Q...
+        self.strategy = strategy  # name S/A/V/R/H/Q... plus K/M for stitched
         self.pop_size = pop_size
         self.baseline = baseline
         self.isolated_until = int(isolated_until)
+        # segments for K/M/C (stitched) islands: 5 -> 5x(D/5), auto -> round(D/20um)
+        # parse from strategy like K5, M3, C10 if segments not given
+        if segments is None:
+            import re
+            m = re.match(r'^[KMC](\d+)$', str(strategy))
+            if m:
+                try:
+                    segments = int(m.group(1))
+                except:
+                    segments = None
+            elif str(strategy) in ('K','M','C','STITCH','KRAT'):
+                segments = 'auto'
+            else:
+                m2 = re.match(r'^P(\d+)$', str(strategy))
+                if m2:
+                    try:
+                        segments = int(m2.group(1))
+                    except:
+                        segments = None
+                elif str(strategy) in ('P','PERIODIC'):
+                    segments = 'auto'
+        self.segments = segments
         self.rng = np.random.default_rng(rng)
         self.population = []
         self.generation = 0
@@ -33,6 +55,13 @@ class Island:
             return dict(mutation_sigma=0.05, cx_rate=0.7, tour_k=3, elite=2, desc="hardware penalty lowpass")
         if s in ('F','free'):
             return dict(mutation_sigma=0.07, cx_rate=0.8, tour_k=3, elite=2, desc="free-form 12 генов ΔV (5 базисов×2 + sin4πs), максимум гибкости")
+        if s.startswith('K') or s.startswith('M') or s.startswith('C') or s in ('STITCH','KRAT'):
+            # stitched KRAT with holds: K5 = 5 hops
+            seg = getattr(self, 'segments', 'auto')
+            return dict(mutation_sigma=0.06, cx_rate=0.7, tour_k=3, elite=2, desc=f"stitched KRAT {seg} hops: каждый D/{seg} с hold, непрерывно с тем же theta")
+        if s.startswith('P'):
+            seg = getattr(self, 'segments', 'auto')
+            return dict(mutation_sigma=0.06, cx_rate=0.7, tour_k=3, elite=2, desc=f"periodic KRAT no-stop {seg}: {seg}x{seg} без остановок, повтор напряжения K раз")
         return base
 
     def initialize(self, seed_genome=None):
@@ -146,4 +175,5 @@ class Island:
                     diversity=self.history[-1]['diversity'] if self.history else 0,
                     isolated_until=self.isolated_until,
                     is_isolated=isolated,
-                    params=self.params)
+                    params=self.params,
+                    segments=getattr(self, 'segments', None))

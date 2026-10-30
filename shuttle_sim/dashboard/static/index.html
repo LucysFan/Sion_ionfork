@@ -420,7 +420,7 @@ input[type=range]{accent-color:var(--accent)}
   <div style="padding:16px 20px;display:flex;gap:16px;flex-wrap:wrap;align-items:center">
     <div class="badge" id="trapBadge">Ловушка —</div>
     <div class="badge" id="trapCandidatesBadge">Кандидаты —</div>
-    <div class="kv">дистанция <b id="trapDistance">—</b> · высота <b id="trapHeight">90 мкм</b> · RF <b id="trapRF">—</b></div>
+    <div class="kv">дистанция <b id="trapDistance">—</b> · высота <b id="trapHeight">90 мкм</b> (<span style="opacity:0.6">seed</span> <b id="trapSeedHeight" title="minimum_seed_m из конфига">—</b>) · RF <b id="trapRF">—</b> <span style="opacity:0.45">|</span> <span title="Допустимые напряжения на электродах (trap.lower/upper_V) и DAC (hardware.dac_min/max_V). Если кривая упирается в границу — это infeasible_voltages">границы: <b id="trapVoltageBounds" style="color:#ffbe55">—</b> · DAC <b id="trapDACBounds" style="color:#8aa0c8">—</b></span></div>
   </div>
 
   <div style="padding:0 20px 16px 20px;display:grid;grid-template-columns:1fr;gap:16px">
@@ -605,13 +605,15 @@ input[type=range]{accent-color:var(--accent)}
 </div>
 
 <script>
-const ISLANDS = ["S","A","V","W","R","H","Q1","Q2","F"]
+const ISLANDS = ["S","A","V","W","R","H","Q1","Q2","F","K","K5","K3","K2","P","P5","P10","P2","P3"]
 const COLORS = {
   S:"#5ac8ff", A:"#ffbe55", V:"#f0883e", W:"#3fb950", R:"#c58aff", H:"#ff7a7a",
   Q1:"#ff6b9e", Q2:"#5affda", F:"#ffd05a",
+  K:"#00e5ff", K5:"#00e5ff", K3:"#00b8ff", K2:"#7af0a0",
+  P:"#7af0a0", P5:"#7af0a0", P10:"#2ec4ff", P2:"#ff6b9e", P3:"#c58aff",
   smooth:"#5ac8ff", sta:"#ffbe55", variable:"#f0883e", voltage:"#f0883e", frequency:"#3fb950", robust:"#c58aff", hardware:"#ff7a7a", free:"#ffd05a"
 }
-const NAMES = {S:"S smooth", A:"A STA", V:"V voltage", W:"W frequency", R:"R robust", H:"H hardware", Q1:"Q1 карантин 12", Q2:"Q2 карантин 18", F:"F free 15"}
+const NAMES = {S:"S smooth", A:"A STA", V:"V voltage", W:"W frequency", R:"R robust", H:"H hardware", Q1:"Q1 карантин 12", Q2:"Q2 карантин 18", F:"F free 15", K:"K stitched auto", K5:"K5 stitched 5 hops", K3:"K3 stitched 3 hops", K2:"K2 stitched 2 hops", P:"P periodic auto no-stop", P5:"P5 periodic 5× no-stop", P10:"P10 periodic 10× no-stop", P2:"P2 periodic 2× no-stop", P3:"P3 periodic 3× no-stop"}
 const POLY_PALETTE = [
   "rgba(90,200,255,0.30)",
   "rgba(122,240,160,0.26)",
@@ -1802,7 +1804,7 @@ function drawFitness(state){
   for(let i=0;i<=3;i++){ let t=i/3, lv=logMin + t*(logMax-logMin), v=Math.pow(10,lv)-0.1; let y=H-20 - t*(H-40); if(v>0) ctx.fillText(fmtFit(Math.max(0,v)), W-46, y+3)}
   ctx.fillText("0", 6, H-16)
   let leg=document.getElementById('fitnessLegend')
-  if(leg) leg.innerHTML=["S","A","V","W","R","H","Q1","Q2","F"].filter(k=>ser[k]&&ser[k].length).map(k=>`<span><i style="width:12px;height:3px;background:${islandColor(k)};display:inline-block;border-radius:99px"></i>${NAMES[k]||k}</span>`).join('')+`<span><i style="width:12px;height:3px;background:#fff;display:inline-block"></i> global best</span>`
+  if(leg) leg.innerHTML=["S","A","V","W","R","H","Q1","Q2","F","K","K5","K3","K2"].filter(k=>ser[k]&&ser[k].length).map(k=>`<span><i style="width:12px;height:3px;background:${islandColor(k)};display:inline-block;border-radius:99px"></i>${NAMES[k]||k}</span>`).join('')+`<span><i style="width:12px;height:3px;background:#fff;display:inline-block"></i> global best</span>`
 }
 
 function drawDivers(state){
@@ -2220,14 +2222,33 @@ function drawVoltage(state){
   ctx.fillStyle="#8aa0c8"; ctx.font="10px monospace"; ctx.textAlign="center"
   ctx.fillText(tMin.toFixed(1), 46, H-6); ctx.fillText(tMax.toFixed(1), W-16, H-6)
   ctx.textAlign="right"; ctx.fillText(vMax.toFixed(1)+" В", W-6, 22); ctx.fillText(vMin.toFixed(1)+" В", W-6, H-32); ctx.textAlign="start"
+  // покажем границы на легенде + подсветка если близко к границе
+  let boundsInfo=""
+  try{
+    let lo = state?.config?.trap?.lower_V ?? state?.trap?.lower_V ?? -20, hi = state?.config?.trap?.upper_V ?? state?.trap?.upper_V ?? 20
+    if(Array.isArray(lo)) lo=lo[0]; if(Array.isArray(hi)) hi=hi[0]
+    boundsInfo = ` · границы <b style='color:#ffbe55'>${Number(lo).toFixed(0)}…${Number(hi).toFixed(0)} В</b>`
+    // пунктирные линии границ на графике
+    ctx.save(); ctx.strokeStyle="rgba(255,190,85,0.55)"; ctx.setLineDash([6,4]); ctx.lineWidth=1.2
+    ctx.beginPath(); ctx.moveTo(46, yTo(hi)); ctx.lineTo(W-16, yTo(hi)); ctx.stroke()
+    ctx.beginPath(); ctx.moveTo(46, yTo(lo)); ctx.lineTo(W-16, yTo(lo)); ctx.stroke()
+    ctx.setLineDash([]); ctx.fillStyle="rgba(255,190,85,0.7)"; ctx.font="9px monospace"; ctx.textAlign="right"
+    ctx.fillText(hi.toFixed(0)+" В (верх)", W-6, yTo(hi)-4); ctx.fillText(lo.toFixed(0)+" В (низ)", W-6, yTo(lo)-4)
+    ctx.textAlign="start"; ctx.restore()
+  }catch(e){}
   let leg=document.getElementById('voltageLegend')
-  if(leg) leg.innerHTML=visible.map(isl=>`<span><i style="width:12px;height:3px;background:${islandColor(isl.strategy)};display:inline-block"></i>${isl.strategy} ${isl.candidates[0]?.baseline||""}</span>`).join('') + ` <span style="opacity:0.6">· RF жёлтый, DC тонкие</span>`
+  if(leg) leg.innerHTML=visible.map(isl=>`<span><i style="width:12px;height:3px;background:${islandColor(isl.strategy)};display:inline-block"></i>${isl.strategy} ${isl.candidates[0]?.baseline||""}</span>`).join('') + ` <span style="opacity:0.6">· RF жёлтый, DC тонкие</span>` + boundsInfo
   let stats=document.getElementById('voltageStats')
   if(stats){
     let cand = visible[0]?.candidates[0]
     if(cand?.voltages){
       let v0 = cand.voltages.voltages[0][0]?.toFixed(2) || "—"
-      stats.textContent=`${visible.length} остров(ов) · ${cand.voltages.electrode_names?.length||0} электродов · t=${curT.toFixed(2)}мкс · V0≈${v0}В`
+      let lo = state?.config?.trap?.lower_V ?? state?.trap?.lower_V ?? -20, hi = state?.config?.trap?.upper_V ?? state?.trap?.upper_V ?? 20
+      if(Array.isArray(lo)) lo=lo[0]; if(Array.isArray(hi)) hi=hi[0]
+      // найдём реальный мин/макс текущих кривых
+      let warn=""
+      try{ let margin=Math.min(vMax - Number(hi), Number(lo)-vMin); if(margin>-1) warn=" · ⚠ близко к границе — риск infeasible_voltages" }catch(e){}
+      stats.innerHTML=`${visible.length} остров(ов) · ${cand.voltages.electrode_names?.length||0} электродов · t=${curT.toFixed(2)}мкс · V0≈${v0}В · V<sub>cur</sub> ${vMin.toFixed(1)}…${vMax.toFixed(1)} В · лимит ${Number(lo).toFixed(0)}…${Number(hi).toFixed(0)} В${warn}`
     } else stats.textContent=""
   }
 }
@@ -3189,9 +3210,22 @@ function updateKVs(state){
   if(activeTrap){
     document.getElementById('trapBadge').textContent = `${activeTrap.filename || activeTrap.kind} · ${activeTrap.electrodes?.length||0}`
     document.getElementById('trapDistance').textContent = activeTrap.distance_m? (activeTrap.distance_m*1e6).toFixed(0)+" мкм" : "—"
-    document.getElementById('trapHeight').textContent = activeTrap.height_m? (activeTrap.height_m*1e6).toFixed(0)+" мкм" : "90 мкм"
+    // real fitted height vs seed — explains 150 мкм seed vs 90 мкм факт
+    let hReal = activeTrap.height_m, hSeed = activeTrap.seed_height_m ?? state.config?.trap?.minimum_seed_m?.[2] ?? null
+    document.getElementById('trapHeight').textContent = hReal!=null ? (hReal*1e6).toFixed(0)+" мкм" : "90 мкм"
+    let elSeed=document.getElementById('trapSeedHeight'); if(elSeed) elSeed.textContent = hSeed!=null ? (hSeed*1e6).toFixed(0)+" мкм" : "—"
     let rf = state.config?.trap?.rf_frequency_hz || activeTrap.rf_frequency_hz || null
     if(rf) document.getElementById('trapRF').textContent = (rf/1e6).toFixed(0)+" МГц"
+    // voltage bounds badge — теперь видно границы
+    try{
+      let lo = activeTrap.lower_V, hi = activeTrap.upper_V
+      if(lo==null) lo = state.config?.trap?.lower_V; if(hi==null) hi = state.config?.trap?.upper_V
+      let loStr = Array.isArray(lo)? lo[0] : lo, hiStr = Array.isArray(hi)? hi[0] : hi
+      let vb=document.getElementById('trapVoltageBounds'); if(vb) vb.textContent = (loStr!=null && hiStr!=null)? `${Number(loStr).toFixed(0)}…${Number(hiStr).toFixed(0)} В` : "—"
+      let dacLo = activeTrap.dac_min_V ?? state.config?.hardware?.dac_min_V
+      let dacHi = activeTrap.dac_max_V ?? state.config?.hardware?.dac_max_V
+      let db=document.getElementById('trapDACBounds'); if(db) db.textContent = (dacLo!=null && dacHi!=null)? `${Number(dacLo).toFixed(0)}…${Number(dacHi).toFixed(0)} В` : "—"
+    }catch(e){}
     document.getElementById('trapCandidatesBadge').textContent = state.island_trajectories? (state.island_trajectories.reduce((s,isl)=>s+(isl.candidates?.length||0),0) + " траект.") : "—"
   }
 }
