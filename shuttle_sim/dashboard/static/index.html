@@ -3765,7 +3765,7 @@ function init(){
           if(j.config.hardware){
             let dl=j.config.hardware.dac_min_V, dh=j.config.hardware.dac_max_V;
             let hint=document.getElementById('voltBoundsHint');
-            if(hint && (dl!=null||dh!=null)) hint.textContent = `DAC ${dl!=null?dl:\"?\"}…${dh!=null?dh:\"?\"} В`;
+            if(hint && (dl!=null||dh!=null)) hint.textContent = `DAC ${dl!=null?dl:"?"}…${dh!=null?dh:"?"} В`;
           }
           if(j.config.task){
             if(j.config.task.min_frequency_hz!=null){ let el=document.getElementById('inpFreqMin'); if(el) el.value=(j.config.task.min_frequency_hz/1e6).toFixed(2); }
@@ -3781,7 +3781,7 @@ function init(){
           }
           if(j.config.ga){
             let iso = j.config.ga.isolated_until ?? j.config.ga.isolated_until_ratio ?? j.config.ga.quarantine_until ?? null;
-            if(iso!=null && iso!==\"\" ){ let el=document.getElementById('inpQuarantine'); if(el) el.value=iso; }
+            if(iso!=null && iso!=="" ){ let el=document.getElementById('inpQuarantine'); if(el) el.value=iso; }
             if(j.config.ga.islands) { try{ renderQuarantinePerIsland({config:j.config}); }catch(e){} }
           }
         }catch(e){}
@@ -3842,7 +3842,7 @@ function init(){
     // карантин глобально
     try{
       let q=document.getElementById('inpQuarantine')?.value?.trim();
-      if(q!==\"\" && q!=null) payload.quarantine_until=q;
+      if(q!=="" && q!=null) payload.quarantine_until=q;
     }catch(e){}
     // per-island quarantine
     try{
@@ -3850,7 +3850,7 @@ function init(){
       document.querySelectorAll('[data-quarantine-island]').forEach(inp=>{
         let v=inp.value.trim();
         let id=inp.getAttribute('data-quarantine-island');
-        if(v!==\"\") per.push({island: id, isolated_until: v});
+        if(v!=="") per.push({island: id, isolated_until: v});
       });
       if(per.length) payload.quarantine_per_island=per;
     }catch(e){}
@@ -3868,16 +3868,16 @@ function init(){
       if(lastState && lastState.islands) islands = lastState.islands.map(s=>({strategy:s.strategy||s.id, isolated_until:s.isolated_until}));
     }
     if(!islands || !islands.length){
-      cont.innerHTML='<div class=\"mono\" style=\"color:var(--muted);padding:4px\">острова появятся после загрузки конфига / старта GA</div>';
+      cont.innerHTML='<div class="mono" style="color:var(--muted);padding:4px">острова появятся после загрузки конфига / старта GA</div>';
       return;
     }
     cont.innerHTML='';
     islands.forEach(isl=>{
-      let strat = isl.strategy || isl.id || \"?\";
-      let cur = isl.isolated_until ?? isl.isolated_until_raw ?? \"\";
+      let strat = isl.strategy || isl.id || "?";
+      let cur = isl.isolated_until ?? isl.isolated_until_raw ?? "";
       let row=document.createElement('div');
       row.style.cssText='display:grid;grid-template-columns:90px 1fr 70px;gap:6px;align-items:center;padding:4px 6px;background:var(--panel2);border:1px solid var(--border);border-radius:6px';
-      row.innerHTML=`<span class=\"mono\" style=\"font-weight:700;color:${islandColor(String(strat)[0])}\">${strat}</span><input type=\"text\" data-quarantine-island=\"${strat}\" value=\"${cur}\" placeholder=\"авто\" class=\"field-input\" style=\"margin:0;padding:4px 6px\"/><span class=\"mono\" style=\"font-size:11px;color:var(--muted)\">ген</span>`;
+      row.innerHTML=`<span class="mono" style="font-weight:700;color:${islandColor(String(strat)[0])}">${strat}</span><input type="text" data-quarantine-island="${strat}" value="${cur}" placeholder="авто" class="field-input" style="margin:0;padding:4px 6px"/><span class="mono" style="font-size:11px;color:var(--muted)">ген</span>`;
       cont.appendChild(row);
     });
     // hook change to update global hint
@@ -4016,6 +4016,7 @@ function init(){
     }
   }
 
+  let _pollStateWaitingCount = 0;
   async function pollState(){
     if(!document.getElementById('autoPoll').checked) return
     let run = localStorage.getItem('dashboard_run')
@@ -4026,8 +4027,24 @@ function init(){
       if(j.status==="waiting"){
         document.getElementById('liveText').textContent="ожидание"
         document.getElementById('liveDot').style.background="#ffbe55"
+        // если run указывает на несуществующий прогон, через 3 попытки сбрасываем его чтобы выйти из "подключение/ожидание" и показать ловушку
+        if(run){
+          _pollStateWaitingCount++;
+          if(_pollStateWaitingCount>=3){
+            console.warn("pollState: stale dashboard_run", run, "-> clearing");
+            localStorage.removeItem('dashboard_run');
+            _pollStateWaitingCount=0;
+            // сразу пробуем без run, чтобы показать ловушку и разблокировать кнопки
+            try{ let r2=await fetch('/api/state?ts='+Date.now(),{cache:"no-store"}); let j2=await r2.json(); if(j2.status!=="waiting"){ lastState=j2; document.getElementById('liveText').textContent="активен"; document.getElementById('liveDot').style.background="#6ef0a8"; } }catch(e){}
+            // также сбрасываем training UI если завис в "running"
+            try{ setTrainingUI(false,null,{percent:0, global_generation:0, total_generations:0}); }catch(e){}
+          }
+        } else {
+          _pollStateWaitingCount=0;
+        }
         return
       }
+      _pollStateWaitingCount=0;
       lastState = j
       document.getElementById('liveText').textContent="активен"
       document.getElementById('liveDot').style.background="#6ef0a8"
@@ -4121,8 +4138,38 @@ function init(){
         let logEl=document.getElementById('trainingLog')
         if(logEl && lj.log) logEl.textContent = lj.log
       }
-    }catch(e){}
+    }catch(e){
+      // если /api/jobs недоступен, не оставляем кнопки заблокированными
+      try{ setTrainingUI(false,null,{percent:0, global_generation:0, total_generations:0}); }catch(e2){}
+      document.getElementById('liveText').textContent="нет связи"
+      document.getElementById('liveDot').style.background="#ff6b7a"
+    }
   }
+
+  // Сброс кэша прогона — помогает когда завис в "подключение/ожидание" из-за старого run
+  try{
+    let btnResetRun = document.getElementById('btnSwitchRun');
+    if(btnResetRun && !btnResetRun.dataset._patched){
+      btnResetRun.dataset._patched="1";
+      // добавляем рядом кнопку сброса если её нет
+      if(!document.getElementById('btnClearRunCache')){
+        let clr=document.createElement('button');
+        clr.id='btnClearRunCache';
+        clr.className='btn';
+        clr.textContent='Сброс';
+        clr.title='Очистить dashboard_run и разблокировать интерфейс';
+        clr.onclick=()=>{
+          localStorage.removeItem('dashboard_run');
+          _pollStateWaitingCount=0;
+          document.getElementById('liveText').textContent="сброс…";
+          setTrainingUI(false,null,{percent:0, global_generation:0, total_generations:0});
+          pollState(); pollJobs();
+          setTimeout(()=>location.reload(), 600);
+        };
+        btnResetRun.parentNode.insertBefore(clr, btnResetRun.nextSibling);
+      }
+    }
+  }catch(e){}
 
   document.getElementById('btnStopTraining').onclick=async()=>{
     if(!trainingRunning) return
