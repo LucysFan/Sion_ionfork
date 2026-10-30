@@ -442,14 +442,53 @@ def build_trap_preview(gds_path=None, cfg=None):
             "rf_peak_V": trap_cfg.get("rf_peak_V"),
         }
 
-    raise ValueError("No trap path or configuration provided")
+    # Final fallback: minimal five_wire so trap canvas never stays empty (dashboard "все сломано" after PR31 when default out had no config)
+    try:
+        from shuttle_sim.field import load_trap as _load_five
+        _cfg = cfg if isinstance(cfg, dict) else {}
+        _trap_cfg = _cfg.get("trap", {}) if isinstance(_cfg.get("trap"), dict) else {"kind": "sion_five_wire", "minimum_seed_m": [0, 0, 90e-6], "length_scale_m": 1e-6}
+        if not _trap_cfg.get("kind"):
+            _trap_cfg["kind"] = "sion_five_wire"
+            _trap_cfg["minimum_seed_m"] = _trap_cfg.get("minimum_seed_m", [0, 0, 90e-6])
+        _adapter = _load_five(_trap_cfg)
+        _sys = _adapter.system
+        _electrodes = []
+        _flat = []
+        for _idx, _ele in enumerate(_sys):
+            _rf = float(_sys.rfs[_idx]) if _idx < len(_sys.rfs) else 0.0
+            _typ = "rf" if abs(_rf) > 1e-12 or "rf" in _ele.name.lower() else "dc"
+            _paths=[]
+            _areas=[]
+            _best=[0.0,0.0]
+            _best_a=-1
+            _x0,_x1=float("inf"),float("-inf")
+            _y0,_y1=float("inf"),float("-inf")
+            for _p in getattr(_ele, "paths", []):
+                _pts=[[round(float(v[0]),4), round(float(v[1]),4)] for v in _p]
+                _paths.append(_pts); _flat.append(_pts)
+                _lbl,_ar=_interior_label_point(_pts); _areas.append(_ar)
+                if _ar>_best_a: _best_a=_ar; _best=_lbl
+                for _x,_y in _pts: _x0=min(_x0,_x); _x1=max(_x1,_x); _y0=min(_y0,_y); _y1=max(_y1,_y)
+            _electrodes.append({"index":_idx,"name":_ele.name,"type":_typ,"layer":_idx,"datatype":0,"paths":_paths,"label_pt":_best,"area_um2":round(sum(_areas),2),"bbox":{"xmin":round(_x0,3),"xmax":round(_x1,3),"ymin":round(_y0,3),"ymax":round(_y1,3)}})
+        _ax=[pt[0] for poly in _flat for pt in poly] or [0.0]
+        _ay=[pt[1] for poly in _flat for pt in poly] or [0.0]
+        _bbox={"xmin":min(_ax),"xmax":max(_ax),"ymin":min(_ay),"ymax":max(_ay)}
+        _seed=_trap_cfg.get("minimum_seed_m", [0.0,0.0,90e-6])
+        return {"kind":"sion_five_wire","filename":"sion_five_wire","path":"","mapped":True,"polygon_count":len(_flat),"electrode_count":len(_electrodes),"layers":[],"cells":[],"bbox":_bbox,"focus_bbox":_compute_focus_bbox(_flat,_bbox),"electrodes":_electrodes,"start_m":_seed,"distance_m": float((cfg or {}).get("task",{}).get("distance_m",30e-6)),"direction": (cfg or {}).get("task",{}).get("direction",[1.0,0.0,0.0]),"height_m": float(_seed[2]) if isinstance(_seed,list) and len(_seed)>=3 else 90e-6,"rf_frequency_hz": _trap_cfg.get("rf_frequency_hz")}
+    except Exception as _e2:
+        raise ValueError(f"No trap path or configuration provided ({_e2})") from _e2
 
 
 def _load_active_config(out_dir):
     """Load active config JSON and normalize relative GDS path if present."""
     # Prefer five_wire for 100um fallback if gds needs gdspy missing
+    _repo = pathlib.Path(__file__).resolve().parents[2]
     candidates = [
         pathlib.Path(out_dir) / "config.json",
+        _repo / "configs/unified_live.json",
+        _repo / "configs/shuttle_gds.json",
+        _repo / "configs/shuttle_reference.json",
+        _repo / "configs/shuttle_90um_100um_100us.json",
         pathlib.Path("configs/unified_live.json"),
         pathlib.Path("configs/shuttle_gds.json"),
         pathlib.Path("configs/shuttle_reference.json"),
@@ -893,6 +932,15 @@ class Handler(SimpleHTTPRequestHandler):
                 p = pathlib.Path(run)
                 if p.exists() and p.is_dir():
                     return p
+        except Exception:
+            pass
+        # fallback: if default out_dir has no state.json, try common alternatives (live_run, ga_demo, ga_traj)
+        try:
+            cand = pathlib.Path(self.out_dir)
+            if not (cand / "state.json").exists():
+                for alt in [pathlib.Path("output/live_run"), pathlib.Path("output/ga_demo"), pathlib.Path("output/ga_traj"), pathlib.Path("output")]:
+                    if (alt / "state.json").exists():
+                        return alt
         except Exception:
             pass
         return self.out_dir
