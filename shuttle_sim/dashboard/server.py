@@ -447,15 +447,26 @@ def build_trap_preview(gds_path=None, cfg=None):
 
 def _load_active_config(out_dir):
     """Load active config JSON and normalize relative GDS path if present."""
-    for cand in (
+    # Prefer five_wire for 100um fallback if gds needs gdspy missing
+    candidates = [
         pathlib.Path(out_dir) / "config.json",
         pathlib.Path("configs/unified_live.json"),
         pathlib.Path("configs/shuttle_gds.json"),
         pathlib.Path("configs/shuttle_reference.json"),
-    ):
+        pathlib.Path("configs/shuttle_90um_100um_100us.json"),
+    ]
+    for cand in candidates:
         if cand.exists():
-            cfg = json.loads(cand.read_text(encoding="utf-8"))
+            try:
+                cfg = json.loads(cand.read_text(encoding="utf-8"))
+            except Exception:
+                continue
             if cfg.get("trap", {}).get("kind") == "gds" and cfg["trap"].get("path"):
+                # check if gdspy available, if not fallback to five_wire
+                try:
+                    import gdspy
+                except Exception:
+                    continue
                 resolved = _resolve_gds_path(cfg["trap"]["path"], cfg_dir=cand.parent)
                 if resolved is not None:
                     cfg["trap"]["path"] = str(resolved)
@@ -936,7 +947,21 @@ class Handler(SimpleHTTPRequestHandler):
             try:
                 base_cfg, _ = _load_active_config(self.out_dir)
                 if base_cfg is None:
-                    base_cfg = json.loads(pathlib.Path("configs/shuttle_gds.json").read_text(encoding="utf-8"))
+                    # fallback to five_wire that works without gdspy (100um needs -20..20)
+                    for _cand in (pathlib.Path("configs/shuttle_90um_100um_100us.json"), pathlib.Path("configs/shuttle_reference.json"), pathlib.Path("configs/shuttle_gds.json")):
+                        if _cand.exists():
+                            try:
+                                base_cfg = json.loads(_cand.read_text(encoding="utf-8"))
+                                if base_cfg.get("trap",{}).get("kind")=="gds":
+                                    try:
+                                        import gdspy
+                                    except Exception:
+                                        continue
+                                break
+                            except Exception:
+                                continue
+                    if base_cfg is None:
+                        base_cfg = json.loads(pathlib.Path("configs/shuttle_reference.json").read_text(encoding="utf-8"))
                 if "trap" in data and "task" in data:
                     cfg = data
                 else:
@@ -966,6 +991,54 @@ class Handler(SimpleHTTPRequestHandler):
                         except: pass
                     if "upper_V" in data:
                         try: cfg["trap"]["upper_V"] = float(data["upper_V"])
+                        except: pass
+                    if "dac_min_V" in data:
+                        try: cfg.setdefault("hardware", {})["dac_min_V"] = float(data["dac_min_V"])
+                        except: pass
+                    if "dac_max_V" in data:
+                        try: cfg.setdefault("hardware", {})["dac_max_V"] = float(data["dac_max_V"])
+                        except: pass
+                    # частота: нач/кон/мин/макс
+                    if "frequency_initial_hz" in data:
+                        try: cfg["task"]["frequency_initial_hz"] = float(data["frequency_initial_hz"])
+                        except: pass
+                    if "frequency_final_hz" in data:
+                        try: cfg["task"]["frequency_final_hz"] = float(data["frequency_final_hz"])
+                        except: pass
+                    if "min_frequency_hz" in data:
+                        try: cfg["task"]["min_frequency_hz"] = float(data["min_frequency_hz"])
+                        except: pass
+                    if "max_frequency_hz" in data:
+                        try: cfg["task"]["max_frequency_hz"] = float(data["max_frequency_hz"])
+                        except: pass
+                    # высота мин/макс
+                    if "height_min_m" in data:
+                        try: cfg["task"]["height_min_m"] = float(data["height_min_m"])
+                        except: pass
+                    if "height_max_m" in data:
+                        try: cfg["task"]["height_max_m"] = float(data["height_max_m"])
+                        except: pass
+                    # карантин
+                    if "quarantine_until" in data:
+                        try:
+                            cfg.setdefault("ga", {})["quarantine_until"] = data["quarantine_until"]
+                            # применим к существующим islands если есть
+                            if "islands" in cfg.get("ga", {}):
+                                for ic in cfg["ga"]["islands"]:
+                                    # только если не задано per-island
+                                    if "isolated_until" not in ic:
+                                        ic["isolated_until"] = data["quarantine_until"]
+                        except: pass
+                    if "quarantine_per_island" in data and isinstance(data["quarantine_per_island"], list):
+                        try:
+                            qmap={str(x.get("island")): x.get("isolated_until") for x in data["quarantine_per_island"] if "island" in x}
+                            if "islands" in cfg.get("ga", {}):
+                                for ic in cfg["ga"]["islands"]:
+                                    strat=str(ic.get("strategy",""))
+                                    if strat in qmap:
+                                        ic["isolated_until"]=qmap[strat]
+                            else:
+                                cfg.setdefault("ga", {})["_quarantine_per_island"]=qmap
                         except: pass
                     if "generations" in data:
                         cfg.setdefault("ga", {})["generations"] = int(data["generations"])
@@ -1076,10 +1149,81 @@ class Handler(SimpleHTTPRequestHandler):
 
                 cfg, _ = _load_active_config(self.out_dir)
                 if cfg is None:
-                    cfg = json.loads(pathlib.Path("configs/shuttle_gds.json").read_text(encoding="utf-8"))
+                    for _cand in (pathlib.Path("configs/shuttle_90um_100um_100us.json"), pathlib.Path("configs/shuttle_reference.json"), pathlib.Path("configs/shuttle_gds.json")):
+                        if _cand.exists():
+                            try:
+                                cfg = json.loads(_cand.read_text(encoding="utf-8"))
+                                if cfg.get("trap",{}).get("kind")=="gds":
+                                    try:
+                                        import gdspy
+                                    except Exception:
+                                        continue
+                                break
+                            except Exception:
+                                continue
+                    if cfg is None:
+                        cfg = json.loads(pathlib.Path("configs/shuttle_reference.json").read_text(encoding="utf-8"))
+                # if loaded cfg is gds but gdspy missing, fallback to five_wire
+                if cfg.get("trap",{}).get("kind")=="gds":
+                    try:
+                        import gdspy
+                    except Exception:
+                        try:
+                            fb = json.loads(pathlib.Path("configs/shuttle_90um_100um_100us.json").read_text(encoding="utf-8"))
+                            fb["task"] = cfg.get("task", fb["task"])
+                            fb["hardware"] = cfg.get("hardware", fb["hardware"])
+                            if "ga" in cfg:
+                                fb["ga"] = cfg["ga"]
+                            cfg = fb
+                        except Exception:
+                            pass
 
                 if distance is not None:
                     cfg["task"]["distance_m"] = float(distance)
+                    # auto-expand voltage bounds for large D
+                    try:
+                        if float(distance) >= 60e-6:
+                            cfg.setdefault("trap", {})["lower_V"] = -20
+                            cfg["trap"]["upper_V"] = 20
+                            cfg.setdefault("hardware", {})["dac_min_V"] = -20
+                            cfg["hardware"]["dac_max_V"] = 20
+                            try:
+                                cfg["hardware"]["lower_V"] = -20
+                                cfg["hardware"]["upper_V"] = 20
+                            except:
+                                pass
+                            # if trap is gds and distance large, switch to five_wire that supports 100um without gdspy
+                            if cfg.get("trap",{}).get("kind") == "gds":
+                                try:
+                                    import gdspy
+                                    has_gdspy = True
+                                except Exception:
+                                    has_gdspy = False
+                                if not has_gdspy or float(distance) >= 60e-6:
+                                    try:
+                                        fb = json.loads(pathlib.Path("configs/shuttle_90um_100um_100us.json").read_text(encoding="utf-8"))
+                                        fb["task"]["distance_m"] = float(distance)
+                                        # keep duration if provided else scale with distance
+                                        if duration is not None:
+                                            fb["task"]["duration_s"] = float(duration)
+                                        elif "duration_s" in cfg["task"]:
+                                            # keep original duration if set, else use distance as duration (100um->100us)
+                                            pass
+                                        fb["task"]["hold_s"] = cfg["task"].get("hold_s", 2e-6)
+                                        fb["task"]["protocol"] = cfg["task"].get("protocol", "one_way")
+                                        # preserve hardware bounds we just set
+                                        fb["trap"]["lower_V"] = -20
+                                        fb["trap"]["upper_V"] = 20
+                                        fb["hardware"]["dac_min_V"] = -20
+                                        fb["hardware"]["dac_max_V"] = 20
+                                        # keep ga islands from original cfg if any, else use fb's
+                                        if "ga" in cfg and cfg["ga"].get("islands"):
+                                            fb["ga"] = cfg["ga"]
+                                        cfg = fb
+                                    except Exception as e:
+                                        print(f"fallback to five_wire failed {e}")
+                    except Exception:
+                        pass
                 if duration is not None:
                     cfg["task"]["duration_s"] = float(duration)
                 if gds_path:
@@ -1116,6 +1260,64 @@ class Handler(SimpleHTTPRequestHandler):
                 if "migration_interval" in data:
                     try: cfg.setdefault("ga", {})["migration_interval"]=int(data["migration_interval"])
                     except: pass
+                # напряжение/частота/высота/карантин (ручные ограничения из дашборда)
+                if "lower_V" in data:
+                    try: cfg.setdefault("trap", {})["lower_V"]=float(data["lower_V"])
+                    except: pass
+                if "upper_V" in data:
+                    try: cfg.setdefault("trap", {})["upper_V"]=float(data["upper_V"])
+                    except: pass
+                if "dac_min_V" in data:
+                    try: cfg.setdefault("hardware", {})["dac_min_V"]=float(data["dac_min_V"])
+                    except: pass
+                if "dac_max_V" in data:
+                    try: cfg.setdefault("hardware", {})["dac_max_V"]=float(data["dac_max_V"])
+                    except: pass
+                if "frequency_initial_hz" in data:
+                    try: cfg["task"]["frequency_initial_hz"]=float(data["frequency_initial_hz"])
+                    except: pass
+                if "frequency_final_hz" in data:
+                    try: cfg["task"]["frequency_final_hz"]=float(data["frequency_final_hz"])
+                    except: pass
+                if "min_frequency_hz" in data:
+                    try: cfg["task"]["min_frequency_hz"]=float(data["min_frequency_hz"])
+                    except: pass
+                if "max_frequency_hz" in data:
+                    try: cfg["task"]["max_frequency_hz"]=float(data["max_frequency_hz"])
+                    except: pass
+                if "height_min_m" in data:
+                    try: cfg["task"]["height_min_m"]=float(data["height_min_m"])
+                    except: pass
+                if "height_max_m" in data:
+                    try: cfg["task"]["height_max_m"]=float(data["height_max_m"])
+                    except: pass
+                if "quarantine_until" in data:
+                    try:
+                        cfg.setdefault("ga", {})["quarantine_until"]=data["quarantine_until"]
+                        if "islands" in cfg.get("ga", {}):
+                            for ic in cfg["ga"]["islands"]:
+                                if "isolated_until" not in ic:
+                                    ic["isolated_until"]=data["quarantine_until"]
+                    except: pass
+                if "quarantine_per_island" in data and isinstance(data["quarantine_per_island"], list):
+                    try:
+                        qmap={str(x.get("island")): x.get("isolated_until") for x in data["quarantine_per_island"] if "island" in x}
+                        if "islands" in cfg.get("ga", {}):
+                            for ic in cfg["ga"]["islands"]:
+                                strat=str(ic.get("strategy",""))
+                                if strat in qmap:
+                                    ic["isolated_until"]=qmap[strat]
+                        else:
+                            cfg.setdefault("ga", {})["_quarantine_per_island"]=qmap
+                    except: pass
+                # пользовательские lower/upper приоритетно поверх авто -20..20 для больших дистанций: уже выше, но если заданы — перезапишем
+                # ensure hardware bounds mirror trap bounds if only trap given
+                try:
+                    if "lower_V" in data and "dac_min_V" not in data:
+                        cfg.setdefault("hardware", {})["dac_min_V"]=float(data["lower_V"])
+                    if "upper_V" in data and "dac_max_V" not in data:
+                        cfg.setdefault("hardware", {})["dac_max_V"]=float(data["upper_V"])
+                except: pass
 
                 out_path = pathlib.Path(out_dir_str)
                 out_path.mkdir(parents=True, exist_ok=True)

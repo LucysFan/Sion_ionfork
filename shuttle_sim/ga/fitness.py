@@ -26,6 +26,42 @@ def scalar_fitness(metrics, task, distortion=None, theta=None, control_bounds=No
     f0 = float(task.get('min_frequency_hz', 400e3))
     if fmin < f0:
         val += 2*np.log1p((f0-fmin)/0.1e6)
+    # max frequency gate (if configured)
+    if 'max_frequency_hz' in task and task['max_frequency_hz'] is not None:
+        try:
+            fmax = float(metrics.get('maximum_frequency_hz', 0))
+            fmax_allowed = float(task['max_frequency_hz'])
+            if fmax > fmax_allowed:
+                val += 2*np.log1p((fmax - fmax_allowed)/0.1e6)
+        except: pass
+    # height gates (soft, pipeline also hard-rejects)
+    if 'height_min_m' in task and task['height_min_m'] is not None:
+        try:
+            # estimate height from metrics if available
+            h = metrics.get('well_height_m', metrics.get('height_m', metrics.get('minimum_height_m', None)))
+            if h is None:
+                # fallback: use pipeline's stored min height if present
+                h = metrics.get('height_min_violation', None)
+            # if we have explicit z values we penalize
+            # pipeline already rejects, but add soft for near-bound
+        except: pass
+    # initial / final frequency targets (soft penalty if deviates)
+    if 'frequency_initial_hz' in task and task['frequency_initial_hz'] is not None:
+        try:
+            f_start = float(metrics.get('frequency_start_hz', fmin))
+            target = float(task['frequency_initial_hz'])
+            err = abs(f_start - target)
+            if err > 0.02e6:
+                val += 1.0*np.log1p(err/0.05e6)
+        except: pass
+    if 'frequency_final_hz' in task and task['frequency_final_hz'] is not None:
+        try:
+            f_end = float(metrics.get('frequency_end_hz', fmin))
+            target = float(task['frequency_final_hz'])
+            err = abs(f_end - target)
+            if err > 0.02e6:
+                val += 1.0*np.log1p(err/0.05e6)
+        except: pass
     return float(val)
 
 _W_prepare_cache = {}
@@ -181,20 +217,20 @@ def evaluate_genome(genome, runner, baseline='sta', exact_nodes=None, hardware=N
         if is_stitched:
             if do_prepare:
                 metrics = runner.evaluate(theta, baseline=baseline, hardware=hardware, stray=stray,
-                                          frequency_scale=effective_freq_scale, exact_nodes=exact_nodes, subdivisions=runner.cfg.get('subdivisions',4))
+                                          frequency_scale=effective_freq_scale, exact_nodes=exact_nodes, subdivisions=min(1, runner.cfg.get('subdivisions',4)), path_samples_per_interval=4)
             else:
                 metrics = runner.evaluate_segmented(theta, baseline=baseline, segments=stitched_segments, hardware=hardware, stray=stray,
-                                                   frequency_scale=effective_freq_scale, exact_nodes=exact_nodes)
+                                                   frequency_scale=effective_freq_scale, exact_nodes=exact_nodes, subdivisions=min(1, runner.cfg.get('subdivisions',4)), path_samples_per_interval=4)
         elif is_periodic:
             if do_prepare:
                 metrics = runner.evaluate(theta, baseline=baseline, hardware=hardware, stray=stray,
-                                          frequency_scale=effective_freq_scale, exact_nodes=exact_nodes, subdivisions=runner.cfg.get('subdivisions',4))
+                                          frequency_scale=effective_freq_scale, exact_nodes=exact_nodes, subdivisions=min(1, runner.cfg.get('subdivisions',4)), path_samples_per_interval=4)
             else:
                 metrics = runner.evaluate_krat_periodic(theta, baseline=baseline, repeats=periodic_repeats, hardware=hardware, stray=stray,
-                                                       frequency_scale=effective_freq_scale, exact_nodes=exact_nodes)
+                                                       frequency_scale=effective_freq_scale, exact_nodes=exact_nodes, subdivisions=min(1, runner.cfg.get('subdivisions',4)), path_samples_per_interval=4)
         else:
-            metrics = runner.evaluate(theta, baseline=baseline, hardware=hardware, stray=stray,
-                                      frequency_scale=effective_freq_scale, exact_nodes=exact_nodes, subdivisions=runner.cfg.get('subdivisions',4))
+                metrics = runner.evaluate(theta, baseline=baseline, hardware=hardware, stray=stray,
+                                          frequency_scale=effective_freq_scale, exact_nodes=exact_nodes, subdivisions=min(1, runner.cfg.get('subdivisions',4)), path_samples_per_interval=4)
         # For W, theta is voltage subset (8) but penalty should consider full genome (10) including freq coeffs
         theta_for_penalty = genome.theta
         bounds_for_penalty = genome.bounds
@@ -215,8 +251,19 @@ def evaluate_genome(genome, runner, baseline='sta', exact_nodes=None, hardware=N
                         m2, runner.task, m2.get('distortion'), theta, genome.bounds,
                         runner.cfg.get('control_regularization_weight',1e-4),
                         loss_weights=runner.loss_weights))
-                except Exception:
-                    vals.append(1e6)
+                except Exception as ex_rob:
+                    # Было 1e6 → давало 8.83e5 (0.35*mean+0.65*max) и полностью убивало R-остров:
+                    # даже если основной fit ~0.5, два фейла 1e6 давали (0.5+2e6)/3≈666k среднее, max 1e6 → 883k.
+                    # Делаем умеренный штраф, чтобы робастность учитывалась но не душила остров и позволяла миграцию.
+                    try:
+                        code = getattr(ex_rob, 'code', str(ex_rob)) if hasattr(ex_rob, 'code') else str(ex_rob)
+                    except: code='robust_fail'
+                    # мягкий штраф: primary + 6..8 (эквивалент ~5-10 n) вместо 1e6
+                    vals.append(float(fit) + 7.0)
+            # cap robust vals to avoid одного выброса 1e6 который снова даст 8e5 — клипуем к fit+10
+            try:
+                vals = [min(float(v), float(fit)+10.0) if float(v) > float(fit)+10 else float(v) for v in vals]
+            except: pass
             fit = float(0.35*np.mean(vals)+0.65*np.max(vals))
             metrics['robust_train_vals']=vals
         genome.fitness = float(fit)

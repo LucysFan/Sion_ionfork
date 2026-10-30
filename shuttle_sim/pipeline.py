@@ -430,6 +430,47 @@ class Runner:
         if result['well_target_error_m']>self.task['position_tolerance_m']:result['quality_failures'].append('well_target_accuracy')
         result['model']='3D geometry-derived local harmonic Gaussian'
         result['minimum_frequency_hz']=float(np.sqrt(np.linalg.eigvalsh(H/self.trap.mass).min())/(2*np.pi))
+        result['maximum_frequency_hz']=float(np.sqrt(np.linalg.eigvalsh(H/self.trap.mass).max())/(2*np.pi))
+        # max frequency bound (manual) — soft, not hard reject (penalty in fitness)
+        # keep for diagnostics only; no Rejected here to avoid killing all islands when max default too low (2.24 vs 1.2)
+        if 'max_frequency_hz' in self.task and self.task['max_frequency_hz'] is not None:
+            try:
+                result['max_frequency_target_hz']=float(self.task['max_frequency_hz'])
+            except: pass
+        # height bounds on well centers
+        if ('height_min_m' in self.task and self.task['height_min_m'] is not None) or ('height_max_m' in self.task and self.task['height_max_m'] is not None):
+            try:
+                # r is Nx3 well centers
+                if isinstance(r, np.ndarray) and r.ndim==2 and r.shape[1]>=3:
+                    z_vals=r[:,2]
+                else:
+                    z_vals=np.array([p[2] for p in r]) if isinstance(r, (list, np.ndarray)) else np.array([0])
+                if 'height_min_m' in self.task and self.task['height_min_m'] is not None:
+                    hmin=float(self.task['height_min_m'])
+                    if np.min(z_vals) < hmin - 1e-9:
+                        raise Rejected('height_violation', f"well height {np.min(z_vals)*1e6:.1f} um below min {hmin*1e6:.1f} um")
+                if 'height_max_m' in self.task and self.task['height_max_m'] is not None:
+                    hmax=float(self.task['height_max_m'])
+                    if np.max(z_vals) > hmax + 1e-9:
+                        raise Rejected('height_violation', f"well height {np.max(z_vals)*1e6:.1f} um above max {hmax*1e6:.1f} um")
+            except Rejected:
+                raise
+            except Exception:
+                pass
+        # начальная/конечная частота (для записи и мягкого штрафа)
+        try:
+            f_start=float(np.sqrt(np.linalg.eigvalsh(H[0]/self.trap.mass).min())/(2*np.pi))
+            f_end=float(np.sqrt(np.linalg.eigvalsh(H[-1]/self.trap.mass).min())/(2*np.pi))
+            result['frequency_start_hz']=f_start
+            result['frequency_end_hz']=f_end
+            if 'frequency_initial_hz' in self.task and self.task['frequency_initial_hz'] is not None:
+                result['frequency_initial_target_hz']=float(self.task['frequency_initial_hz'])
+                result['frequency_initial_error_hz']=float(abs(f_start - float(self.task['frequency_initial_hz'])))
+            if 'frequency_final_hz' in self.task and self.task['frequency_final_hz'] is not None:
+                result['frequency_final_target_hz']=float(self.task['frequency_final_hz'])
+                result['frequency_final_error_hz']=float(abs(f_end - float(self.task['frequency_final_hz'])))
+        except Exception:
+            pass
         if keep:
             return result,dict(t=t,v=v,codes=codes,ct=ct,cmd=cmd,route=route,r=r,H=H,initial=init,final=final,diag=diag)
         return result
@@ -548,7 +589,7 @@ class Runner:
             raise Rejected('infeasible_voltages','command outside electrode bounds in segmented')
         return t_all, v, route
 
-    def evaluate_segmented(self, theta, baseline='smooth', segments=5, ideal=False, hardware=None, stray=None, exact_nodes=None, keep=False, frequency_scale=1., return_trajectory=False, trajectory_decimate=400, subdivisions=None):
+    def evaluate_segmented(self, theta, baseline='smooth', segments=5, ideal=False, hardware=None, stray=None, exact_nodes=None, keep=False, frequency_scale=1., return_trajectory=False, trajectory_decimate=400, subdivisions=None, path_samples_per_interval=None):
         """Evaluate stitched Kx(D/K) path as continuous. Segments auto if needed."""
         if isinstance(segments, str) and segments == 'auto':
             segments = max(1, min(10, int(round(self.task['distance_m']/20e-6))))
@@ -574,7 +615,8 @@ class Runner:
             init=Local(init.position_m,init.hessian_J_m2*frequency_scale**2,init.omega_rad_s*frequency_scale,init.modes)
             final=Local(final.position_m,final.hessian_J_m2*frequency_scale**2,final.omega_rad_s*frequency_scale,final.modes)
         target=self.target
-        result=propagate(t,r,H,init,final,self.trap.mass,target,method='exact', hold='linear', return_trajectory=return_trajectory, trajectory_decimate=trajectory_decimate, path_samples_per_interval=self.cfg.get('path_samples_per_interval',8))
+        _ps = path_samples_per_interval if path_samples_per_interval is not None else self.cfg.get('path_samples_per_interval',8)
+        result=propagate(t,r,H,init,final,self.trap.mass,target,method='exact', hold='linear', return_trajectory=return_trajectory, trajectory_decimate=trajectory_decimate, path_samples_per_interval=_ps)
         result['distortion']=dist
         result['segments']=int(segments)
         result['stitched']=True
@@ -585,6 +627,42 @@ class Runner:
         if result['well_target_error_m']>self.task['position_tolerance_m']:result['quality_failures'].append('well_target_accuracy')
         result['model']='3D geometry-derived local harmonic Gaussian (segmented stitched)'
         result['minimum_frequency_hz']=float(np.sqrt(np.linalg.eigvalsh(H/self.trap.mass).min())/(2*np.pi))
+        result['maximum_frequency_hz']=float(np.sqrt(np.linalg.eigvalsh(H/self.trap.mass).max())/(2*np.pi))
+        if 'max_frequency_hz' in self.task and self.task['max_frequency_hz'] is not None:
+            try:
+                result['max_frequency_target_hz']=float(self.task['max_frequency_hz'])
+            except: pass
+        if ('height_min_m' in self.task and self.task['height_min_m'] is not None) or ('height_max_m' in self.task and self.task['height_max_m'] is not None):
+            try:
+                if isinstance(r, np.ndarray) and r.ndim==2 and r.shape[1]>=3:
+                    z_vals=r[:,2]
+                else:
+                    z_vals=np.array([p[2] for p in r]) if isinstance(r, (list, np.ndarray)) else np.array([0])
+                if 'height_min_m' in self.task and self.task['height_min_m'] is not None:
+                    hmin=float(self.task['height_min_m'])
+                    if np.min(z_vals) < hmin - 1e-9:
+                        raise Rejected('height_violation', f"well height {np.min(z_vals)*1e6:.1f} um below min {hmin*1e6:.1f} um")
+                if 'height_max_m' in self.task and self.task['height_max_m'] is not None:
+                    hmax=float(self.task['height_max_m'])
+                    if np.max(z_vals) > hmax + 1e-9:
+                        raise Rejected('height_violation', f"well height {np.max(z_vals)*1e6:.1f} um above max {hmax*1e6:.1f} um")
+            except Rejected:
+                raise
+            except Exception:
+                pass
+        try:
+            f_start=float(np.sqrt(np.linalg.eigvalsh(H[0]/self.trap.mass).min())/(2*np.pi))
+            f_end=float(np.sqrt(np.linalg.eigvalsh(H[-1]/self.trap.mass).min())/(2*np.pi))
+            result['frequency_start_hz']=f_start
+            result['frequency_end_hz']=f_end
+            if 'frequency_initial_hz' in self.task and self.task['frequency_initial_hz'] is not None:
+                result['frequency_initial_target_hz']=float(self.task['frequency_initial_hz'])
+                result['frequency_initial_error_hz']=float(abs(f_start - float(self.task['frequency_initial_hz'])))
+            if 'frequency_final_hz' in self.task and self.task['frequency_final_hz'] is not None:
+                result['frequency_final_target_hz']=float(self.task['frequency_final_hz'])
+                result['frequency_final_error_hz']=float(abs(f_end - float(self.task['frequency_final_hz'])))
+        except Exception:
+            pass
         if keep:
             return result,dict(t=t,v=v,codes=codes,ct=ct,cmd=cmd,route=route,r=r,H=H,initial=init,final=final,diag=diag)
         return result
@@ -657,7 +735,7 @@ class Runner:
             raise Rejected('infeasible_voltages','command outside electrode bounds in periodic')
         return t, v, route
 
-    def evaluate_krat_periodic(self, theta, baseline='smooth', repeats=5, ideal=False, hardware=None, stray=None, exact_nodes=None, keep=False, frequency_scale=1., return_trajectory=False, trajectory_decimate=400, subdivisions=None):
+    def evaluate_krat_periodic(self, theta, baseline='smooth', repeats=5, ideal=False, hardware=None, stray=None, exact_nodes=None, keep=False, frequency_scale=1., return_trajectory=False, trajectory_decimate=400, subdivisions=None, path_samples_per_interval=None):
         """Evaluate periodic Krat without intermediate stops."""
         if isinstance(repeats, str) and repeats == 'auto':
             repeats = max(1, min(10, int(round(self.task['distance_m']/20e-6))))
@@ -683,7 +761,8 @@ class Runner:
             init=Local(init.position_m,init.hessian_J_m2*frequency_scale**2,init.omega_rad_s*frequency_scale,init.modes)
             final=Local(final.position_m,final.hessian_J_m2*frequency_scale**2,final.omega_rad_s*frequency_scale,final.modes)
         target=self.target
-        result=propagate(t,r,H,init,final,self.trap.mass,target,method='exact', hold='linear', return_trajectory=return_trajectory, trajectory_decimate=trajectory_decimate, path_samples_per_interval=self.cfg.get('path_samples_per_interval',8))
+        _ps = path_samples_per_interval if path_samples_per_interval is not None else self.cfg.get('path_samples_per_interval',8)
+        result=propagate(t,r,H,init,final,self.trap.mass,target,method='exact', hold='linear', return_trajectory=return_trajectory, trajectory_decimate=trajectory_decimate, path_samples_per_interval=_ps)
         result['distortion']=dist
         result['repeats']=int(repeats)
         result['periodic']=True
@@ -695,6 +774,42 @@ class Runner:
         if result['well_target_error_m']>self.task['position_tolerance_m']:result['quality_failures'].append('well_target_accuracy')
         result['model']='3D geometry-derived local harmonic Gaussian (krat periodic no-stop)'
         result['minimum_frequency_hz']=float(np.sqrt(np.linalg.eigvalsh(H/self.trap.mass).min())/(2*np.pi))
+        result['maximum_frequency_hz']=float(np.sqrt(np.linalg.eigvalsh(H/self.trap.mass).max())/(2*np.pi))
+        if 'max_frequency_hz' in self.task and self.task['max_frequency_hz'] is not None:
+            try:
+                result['max_frequency_target_hz']=float(self.task['max_frequency_hz'])
+            except: pass
+        if ('height_min_m' in self.task and self.task['height_min_m'] is not None) or ('height_max_m' in self.task and self.task['height_max_m'] is not None):
+            try:
+                if isinstance(r, np.ndarray) and r.ndim==2 and r.shape[1]>=3:
+                    z_vals=r[:,2]
+                else:
+                    z_vals=np.array([p[2] for p in r]) if isinstance(r, (list, np.ndarray)) else np.array([0])
+                if 'height_min_m' in self.task and self.task['height_min_m'] is not None:
+                    hmin=float(self.task['height_min_m'])
+                    if np.min(z_vals) < hmin - 1e-9:
+                        raise Rejected('height_violation', f"well height {np.min(z_vals)*1e6:.1f} um below min {hmin*1e6:.1f} um")
+                if 'height_max_m' in self.task and self.task['height_max_m'] is not None:
+                    hmax=float(self.task['height_max_m'])
+                    if np.max(z_vals) > hmax + 1e-9:
+                        raise Rejected('height_violation', f"well height {np.max(z_vals)*1e6:.1f} um above max {hmax*1e6:.1f} um")
+            except Rejected:
+                raise
+            except Exception:
+                pass
+        try:
+            f_start=float(np.sqrt(np.linalg.eigvalsh(H[0]/self.trap.mass).min())/(2*np.pi))
+            f_end=float(np.sqrt(np.linalg.eigvalsh(H[-1]/self.trap.mass).min())/(2*np.pi))
+            result['frequency_start_hz']=f_start
+            result['frequency_end_hz']=f_end
+            if 'frequency_initial_hz' in self.task and self.task['frequency_initial_hz'] is not None:
+                result['frequency_initial_target_hz']=float(self.task['frequency_initial_hz'])
+                result['frequency_initial_error_hz']=float(abs(f_start - float(self.task['frequency_initial_hz'])))
+            if 'frequency_final_hz' in self.task and self.task['frequency_final_hz'] is not None:
+                result['frequency_final_target_hz']=float(self.task['frequency_final_hz'])
+                result['frequency_final_error_hz']=float(abs(f_end - float(self.task['frequency_final_hz'])))
+        except Exception:
+            pass
         if keep:
             return result,dict(t=t,v=v,codes=codes,ct=ct,cmd=cmd,route=route,r=r,H=H,initial=init,final=final,diag=diag)
         return result

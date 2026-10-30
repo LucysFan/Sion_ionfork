@@ -196,6 +196,57 @@ input[type=range]{accent-color:var(--accent)}
           </label>
         </div>
 
+        <div class="divider"></div>
+        <details style="background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:8px" open>
+          <summary class="kv" style="cursor:pointer;font-weight:700;color:var(--text);list-style:none;display:flex;align-items:center;gap:6px">⚙️ Ограничения — напряжение / частота / высота / карантин <span style="margin-left:auto;font-size:11px;color:var(--muted)">клик чтобы свернуть</span></summary>
+          <div style="display:grid;gap:10px;margin-top:10px">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+              <label class="kv">Напряжение мин, В
+                <input type="number" id="inpLowerV" value="-20" step="0.5" class="field-input" placeholder="-20"/>
+              </label>
+              <label class="kv">Напряжение макс, В
+                <input type="number" id="inpUpperV" value="20" step="0.5" class="field-input" placeholder="20"/>
+              </label>
+            </div>
+            <div class="mono" style="font-size:11px;color:var(--muted);display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <span>Быстро:</span>
+              <button class="btn" type="button" id="btnVoltPreset12">±12В</button>
+              <button class="btn" type="button" id="btnVoltPreset20">±20В</button>
+              <button class="btn" type="button" id="btnVoltPreset30">±30В</button>
+              <span id="voltBoundsHint" class="mono" style="color:var(--accent2)"></span>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">
+              <label class="kv">f нач, МГц
+                <input type="number" id="inpFreqInit" value="" step="0.05" min="0.2" max="2.0" class="field-input" placeholder="0.60 (пусто=авто)"/>
+              </label>
+              <label class="kv">f кон, МГц
+                <input type="number" id="inpFreqFinal" value="" step="0.05" min="0.2" max="2.0" class="field-input" placeholder="0.60 (пусто=авто)"/>
+              </label>
+              <label class="kv">f мин (порог), МГц
+                <input type="number" id="inpFreqMin" value="0.40" step="0.05" min="0.1" max="2.0" class="field-input" placeholder="0.40"/>
+              </label>
+              <label class="kv">f макс, МГц
+                <input type="number" id="inpFreqMax" value="" step="0.05" min="0.5" max="3.0" class="field-input" placeholder="2.50 (пусто=авто)"/>
+              </label>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+              <label class="kv">Высота мин, мкм
+                <input type="number" id="inpHeightMin" value="" step="5" min="20" max="500" class="field-input" placeholder="80 (пусто = авто)"/>
+              </label>
+              <label class="kv">Высота макс, мкм
+                <input type="number" id="inpHeightMax" value="" step="5" min="20" max="500" class="field-input" placeholder="180 (пусто = авто)"/>
+              </label>
+            </div>
+            <div style="display:grid;gap:6px">
+              <label class="kv">Карантин — глобально изолированы до поколения (пусто = авто 100% для K/P)
+                <input type="number" id="inpQuarantine" value="" placeholder="например 12 (или пусто для авто)" class="field-input"/>
+              </label>
+              <div id="quarantinePerIsland" style="max-height:220px;overflow:auto;display:grid;gap:4px;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:8px"></div>
+              <div class="mono" style="font-size:11px;color:var(--muted)">Ручная правка каждого острова появится здесь после загрузки конфигурации / старта прогона. Селективная миграция: burst только от островов с лучшим fitness (не ломает популяцию).</div>
+            </div>
+          </div>
+        </details>
+
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:2px">
           <button class="btn" id="btnSaveConfig" style="flex:1">Сохранить</button>
           <button class="btn" id="btnLoadConfig" style="flex:1">Загрузить</button>
@@ -1804,7 +1855,7 @@ function drawFitness(state){
   for(let i=0;i<=3;i++){ let t=i/3, lv=logMin + t*(logMax-logMin), v=Math.pow(10,lv)-0.1; let y=H-20 - t*(H-40); if(v>0) ctx.fillText(fmtFit(Math.max(0,v)), W-46, y+3)}
   ctx.fillText("0", 6, H-16)
   let leg=document.getElementById('fitnessLegend')
-  if(leg) leg.innerHTML=["S","A","V","W","R","H","Q1","Q2","F","K","K5","K3","K2"].filter(k=>ser[k]&&ser[k].length).map(k=>`<span><i style="width:12px;height:3px;background:${islandColor(k)};display:inline-block;border-radius:99px"></i>${NAMES[k]||k}</span>`).join('')+`<span><i style="width:12px;height:3px;background:#fff;display:inline-block"></i> global best</span>`
+  if(leg) leg.innerHTML=["S","A","V","W","R","H","Q1","Q2","F","K","K5","K3","K2","P","P5","P10","P2","P3"].filter(k=>ser[k]&&ser[k].length).map(k=>`<span><i style="width:12px;height:3px;background:${islandColor(k)};display:inline-block;border-radius:99px"></i>${NAMES[k]||k}</span>`).join('')+`<span><i style="width:12px;height:3px;background:#fff;display:inline-block"></i> global best</span>`
 }
 
 function drawDivers(state){
@@ -2473,9 +2524,11 @@ function updateLossBestSummary(state){
     let col=LOSS_COLORS[k]||"#8aa0c8"
     let pct = bd.sum ? (v/bd.sum*100) : 0
     let bar = v>1e-3 ? `<div style="height:6px;border-radius:99px;background:${col};width:${Math.min(100, pct)}%;margin-top:4px"></div>` : `<div style="height:6px"></div>`
+    let txt = (Math.abs(v) < 0.0005 && Math.abs(v) > 0) ? v.toExponential(1) : v.toFixed(3)
+    if((k==="control"||k==="freq"||k==="robust") && Math.abs(v) < 0.001 && Math.abs(v) > 0) txt = v.toExponential(1)
     return `<div style="background:rgba(255,255,255,0.04);border:1px solid ${col}44;border-radius:8px;padding:8px;text-align:center">
       <div style="font-size:10px;color:var(--muted)">${labels[k]} <small style="opacity:0.7">${descs[k]}</small></div>
-      <div style="font-size:15px;font-weight:800;color:${col}">${v.toFixed(3)}</div>
+      <div style="font-size:15px;font-weight:800;color:${col}">${txt}</div>
       <div style="font-size:10px;color:var(--muted)">${pct.toFixed(0)}%</div>
       ${bar}
     </div>`
@@ -3334,10 +3387,35 @@ function drawTrap(state){
     zMin=0; zMax=(trap.height_m*1e6||90)+60
   } else if(viewMode==="zoom"){
     let cx=(minTX+maxTX)/2
-    xMin=cx-90; xMax=cx+90; yMin=-120; yMax=120; zMin=80; zMax=100
+    xMin=cx-90; xMax=cx+90; yMin=-120; yMax=120;
+    // адаптивный z для zoom: вокруг реальной высоты (150мкм не 90)
+    let baseH_zoom = (trap.height_m!=null? trap.height_m*1e6 : (trap.seed_height_m? trap.seed_height_m*1e6 : 90));
+    try{
+      let allZ=[]; for(let isl of islandTrajs) for(let cand of isl.candidates) if(cand.trajectory&&cand.trajectory.mean_positions_m) for(let p of cand.trajectory.mean_positions_m) allZ.push(p[2]*1e6);
+      if(trap.height_m!=null) allZ.push(trap.height_m*1e6); if(trap.seed_height_m!=null) allZ.push(trap.seed_height_m*1e6);
+      if(allZ.length){
+        let zLo=Math.min(...allZ), zHi=Math.max(...allZ);
+        let pad=Math.max(6,(zHi-zLo)*0.6||6);
+        zMin=zLo-pad; zMax=zHi+pad;
+        if(zMax-zMin<18){ let c=(zMin+zMax)/2; zMin=c-9; zMax=c+9; }
+      } else { zMin=baseH_zoom-10; zMax=baseH_zoom+10; }
+    }catch(e){ zMin=baseH_zoom-10; zMax=baseH_zoom+10; }
   } else {
     let cx=(minTX+maxTX)/2; let half = Math.max(350, (maxTX-minTX)/2 + 200)
-    xMin=cx-half; xMax=cx+half; yMin=-350; yMax=350; zMin=75; zMax=105
+    xMin=cx-half; xMax=cx+half; yMin=-350; yMax=350;
+    // адаптивный z для вида сбоку: учитывает реальную высоту и траектории (150мкм а не 90)
+    let baseH = (trap.height_m!=null? trap.height_m*1e6 : (trap.seed_height_m? trap.seed_height_m*1e6 : 90));
+    try{
+      let allZ=[]; for(let isl of islandTrajs) for(let cand of isl.candidates) if(cand.trajectory&&cand.trajectory.mean_positions_m) for(let p of cand.trajectory.mean_positions_m) allZ.push(p[2]*1e6);
+      if(trap.height_m!=null) allZ.push(trap.height_m*1e6); if(trap.seed_height_m!=null) allZ.push(trap.seed_height_m*1e6);
+      if(allZ.length){
+        let zLo=Math.min(...allZ), zHi=Math.max(...allZ);
+        let pad=Math.max(8,(zHi-zLo)*0.45||8);
+        let lo=Math.min(zLo, baseH-6), hi=Math.max(zHi, baseH+6);
+        zMin=lo-pad; zMax=hi+pad;
+        if(zMax-zMin<30){ let c=(lo+hi)/2; zMin=c-15; zMax=c+15; }
+      } else { zMin=baseH-30; zMax=baseH+30; }
+    }catch(e){ zMin=baseH-30; zMax=baseH+30; }
   }
   function xToCanvas(x){ return 40 + (x - xMin)/(xMax - xMin ||1)*(W-60) }
   function yToCanvas(y){ return H-28 - (y - yMin)/(yMax - yMin ||1)*(H-56) }
@@ -3676,6 +3754,37 @@ function init(){
           try{ syncIonInputs('config'); drawSetupTrap(); }catch(e){}
         }
         try{ updateStartTargetPreview(); }catch(e){}
+        // — новые ограничения —
+        try{
+          if(j.config.trap){
+            let lo=j.config.trap.lower_V, hi=j.config.trap.upper_V;
+            if(Array.isArray(lo)) lo=lo[0]; if(Array.isArray(hi)) hi=hi[0];
+            if(lo!=null) { let el=document.getElementById('inpLowerV'); if(el) el.value=Number(lo); }
+            if(hi!=null) { let el=document.getElementById('inpUpperV'); if(el) el.value=Number(hi); }
+          }
+          if(j.config.hardware){
+            let dl=j.config.hardware.dac_min_V, dh=j.config.hardware.dac_max_V;
+            let hint=document.getElementById('voltBoundsHint');
+            if(hint && (dl!=null||dh!=null)) hint.textContent = `DAC ${dl!=null?dl:\"?\"}…${dh!=null?dh:\"?\"} В`;
+          }
+          if(j.config.task){
+            if(j.config.task.min_frequency_hz!=null){ let el=document.getElementById('inpFreqMin'); if(el) el.value=(j.config.task.min_frequency_hz/1e6).toFixed(2); }
+            if(j.config.task.max_frequency_hz!=null){ let el=document.getElementById('inpFreqMax'); if(el) el.value=(j.config.task.max_frequency_hz/1e6).toFixed(2); }
+            let fi = j.config.task.frequency_initial_hz ?? j.config.task.initial_frequency_hz ?? j.config.task.frequency_start_hz;
+            if(fi!=null){ let el=document.getElementById('inpFreqInit'); if(el) el.value=(fi/1e6).toFixed(2); }
+            let ff = j.config.task.frequency_final_hz ?? j.config.task.final_frequency_hz ?? j.config.task.frequency_end_hz;
+            if(ff!=null){ let el=document.getElementById('inpFreqFinal'); if(el) el.value=(ff/1e6).toFixed(2); }
+            if(j.config.task.height_min_m!=null){ let el=document.getElementById('inpHeightMin'); if(el) el.value=(j.config.task.height_min_m*1e6).toFixed(0); }
+            else if(j.config.task.height_min_um!=null){ let el=document.getElementById('inpHeightMin'); if(el) el.value=j.config.task.height_min_um; }
+            if(j.config.task.height_max_m!=null){ let el=document.getElementById('inpHeightMax'); if(el) el.value=(j.config.task.height_max_m*1e6).toFixed(0); }
+            else if(j.config.task.height_max_um!=null){ let el=document.getElementById('inpHeightMax'); if(el) el.value=j.config.task.height_max_um; }
+          }
+          if(j.config.ga){
+            let iso = j.config.ga.isolated_until ?? j.config.ga.isolated_until_ratio ?? j.config.ga.quarantine_until ?? null;
+            if(iso!=null && iso!==\"\" ){ let el=document.getElementById('inpQuarantine'); if(el) el.value=iso; }
+            if(j.config.ga.islands) { try{ renderQuarantinePerIsland({config:j.config}); }catch(e){} }
+          }
+        }catch(e){}
       }
       if(j.gds_list) populateGdsDatalist(j.gds_list)
       if(j.trap_preview){
@@ -3701,6 +3810,89 @@ function init(){
     if(el) el.addEventListener('input', ()=>{ updateStartTargetPreview(); try{ drawSetupTrap(); }catch(e){} })
   });
   try{ updateStartTargetPreview(); }catch(e){}
+
+  // --- новые ограничения: хелперы ---
+  function collectConstraintPayload(){
+    const payload={}
+    // напряжение
+    try{
+      let lo=parseFloat(document.getElementById('inpLowerV')?.value), hi=parseFloat(document.getElementById('inpUpperV')?.value);
+      if(isFinite(lo)) payload.lower_V=lo;
+      if(isFinite(hi)) payload.upper_V=hi;
+      if(isFinite(lo) && isFinite(hi)){
+        payload.dac_min_V=Math.min(lo,hi);
+        payload.dac_max_V=Math.max(lo,hi);
+      }
+    }catch(e){}
+    // частота (МГц -> Гц)
+    try{
+      let fi=parseFloat(document.getElementById('inpFreqInit')?.value), ff=parseFloat(document.getElementById('inpFreqFinal')?.value);
+      let fmin=parseFloat(document.getElementById('inpFreqMin')?.value), fmax=parseFloat(document.getElementById('inpFreqMax')?.value);
+      if(isFinite(fi)) payload.frequency_initial_hz=Math.round(fi*1e6);
+      if(isFinite(ff)) payload.frequency_final_hz=Math.round(ff*1e6);
+      if(isFinite(fmin)) payload.min_frequency_hz=Math.round(fmin*1e6);
+      if(isFinite(fmax)) payload.max_frequency_hz=Math.round(fmax*1e6);
+    }catch(e){}
+    // высота (мкм -> м)
+    try{
+      let hmin=parseFloat(document.getElementById('inpHeightMin')?.value), hmax=parseFloat(document.getElementById('inpHeightMax')?.value);
+      if(isFinite(hmin)) payload.height_min_m=hmin*1e-6;
+      if(isFinite(hmax)) payload.height_max_m=hmax*1e6;
+    }catch(e){}
+    // карантин глобально
+    try{
+      let q=document.getElementById('inpQuarantine')?.value?.trim();
+      if(q!==\"\" && q!=null) payload.quarantine_until=q;
+    }catch(e){}
+    // per-island quarantine
+    try{
+      let per=[]
+      document.querySelectorAll('[data-quarantine-island]').forEach(inp=>{
+        let v=inp.value.trim();
+        let id=inp.getAttribute('data-quarantine-island');
+        if(v!==\"\") per.push({island: id, isolated_until: v});
+      });
+      if(per.length) payload.quarantine_per_island=per;
+    }catch(e){}
+    return payload;
+  }
+  function renderQuarantinePerIsland(state){
+    const cont=document.getElementById('quarantinePerIsland');
+    if(!cont) return;
+    let cfg = state?.config || state;
+    let islands = cfg?.ga?.islands || null;
+    // fallback to lastState islands live
+    if(!islands && state?.islands) islands = state.islands.map(s=>({strategy:s.strategy||s.id, isolated_until:s.isolated_until}));
+    if(!islands || !islands.length){
+      // try live state
+      if(lastState && lastState.islands) islands = lastState.islands.map(s=>({strategy:s.strategy||s.id, isolated_until:s.isolated_until}));
+    }
+    if(!islands || !islands.length){
+      cont.innerHTML='<div class=\"mono\" style=\"color:var(--muted);padding:4px\">острова появятся после загрузки конфига / старта GA</div>';
+      return;
+    }
+    cont.innerHTML='';
+    islands.forEach(isl=>{
+      let strat = isl.strategy || isl.id || \"?\";
+      let cur = isl.isolated_until ?? isl.isolated_until_raw ?? \"\";
+      let row=document.createElement('div');
+      row.style.cssText='display:grid;grid-template-columns:90px 1fr 70px;gap:6px;align-items:center;padding:4px 6px;background:var(--panel2);border:1px solid var(--border);border-radius:6px';
+      row.innerHTML=`<span class=\"mono\" style=\"font-weight:700;color:${islandColor(String(strat)[0])}\">${strat}</span><input type=\"text\" data-quarantine-island=\"${strat}\" value=\"${cur}\" placeholder=\"авто\" class=\"field-input\" style=\"margin:0;padding:4px 6px\"/><span class=\"mono\" style=\"font-size:11px;color:var(--muted)\">ген</span>`;
+      cont.appendChild(row);
+    });
+    // hook change to update global hint
+    cont.querySelectorAll('input[data-quarantine-island]').forEach(inp=>{
+      inp.addEventListener('change', ()=>{
+        // if per-island edited, clear global?
+      });
+    });
+  }
+  // пресеты напряжения
+  try{
+    document.getElementById('btnVoltPreset12')?.addEventListener('click', ()=>{ let lo=document.getElementById('inpLowerV'), hi=document.getElementById('inpUpperV'); if(lo) lo.value=-12; if(hi) hi.value=12; document.getElementById('voltBoundsHint').textContent='±12В выбрано — сохраните'; });
+    document.getElementById('btnVoltPreset20')?.addEventListener('click', ()=>{ let lo=document.getElementById('inpLowerV'), hi=document.getElementById('inpUpperV'); if(lo) lo.value=-20; if(hi) hi.value=20; document.getElementById('voltBoundsHint').textContent='±20В выбрано — сохраните'; });
+    document.getElementById('btnVoltPreset30')?.addEventListener('click', ()=>{ let lo=document.getElementById('inpLowerV'), hi=document.getElementById('inpUpperV'); if(lo) lo.value=-30; if(hi) hi.value=30; document.getElementById('voltBoundsHint').textContent='±30В выбрано — сохраните'; });
+  }catch(e){}
 
   async function refreshRuns(){
     try{
@@ -3743,10 +3935,12 @@ function init(){
     let use_cuda=document.getElementById('chkUseCuda').checked
     let gds=document.getElementById('inpGdsPath').value.trim()
     let sx=parseFloat(document.getElementById('inpStartX').value)*1e-6, sy=parseFloat(document.getElementById('inpStartY').value)*1e-6, sz=parseFloat(document.getElementById('inpStartZ').value)*1e-6
+    let extra=collectConstraintPayload();
+    let payload={distance_m:distance,duration_s:duration,hold_s:hold,protocol:protocol,gds_path:gds,generations:gens,pop_size:pop,use_cuda:use_cuda,start_m:[sx,sy,sz], ...extra};
     let r=await fetch('/api/config',{
       method:'POST',
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({distance_m:distance,duration_s:duration,hold_s:hold,protocol:protocol,gds_path:gds,generations:gens,pop_size:pop,use_cuda:use_cuda,start_m:[sx,sy,sz]})
+      body:JSON.stringify(payload)
     })
     let j=await r.json()
     document.getElementById('launchStatus').textContent = j.ok ? "Конфигурация сохранена" : ("Ошибка: "+(j.error||""))
@@ -3763,9 +3957,10 @@ function init(){
     let sx=parseFloat(document.getElementById('inpStartX').value)*1e-6, sy=parseFloat(document.getElementById('inpStartY').value)*1e-6, sz=parseFloat(document.getElementById('inpStartZ').value)*1e-6
     let pop=parseInt(document.getElementById('inpPop').value)||20
     let use_cuda=document.getElementById('chkUseCuda').checked
+    let extra=collectConstraintPayload();
     document.getElementById('launchStatus').textContent="Запуск pipeline…"
     document.getElementById('btnRunPipeline').disabled=true; document.getElementById('btnRunGA').disabled=true
-    let r=await fetch('/api/launch',{method:'POST',headers:{"Content-Type":"application/json"},body:JSON.stringify({mode:"pipeline",distance_m:distance,duration_s:duration,gds_path:gds,out:out,protocol:protocol,pop_size:pop,use_cuda:use_cuda,start_m:[sx,sy,sz]})})
+    let r=await fetch('/api/launch',{method:'POST',headers:{"Content-Type":"application/json"},body:JSON.stringify({mode:"pipeline",distance_m:distance,duration_s:duration,gds_path:gds,out:out,protocol:protocol,pop_size:pop,use_cuda:use_cuda,start_m:[sx,sy,sz], ...extra})})
     let j=await r.json()
     if(j.ok){
       localStorage.setItem('dashboard_run', j.out)
@@ -3791,9 +3986,10 @@ function init(){
     let out=document.getElementById('inpOut').value||"output/live_run"
     let protocol=document.getElementById('selProtocol').value
     let sx=parseFloat(document.getElementById('inpStartX').value)*1e-6, sy=parseFloat(document.getElementById('inpStartY').value)*1e-6, sz=parseFloat(document.getElementById('inpStartZ').value)*1e-6
+    let extra=collectConstraintPayload();
     document.getElementById('launchStatus').textContent="Запуск GA…"
     document.getElementById('btnRunPipeline').disabled=true; document.getElementById('btnRunGA').disabled=true
-    let r=await fetch('/api/launch',{method:'POST',headers:{"Content-Type":"application/json"},body:JSON.stringify({mode:"ga",distance_m:distance,duration_s:duration,gds_path:gds,generations:gens,pop_size:pop,use_cuda:use_cuda,out:out,protocol:protocol,start_m:[sx,sy,sz]})})
+    let r=await fetch('/api/launch',{method:'POST',headers:{"Content-Type":"application/json"},body:JSON.stringify({mode:"ga",distance_m:distance,duration_s:duration,gds_path:gds,generations:gens,pop_size:pop,use_cuda:use_cuda,out:out,protocol:protocol,start_m:[sx,sy,sz], ...extra})})
     let j=await r.json()
     if(j.ok){
       localStorage.setItem('dashboard_run', j.out)
@@ -3839,6 +4035,7 @@ function init(){
       drawFitness(j); drawDivers(j); drawHist(j); drawHall(j); drawHeat(j); drawPareto(j); drawTrajectories(j); drawIslands(j)
       buildTrapFilters(j); drawTrap(j); try{ drawVoltage(j); drawFrequency(j); drawRobust(j)}catch(e){}
       drawLossStack(j); drawLossHistory(j); drawLossTable(j); drawMigration(j); drawMigrationTimeline(j); drawIsolationTable(j)
+      try{ if(document.activeElement?.getAttribute('data-quarantine-island')==null) renderQuarantinePerIsland(j); }catch(e){}
     }catch(e){
       document.getElementById('liveText').textContent="нет связи"
       document.getElementById('liveDot').style.background="#ff6b7a"

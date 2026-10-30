@@ -36,16 +36,71 @@ class RingMigration:
         return len(active) >= 2 or len(isolated) >= 2
 
     def migrate(self, generation):
-        # burst from just-deisolated islands into active pool
+        # burst from just-deisolated islands into active pool — selective: only good islands burst
         deisolated = [isl for isl in self.islands if getattr(isl,'isolated_until',0)==generation]
         if deisolated:
+            # селективная миграция: только от хороших островов (не ломает популяцию)
+            # считаем медиану активных best
+            active = [isl for isl in self.islands if not self._is_isolated(isl, generation)]
+            active_bests = []
+            for isl in active:
+                try:
+                    fits=[g.fitness for g in isl.population if g.fitness is not None and g.fitness<1e6]
+                    if fits: active_bests.append(min(fits))
+                except: pass
+            median_active = float(np.median(active_bests)) if active_bests else 1.0
+            # также глобальный лучший
+            global_best = min(active_bests) if active_bests else 1.0
             for src in deisolated:
+                # оценим src best
+                try:
+                    src_fits=[g.fitness for g in src.population if g.fitness is not None and g.fitness<1e6]
+                    src_best = min(src_fits) if src_fits else 1e6
+                except:
+                    src_best=1e6
+                # пропускаем плохие источники
+                # критерии: 1) src_best должен быть < 1e5 (не rejected), 2) < median*2 или < global_best*10, 3) если активных нет — < 100
+                skip=False
+                # R-остров несёт робастность, но его фитнес естественно хуже (primary+robust) ≈ 5-8 vs медиана 0.5 —
+                # даём ему послабление ×1.8, иначе он никогда не прорвётся через selective burst.
+                is_robust_src = str(getattr(src,'strategy','')).startswith('R')
+                median_mult = 5.0 if is_robust_src else 4.0
+                global_mult = 12.0 if is_robust_src else 10.0
+                if src_best >= 1e5:
+                    skip=True
+                elif active_bests:
+                    # если src хуже медианы в median_mult раз И хуже глобального в global_mult — скип
+                    if src_best > median_active*median_mult and src_best > global_best*global_mult:
+                        skip=True
+                    # также если src_best > 1.0 и медиана <0.05 (плохой остров среди хороших) — скип (было 0.5 слишком строго)
+                    if median_active < 0.05 and src_best > 1.0:
+                        skip=True
+                else:
+                    if src_best > 100:
+                        skip=True
+                if skip:
+                    self.history.append(dict(generation=generation, burst_from=src.id, isolated_until=src.isolated_until, type="burst_skipped", src=src.id, reason=f"bad fitness {src_best:.3g} vs median {median_active:.3g}", dst=[]))
+                    self.stats["total"]+=1
+                    continue
                 migrants = src.get_migrants(self.n_migrants, diverse=True)
+                # дополнительно фильтруем мигрантов: только если fitness мигранта < worst dst *0.95
                 for dst in self.islands:
                     if dst is src or self._is_isolated(dst, generation):
                         continue
-                    dst.replace_worst(migrants[:1])
-                self.history.append(dict(generation=generation, burst_from=src.id, isolated_until=src.isolated_until, type="burst", src=src.id, dst=[d.id for d in self.islands if d is not src and not self._is_isolated(d,generation)]))
+                    # dst worst
+                    try:
+                        dst_fits=[g.fitness for g in dst.population if g.fitness is not None and g.fitness<1e6]
+                        dst_worst = max(dst_fits) if dst_fits else 1e6
+                    except:
+                        dst_worst=1e6
+                    # если мигрант хуже чем worst dst — не заменяем (чтобы не ломать)
+                    mig_fit = migrants[0].fitness if migrants and migrants[0].fitness is not None else 1e6
+                    if mig_fit is not None and mig_fit < dst_worst*0.95:
+                        dst.replace_worst(migrants[:1])
+                    else:
+                        # мягкая замена: не трогаем если мигрант плохой
+                        pass
+                self.history.append(dict(generation=generation, burst_from=src.id, isolated_until=src.isolated_until, type="burst", src=src.id, dst=[d.id for d in self.islands if d is not src and not self._is_isolated(d,generation)], src_best=float(src_best), median_active=float(median_active)))
                 self.stats["bursts"]+=1
                 self.stats["total"]+=1
         active = [isl for isl in self.islands if not self._is_isolated(isl, generation)]
