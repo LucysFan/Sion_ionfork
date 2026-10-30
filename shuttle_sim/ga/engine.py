@@ -718,13 +718,45 @@ class GAEngine:
                 bounds = genome.bounds
                 control_term = dimensionless_control_penalty(theta, bounds, self.runner.cfg.get('control_regularization_weight',1e-4))
             except: control_term=0
-            # frequency gate
+            # frequency gate (min + max + initial/final мягкие штрафы — должны совпадать с fitness.py)
             freq_term = 0
             try:
                 fmin = float(m.get('minimum_frequency_hz', task.get('min_frequency_hz',400e3)))
                 f0 = float(task.get('min_frequency_hz',400e3))
                 if fmin < f0:
-                    freq_term = 2*_math.log1p((f0-fmin)/0.1e6)
+                    freq_term += 2*_math.log1p((f0-fmin)/0.1e6)
+                # max frequency (soft) — если задан max_frequency_hz и превышен
+                if 'max_frequency_hz' in task and task['max_frequency_hz'] is not None and 'maximum_frequency_hz' in m:
+                    try:
+                        fmax = float(m.get('maximum_frequency_hz', 0))
+                        fmax_allowed = float(task['max_frequency_hz'])
+                        if fmax > fmax_allowed:
+                            freq_term += 2*_math.log1p((fmax - fmax_allowed)/0.1e6)
+                    except: pass
+                # initial/final frequency targets
+                if 'frequency_initial_hz' in task and task['frequency_initial_hz'] is not None and 'frequency_start_hz' in m:
+                    try:
+                        f_start = float(m.get('frequency_start_hz', fmin))
+                        target = float(task['frequency_initial_hz'])
+                        err = abs(f_start - target)
+                        if err > 0.02e6:
+                            freq_term += 1.0*_math.log1p(err/0.05e6)
+                    except: pass
+                if 'frequency_final_hz' in task and task['frequency_final_hz'] is not None and 'frequency_end_hz' in m:
+                    try:
+                        f_end = float(m.get('frequency_end_hz', fmin))
+                        target = float(task['frequency_final_hz'])
+                        err = abs(f_end - target)
+                        if err > 0.02e6:
+                            freq_term += 1.0*_math.log1p(err/0.05e6)
+                    except: pass
+            except: pass
+            # height soft (pipeline hard-rejects, но для breakdown показываем близость к границе)
+            height_term = 0
+            try:
+                # если есть well_height_m или частота высоты — не хранится, поэтому height_term остаётся 0
+                # оставляем для будущего, чтобы не ломать сумму
+                pass
             except: pass
             # robust для R — уже в fitness, выделяем отдельно?
             robust_extra = 0
@@ -735,9 +767,9 @@ class GAEngine:
                     # часть сверх обычного loss: 0.35*mean+0.65*max vs primary => approx max-mean
                     robust_extra = float(0.65*(max_v-mean_v))
             except: pass
-            total = n_term+pos_term+well_term+lag_term+distortion_term+control_term+freq_term+robust_extra
-            # невязка vs реальный fitness (из-за округлений/biased)
-            return dict(n=n_term, pos=pos_term, well=well_term, lag=lag_term, distortion=distortion_term, control=control_term, freq=freq_term, robust=robust_extra, sum=total, fitness=float(genome.fitness) if genome.fitness else total)
+            total = n_term+pos_term+well_term+lag_term+distortion_term+control_term+freq_term+height_term+robust_extra
+            # невязка vs реальный fitness (из-за округлений/biased) — height_term пока 0, для совместимости с суммой
+            return dict(n=n_term, pos=pos_term, well=well_term, lag=lag_term, distortion=distortion_term, control=control_term, freq=freq_term, height=height_term, robust=robust_extra, sum=total, fitness=float(genome.fitness) if genome.fitness else total)
         except Exception as e:
             return dict(n=0,pos=0,well=0,lag=0,distortion=0,control=0,freq=0,robust=0,sum=float(genome.fitness or 0), error=str(e))
 
