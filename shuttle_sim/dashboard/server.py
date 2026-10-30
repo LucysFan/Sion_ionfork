@@ -1174,6 +1174,92 @@ class Handler(SimpleHTTPRequestHandler):
                 self._send_json({"error": str(e)}, 500)
             return
 
+        if path == "/api/reset_all":
+            try:
+                import shutil, datetime, json as _json2
+                out_dir = self._resolve_out_dir()
+                # Ensure out_dir exists
+                out_dir = pathlib.Path(out_dir)
+                # Create archive timestamp
+                ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                # Archive to sibling folder: output/archive_<orig>_<ts>
+                archive_base = out_dir.parent / f"{out_dir.name}_archive_{ts}"
+                # Ensure parent exists
+                archive_base.mkdir(parents=True, exist_ok=True)
+                # Stop any running jobs first
+                stopped_jobs = []
+                with _JOBS_lock:
+                    for jid, info in list(_JOBS.items()):
+                        proc = info.get("proc")
+                        if proc and proc.poll() is None:
+                            try:
+                                proc.terminate()
+                                try:
+                                    proc.wait(timeout=3)
+                                except:
+                                    proc.kill()
+                                stopped_jobs.append(jid)
+                            except: pass
+                    # clear jobs
+                    _JOBS.clear()
+                # Copy current out_dir contents to archive
+                copied = []
+                errors = []
+                if out_dir.exists():
+                    for item in out_dir.iterdir():
+                        try:
+                            dest = archive_base / item.name
+                            if item.is_dir():
+                                shutil.copytree(item, dest, dirs_exist_ok=True)
+                            else:
+                                shutil.copy2(item, dest)
+                            copied.append(item.name)
+                        except Exception as e:
+                            errors.append(f"{item.name}: {e}")
+                    # Also save a manifest of what was archived
+                    try:
+                        manifest = {
+                            "archived_at": ts,
+                            "from": str(out_dir),
+                            "to": str(archive_base),
+                            "copied": copied,
+                            "errors": errors,
+                            "stopped_jobs": stopped_jobs,
+                        }
+                        (archive_base / "archive_manifest.json").write_text(_json2.dumps(manifest, indent=2, ensure_ascii=False))
+                    except: pass
+                    # Now reset out_dir: remove state/history/live/ga files but keep input_config
+                    to_clear = ["state.json", "live.json", "history", "ga_hall.json", "ga_best.json", "summary.md", "algorithms", "ga_demo", "ga_traj"]
+                    # Also clear pipeline and other generated files but keep input_config and config
+                    for name in ["pipeline_run", "status.json", "comparison.json", "validation.json", "safety_report.json", "fallback_state.json", "waveform_metadata.json", "ideal_waveform.csv", "delivered_waveform.csv", "dac_waveform.csv", "delivered_path.csv"]:
+                        to_clear.append(name)
+                    cleared = []
+                    for name in to_clear:
+                        p = out_dir / name
+                        try:
+                            if p.is_dir():
+                                shutil.rmtree(p)
+                                cleared.append(name)
+                            elif p.is_file():
+                                p.unlink()
+                                cleared.append(name)
+                        except Exception as e:
+                            errors.append(f"clear {name}: {e}")
+                    # Recreate empty history dir
+                    try:
+                        (out_dir / "history").mkdir(parents=True, exist_ok=True)
+                    except: pass
+                    # Write fresh empty state
+                    try:
+                        empty_state = {"status": "reset", "history": [], "hall": [], "generation": 0, "archived_to": str(archive_base)}
+                        (out_dir / "state.json").write_text(_json2.dumps(empty_state, indent=2))
+                    except: pass
+                self._send_json({"ok": True, "archived_to": str(archive_base), "copied": copied, "cleared": cleared if 'cleared' in locals() else [], "errors": errors})
+            except Exception as e:
+                import traceback; traceback.print_exc()
+                self._send_json({"error": str(e)}, 500)
+            return
+
         if path == "/api/launch":
             with _JOBS_lock:
                 for jid, info in list(_JOBS.items()):

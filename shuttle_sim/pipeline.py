@@ -414,21 +414,35 @@ class Runner:
             weak_confinement = bool(eig_weak.min() < (2*np.pi*self.task['min_frequency_hz'])**2)
         except: weak_confinement=False
         height_violation=None
+        height_violation_distance_m=None
+        height_actual_min_m=None
+        height_actual_max_m=None
         try:
             if ('height_min_m' in self.task and self.task['height_min_m'] is not None) or ('height_max_m' in self.task and self.task['height_max_m'] is not None):
                 if isinstance(r, np.ndarray) and r.ndim==2 and r.shape[1]>=3:
                     z_vals=r[:,2]
                 else:
                     z_vals=np.array([p[2] for p in r]) if isinstance(r, (list, np.ndarray)) else np.array([0])
+                height_actual_min_m=float(np.min(z_vals)) if len(z_vals) else None
+                height_actual_max_m=float(np.max(z_vals)) if len(z_vals) else None
                 if 'height_min_m' in self.task and self.task['height_min_m'] is not None:
                     hmin=float(self.task['height_min_m'])
                     if np.min(z_vals) < hmin - 1e-9:
                         height_violation = f"well height {np.min(z_vals)*1e6:.1f} um below min {hmin*1e6:.1f} um"
+                        height_violation_distance_m=float(hmin - np.min(z_vals))
                 if 'height_max_m' in self.task and self.task['height_max_m'] is not None:
                     hmax=float(self.task['height_max_m'])
                     if np.max(z_vals) > hmax + 1e-9:
                         height_violation = f"well height {np.max(z_vals)*1e6:.1f} um above max {hmax*1e6:.1f} um"
-        except: pass
+                        # if already below min, take max of both distances (should be max violation)
+                        d_above=float(np.max(z_vals) - hmax)
+                        if height_violation_distance_m is None:
+                            height_violation_distance_m=d_above
+                        else:
+                            height_violation_distance_m=max(height_violation_distance_m, d_above)
+        except:
+            height_violation=None
+            height_violation_distance_m=None
         # corridor check (logical path deviation) — distinct from rom_max_shift_m trust region
         corridor_violation=None
         try:
@@ -507,8 +521,14 @@ class Runner:
         if height_violation:
             result['quality_failures'].append('height_violation')
             result['height_violation_msg']=height_violation
+            result['height_violation_distance_m']=float(height_violation_distance_m) if height_violation_distance_m is not None else None
+            result['height_actual_min_m']=float(height_actual_min_m) if height_actual_min_m is not None else None
+            result['height_actual_max_m']=float(height_actual_max_m) if height_actual_max_m is not None else None
         else:
             result['height_violation_msg']=None
+            result['height_violation_distance_m']=None
+            result['height_actual_min_m']=float(height_actual_min_m) if height_actual_min_m is not None else None
+            result['height_actual_max_m']=float(height_actual_max_m) if height_actual_max_m is not None else None
         if corridor_violation:
             result['quality_failures'].append('corridor_violation')
             result['corridor_violation_msg']=corridor_violation
@@ -532,24 +552,25 @@ class Runner:
         # validation_passed requires high fidelity numerical verification, not just cheap accepted
         # cheap evaluate (exact_nodes is None or subdivisions==1) is not considered validated
         try:
-            # is_high_fidelity if exact_nodes provided and subdivisions >= validation threshold
             is_high_fidelity = False
             if exact_nodes is not None:
                 try:
-                    # exact_nodes provided -> high fidelity if also subdivisions >= validation
+                    cfg_nodes = int(self.cfg.get('validation_nodes',321))
                     cfg_sub = int(self.cfg.get('validation_subdivisions',4))
+                    cur_nodes = int(exact_nodes) if exact_nodes is not None else 0
                     cur_sub = int(subdivisions) if subdivisions is not None else int(self.cfg.get('subdivisions',4))
-                    if cur_sub >= cfg_sub:
+                    if cur_nodes >= cfg_nodes and cur_sub >= cfg_sub:
+                        is_high_fidelity = True
+                    elif cur_nodes >= 321 and cur_sub >= 4:
                         is_high_fidelity = True
                 except:
-                    is_high_fidelity = True
-            # also require not cheap path_samples
+                    is_high_fidelity = False
             result['evaluation_completed']=True
             result['numerical_validation_passed']=bool(is_high_fidelity)
             result['validation_passed']=bool(constraints_passed and is_high_fidelity)
-            # legacy alias for hall: exact_validated semantics split
-            result['exact_evaluated']=bool(is_high_fidelity)  # calculation completed at high fidelity
+            result['exact_evaluated']=True if exact_nodes is not None else bool(is_high_fidelity)
             result['exact_constraints_passed']=constraints_passed
+            result['exact_numerical_validation_passed']=bool(is_high_fidelity)
         except:
             result['evaluation_completed']=True
             result['numerical_validation_passed']=False
@@ -738,21 +759,35 @@ class Runner:
             weak_confinement = bool(eig_weak.min() < (2*np.pi*self.task['min_frequency_hz'])**2)
         except: weak_confinement=False
         height_violation=None
+        height_violation_distance_m=None
+        height_actual_min_m=None
+        height_actual_max_m=None
         try:
             if ('height_min_m' in self.task and self.task['height_min_m'] is not None) or ('height_max_m' in self.task and self.task['height_max_m'] is not None):
                 if isinstance(r, np.ndarray) and r.ndim==2 and r.shape[1]>=3:
                     z_vals=r[:,2]
                 else:
                     z_vals=np.array([p[2] for p in r]) if isinstance(r, (list, np.ndarray)) else np.array([0])
+                height_actual_min_m=float(np.min(z_vals)) if len(z_vals) else None
+                height_actual_max_m=float(np.max(z_vals)) if len(z_vals) else None
                 if 'height_min_m' in self.task and self.task['height_min_m'] is not None:
                     hmin=float(self.task['height_min_m'])
                     if np.min(z_vals) < hmin - 1e-9:
                         height_violation = f"well height {np.min(z_vals)*1e6:.1f} um below min {hmin*1e6:.1f} um"
+                        height_violation_distance_m=float(hmin - np.min(z_vals))
                 if 'height_max_m' in self.task and self.task['height_max_m'] is not None:
                     hmax=float(self.task['height_max_m'])
                     if np.max(z_vals) > hmax + 1e-9:
                         height_violation = f"well height {np.max(z_vals)*1e6:.1f} um above max {hmax*1e6:.1f} um"
-        except: pass
+                        # if already below min, take max of both distances (should be max violation)
+                        d_above=float(np.max(z_vals) - hmax)
+                        if height_violation_distance_m is None:
+                            height_violation_distance_m=d_above
+                        else:
+                            height_violation_distance_m=max(height_violation_distance_m, d_above)
+        except:
+            height_violation=None
+            height_violation_distance_m=None
         corridor_violation=None
         try:
             corridor=float(self.task.get('corridor_halfwidth_m', self.cfg.get('rom_max_shift_m',20e-6)))
@@ -810,8 +845,14 @@ class Runner:
         if height_violation:
             result['quality_failures'].append('height_violation')
             result['height_violation_msg']=height_violation
+            result['height_violation_distance_m']=float(height_violation_distance_m) if height_violation_distance_m is not None else None
+            result['height_actual_min_m']=float(height_actual_min_m) if height_actual_min_m is not None else None
+            result['height_actual_max_m']=float(height_actual_max_m) if height_actual_max_m is not None else None
         else:
             result['height_violation_msg']=None
+            result['height_violation_distance_m']=None
+            result['height_actual_min_m']=float(height_actual_min_m) if height_actual_min_m is not None else None
+            result['height_actual_max_m']=float(height_actual_max_m) if height_actual_max_m is not None else None
         if corridor_violation:
             result['quality_failures'].append('corridor_violation')
             result['corridor_violation_msg']=corridor_violation
@@ -833,19 +874,30 @@ class Runner:
         result['feasible']=constraints_passed
         try:
             is_high_fidelity = False
+            # proven convergence requires high node count and subdivisions, not just any exact_nodes
             if exact_nodes is not None:
                 try:
+                    cfg_nodes = int(self.cfg.get('validation_nodes',321))
                     cfg_sub = int(self.cfg.get('validation_subdivisions',4))
+                    cur_nodes = int(exact_nodes) if exact_nodes is not None else 0
                     cur_sub = int(subdivisions) if subdivisions is not None else int(self.cfg.get('subdivisions',4))
-                    if cur_sub >= cfg_sub:
+                    # need both nodes and subdiv to meet validation threshold for proven convergence
+                    # 41 nodes vs 321 -> not validated, even though covariance ok
+                    if cur_nodes >= cfg_nodes and cur_sub >= cfg_sub:
+                        is_high_fidelity = True
+                    # also allow exact_nodes == actual_exact_nodes if caller provided high fidelity explicitly (e.g., 641)
+                    elif cur_nodes >= 321 and cur_sub >= 4:
                         is_high_fidelity = True
                 except:
-                    is_high_fidelity = True
+                    is_high_fidelity = False
+            # evaluation_completed means calculation finished, not necessarily validated
             result['evaluation_completed']=True
+            # numerical_validation_passed is proven convergence, not just covariance
             result['numerical_validation_passed']=bool(is_high_fidelity)
             result['validation_passed']=bool(constraints_passed and is_high_fidelity)
-            result['exact_evaluated']=bool(is_high_fidelity)
+            result['exact_evaluated']=True if exact_nodes is not None else bool(is_high_fidelity)
             result['exact_constraints_passed']=constraints_passed
+            result['exact_numerical_validation_passed']=bool(is_high_fidelity)
         except:
             result['evaluation_completed']=True
             result['numerical_validation_passed']=False
@@ -983,21 +1035,35 @@ class Runner:
             weak_confinement = bool(eig_weak.min() < (2*np.pi*self.task['min_frequency_hz'])**2)
         except: weak_confinement=False
         height_violation=None
+        height_violation_distance_m=None
+        height_actual_min_m=None
+        height_actual_max_m=None
         try:
             if ('height_min_m' in self.task and self.task['height_min_m'] is not None) or ('height_max_m' in self.task and self.task['height_max_m'] is not None):
                 if isinstance(r, np.ndarray) and r.ndim==2 and r.shape[1]>=3:
                     z_vals=r[:,2]
                 else:
                     z_vals=np.array([p[2] for p in r]) if isinstance(r, (list, np.ndarray)) else np.array([0])
+                height_actual_min_m=float(np.min(z_vals)) if len(z_vals) else None
+                height_actual_max_m=float(np.max(z_vals)) if len(z_vals) else None
                 if 'height_min_m' in self.task and self.task['height_min_m'] is not None:
                     hmin=float(self.task['height_min_m'])
                     if np.min(z_vals) < hmin - 1e-9:
                         height_violation = f"well height {np.min(z_vals)*1e6:.1f} um below min {hmin*1e6:.1f} um"
+                        height_violation_distance_m=float(hmin - np.min(z_vals))
                 if 'height_max_m' in self.task and self.task['height_max_m'] is not None:
                     hmax=float(self.task['height_max_m'])
                     if np.max(z_vals) > hmax + 1e-9:
                         height_violation = f"well height {np.max(z_vals)*1e6:.1f} um above max {hmax*1e6:.1f} um"
-        except: pass
+                        # if already below min, take max of both distances (should be max violation)
+                        d_above=float(np.max(z_vals) - hmax)
+                        if height_violation_distance_m is None:
+                            height_violation_distance_m=d_above
+                        else:
+                            height_violation_distance_m=max(height_violation_distance_m, d_above)
+        except:
+            height_violation=None
+            height_violation_distance_m=None
         corridor_violation=None
         try:
             corridor=float(self.task.get('corridor_halfwidth_m', self.cfg.get('rom_max_shift_m',20e-6)))
@@ -1055,8 +1121,14 @@ class Runner:
         if height_violation:
             result['quality_failures'].append('height_violation')
             result['height_violation_msg']=height_violation
+            result['height_violation_distance_m']=float(height_violation_distance_m) if height_violation_distance_m is not None else None
+            result['height_actual_min_m']=float(height_actual_min_m) if height_actual_min_m is not None else None
+            result['height_actual_max_m']=float(height_actual_max_m) if height_actual_max_m is not None else None
         else:
             result['height_violation_msg']=None
+            result['height_violation_distance_m']=None
+            result['height_actual_min_m']=float(height_actual_min_m) if height_actual_min_m is not None else None
+            result['height_actual_max_m']=float(height_actual_max_m) if height_actual_max_m is not None else None
         if corridor_violation:
             result['quality_failures'].append('corridor_violation')
             result['corridor_violation_msg']=corridor_violation
@@ -1078,19 +1150,30 @@ class Runner:
         result['feasible']=constraints_passed
         try:
             is_high_fidelity = False
+            # proven convergence requires high node count and subdivisions, not just any exact_nodes
             if exact_nodes is not None:
                 try:
+                    cfg_nodes = int(self.cfg.get('validation_nodes',321))
                     cfg_sub = int(self.cfg.get('validation_subdivisions',4))
+                    cur_nodes = int(exact_nodes) if exact_nodes is not None else 0
                     cur_sub = int(subdivisions) if subdivisions is not None else int(self.cfg.get('subdivisions',4))
-                    if cur_sub >= cfg_sub:
+                    # need both nodes and subdiv to meet validation threshold for proven convergence
+                    # 41 nodes vs 321 -> not validated, even though covariance ok
+                    if cur_nodes >= cfg_nodes and cur_sub >= cfg_sub:
+                        is_high_fidelity = True
+                    # also allow exact_nodes == actual_exact_nodes if caller provided high fidelity explicitly (e.g., 641)
+                    elif cur_nodes >= 321 and cur_sub >= 4:
                         is_high_fidelity = True
                 except:
-                    is_high_fidelity = True
+                    is_high_fidelity = False
+            # evaluation_completed means calculation finished, not necessarily validated
             result['evaluation_completed']=True
+            # numerical_validation_passed is proven convergence, not just covariance
             result['numerical_validation_passed']=bool(is_high_fidelity)
             result['validation_passed']=bool(constraints_passed and is_high_fidelity)
-            result['exact_evaluated']=bool(is_high_fidelity)
+            result['exact_evaluated']=True if exact_nodes is not None else bool(is_high_fidelity)
             result['exact_constraints_passed']=constraints_passed
+            result['exact_numerical_validation_passed']=bool(is_high_fidelity)
         except:
             result['evaluation_completed']=True
             result['numerical_validation_passed']=False

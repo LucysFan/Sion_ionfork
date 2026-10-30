@@ -204,7 +204,7 @@ def main():
                     except: metrics = {}
                 # hash export control from actual command array (audit: not just theta)
                 try:
-                    import hashlib, json, numpy as _np
+                    import hashlib, numpy as _np
                     # try to get actual cmd for hash (canonical: time, channel order, voltages)
                     cmd_hash = None
                     control_hash_theta = hashlib.sha256(json.dumps(g.theta.tolist()).encode()).hexdigest()[:12]
@@ -222,7 +222,7 @@ def main():
                                 from shuttle_sim.ga.fitness import _prepare_for_W, _restore_after_W, _w_cache_key, _get_runner_w_cache
                                 freq_c = theta_arr[8:10]
                                 stashed_cmd = dict(task_mode=runner.task.get('frequency_mode'), task_coeffs=runner.task.get('frequency_coeffs'),
-                                                   freq_mode=getattr(runner,'frequency_mode','fixed'), freq_coeffs=getattr(runner,'frequency_coeffs',[0.0,0.0]),
+                                                   frequency_mode=getattr(runner,'frequency_mode','fixed'), frequency_coeffs=getattr(runner,'frequency_coeffs',[0.0,0.0]),
                                                    sroute=getattr(runner,'sroute',None), route_V=getattr(runner,'route_V',None), route_r=getattr(runner,'route_r',None),
                                                    route_H=getattr(runner,'route_H',None), route_G=getattr(runner,'route_G',None), route_BH=getattr(runner,'route_BH',None),
                                                    correction_modes=getattr(runner,'correction_modes',None), support_diagnostics=getattr(runner,'support_diagnostics',None),
@@ -261,14 +261,29 @@ def main():
                                 _, cmd_arr, _ = runner.commands_krat_periodic(theta_arr, baseline=baseline, repeats=reps)
                             else:
                                 _, cmd_arr, _ = runner.commands(theta_arr, baseline=baseline)
-                        # canonical hash: time, channel order, voltages (flattened)
-                        cmd_bytes = cmd_arr.tobytes() if isinstance(cmd_arr, _np.ndarray) else str(cmd_arr).encode()
-                        # also include electrode order
-                        order = ','.join(getattr(runner.trap, 'names', []))
-                        cmd_hash = hashlib.sha256(cmd_bytes).hexdigest()[:16]
-                        order_hash = hashlib.sha256(order.encode()).hexdigest()[:8]
-                        metrics['_export_control_hash'] = f"{cmd_hash[:12]}-{order_hash}"
-                        metrics['_export_control_hash_cmd'] = cmd_hash
+                        # canonical payload hash: version, times, order, voltages, dtype, shape (audit)
+                        try:
+                            _t_for_hash = runner.grid()[0]
+                            _times_bytes = _t_for_hash.tobytes() if hasattr(_t_for_hash,'tobytes') else str(_t_for_hash).encode()
+                            cmd_bytes = cmd_arr.tobytes() if isinstance(cmd_arr, _np.ndarray) else str(cmd_arr).encode()
+                            order = ','.join(getattr(runner.trap, 'names', []))
+                            payload = b'v1|'+ _times_bytes + b'|' + order.encode() + b'|' + cmd_bytes + f"|{cmd_arr.dtype if hasattr(cmd_arr,'dtype') else 'unknown'}|{cmd_arr.shape if hasattr(cmd_arr,'shape') else 'unknown'}".encode()
+                            try:
+                                hw_id = f"{runner.hw.sample_rate_hz}|{getattr(runner.trap,'kind','unknown')}"
+                                payload += b'|' + hw_id.encode()
+                            except: pass
+                            cmd_hash = hashlib.sha256(payload).hexdigest()[:16]
+                            order_hash = hashlib.sha256(order.encode()).hexdigest()[:8]
+                            metrics['_export_control_hash'] = f"{cmd_hash[:12]}-{order_hash}"
+                            metrics['_export_control_hash_cmd'] = cmd_hash
+                            metrics['_export_payload_schema'] = "v1_times_order_voltage_dtype_shape_hw"
+                        except Exception as _e_hash2:
+                            cmd_bytes = cmd_arr.tobytes() if isinstance(cmd_arr, _np.ndarray) else str(cmd_arr).encode()
+                            order = ','.join(getattr(runner.trap, 'names', []))
+                            cmd_hash = hashlib.sha256(cmd_bytes).hexdigest()[:16]
+                            order_hash = hashlib.sha256(order.encode()).hexdigest()[:8]
+                            metrics['_export_control_hash'] = f"{cmd_hash[:12]}-{order_hash}"
+                            metrics['_export_control_hash_cmd'] = cmd_hash
                     except Exception as _e_hash:
                         metrics['_export_control_hash'] = control_hash_theta
                         metrics['_export_control_hash_error'] = str(_e_hash)[:200]
@@ -279,16 +294,37 @@ def main():
                     metrics['_export_actual_exact_nodes'] = metrics.get('actual_exact_nodes')
                     metrics['_export_hardware_dt_s'] = metrics.get('hardware_dt_s')
                 except: pass
+                # Use unified EvaluationResult: serialize actual verdict from exact assessment (audit)
+                _accepted = bool(metrics.get("accepted", False)) if isinstance(metrics, dict) else False
+                _validated = bool(metrics.get("exact_validated", metrics.get("validation_passed", False))) if isinstance(metrics, dict) else False
+                _quality = metrics.get("quality_failures", []) if isinstance(metrics, dict) else []
+                _status = getattr(g,"status","ok")
+                # override status to reflect exact verdict if available
+                if isinstance(metrics, dict) and "accepted" in metrics:
+                    if not metrics.get("accepted", False):
+                        _status = ",".join(metrics.get("quality_failures", ["quality_fail"])) if metrics.get("quality_failures") else "quality_fail"
+                    elif not metrics.get("exact_validated", True):
+                        # accepted but not numerically validated
+                        _status = "ok_not_validated"
                 rec = {
                     "rank": rank,
                     "theta": g.theta.tolist(),
                     "fitness": float(g.fitness),
                     "island": g.island,
                     "baseline": baseline,
-                    "status": getattr(g,"status","ok"),
+                    "status": _status,
+                    "accepted": _accepted,
+                    "exact_validated": _validated,
+                    "exact_constraints_passed": bool(metrics.get("exact_constraints_passed", _accepted)) if isinstance(metrics, dict) else None,
+                    "exact_numerical_validation_passed": bool(metrics.get("exact_numerical_validation_passed", metrics.get("numerical_validation_passed", False))) if isinstance(metrics, dict) else None,
+                    "quality_failures": _quality,
+                    "validation_passed": bool(metrics.get("validation_passed", False)) if isinstance(metrics, dict) else None,
                     "n_total": float(metrics.get("n_total", 0)) if isinstance(metrics, dict) else None,
                     "pos_err_m": float(metrics.get("position_error_m", 0)) if isinstance(metrics, dict) else None,
                     "fmin_hz": float(metrics.get("minimum_frequency_hz", 0)) if isinstance(metrics, dict) else None,
+                    "actual_subdivisions": metrics.get("actual_subdivisions") if isinstance(metrics, dict) else None,
+                    "actual_exact_nodes": metrics.get("actual_exact_nodes") if isinstance(metrics, dict) else None,
+                    "hardware_dt_s": metrics.get("hardware_dt_s") if isinstance(metrics, dict) else None,
                 }
                 hall_json.append(rec)
                 # отдельный файл на алгоритм
@@ -320,7 +356,7 @@ def main():
                             stashed=None
                             try:
                                 stashed=dict(task_mode=runner.task.get('frequency_mode'), task_coeffs=runner.task.get('frequency_coeffs'),
-                                             freq_mode=getattr(runner,'frequency_mode','fixed'), freq_coeffs=getattr(runner,'frequency_coeffs',[0.0,0.0]),
+                                             frequency_mode=getattr(runner,'frequency_mode','fixed'), frequency_coeffs=getattr(runner,'frequency_coeffs',[0.0,0.0]),
                                              sroute=getattr(runner,'sroute',None), route_V=getattr(runner,'route_V',None), route_r=getattr(runner,'route_r',None),
                                              route_H=getattr(runner,'route_H',None), route_G=getattr(runner,'route_G',None), route_BH=getattr(runner,'route_BH',None),
                                              correction_modes=getattr(runner,'correction_modes',None), support_diagnostics=getattr(runner,'support_diagnostics',None),
@@ -396,7 +432,7 @@ def main():
                             theta_cmd2 = theta_arr2[:8]
                             freq_c2 = theta_arr2[8:10]
                             stashed2 = dict(task_mode=runner.task.get('frequency_mode'), task_coeffs=runner.task.get('frequency_coeffs'),
-                                            freq_mode=getattr(runner,'frequency_mode','fixed'), freq_coeffs=getattr(runner,'frequency_coeffs',[0.0,0.0]),
+                                            frequency_mode=getattr(runner,'frequency_mode','fixed'), frequency_coeffs=getattr(runner,'frequency_coeffs',[0.0,0.0]),
                                             sroute=getattr(runner,'sroute',None), route_V=getattr(runner,'route_V',None), route_r=getattr(runner,'route_r',None),
                                             route_H=getattr(runner,'route_H',None), route_G=getattr(runner,'route_G',None), route_BH=getattr(runner,'route_BH',None),
                                             correction_modes=getattr(runner,'correction_modes',None), support_diagnostics=getattr(runner,'support_diagnostics',None),
@@ -430,7 +466,14 @@ def main():
                                 _, cmd_arr2, _ = runner.commands_krat_periodic(theta_arr2, baseline=baseline0, repeats=reps3)
                             else:
                                 _, cmd_arr2, _ = runner.commands(theta_arr2, baseline=baseline0)
-                        ctrl_h = hashlib.sha256(cmd_arr2.tobytes()).hexdigest()[:16]
+                        # canonical best hash with times
+                        try:
+                            _t2 = runner.grid()[0]
+                            _t2b = _t2.tobytes() if hasattr(_t2,'tobytes') else str(_t2).encode()
+                            _payload2 = b'v1|'+ _t2b + b'|' + ','.join(getattr(runner.trap,'names',[])).encode() + b'|' + cmd_arr2.tobytes() + f"|{cmd_arr2.dtype}|{cmd_arr2.shape}".encode()
+                            ctrl_h = hashlib.sha256(_payload2).hexdigest()[:16]
+                        except:
+                            ctrl_h = hashlib.sha256(cmd_arr2.tobytes()).hexdigest()[:16]
                         order2 = ','.join(getattr(runner.trap, 'names', []))
                         order_h2 = hashlib.sha256(order2.encode()).hexdigest()[:8]
                         metrics0['_control_hash'] = f"{ctrl_h[:12]}-{order_h2}"

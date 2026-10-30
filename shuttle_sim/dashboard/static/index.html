@@ -103,6 +103,7 @@ input[type=range]{accent-color:var(--accent)}
   <span class="kv mono" id="trainingProgText" style="min-width:95px">0% (0/0)</span>
   <span class="kv mono" id="trainingElapsed" style="min-width:64px">—</span>
   <button class="btn" id="btnStopTraining" disabled style="background:var(--bad);color:#fff;border-color:var(--bad);opacity:0.6;min-width:84px">■ Стоп</button>
+  <button class="btn" id="btnResetAll" title="Сохранить все результаты в архив и очистить графики для нового обучения" style="background:var(--accent);color:#fff;border-color:var(--accent);min-width:110px">↺ Reset All</button>
 </div>
 <div id="trainingLogWrap" style="padding:8px 20px;display:none;background:var(--bg);border-bottom:1px solid var(--border)">
   <pre id="trainingLog" class="mono" style="margin:0;max-height:140px;overflow:auto;background:var(--panel2);padding:8px;border-radius:8px;font-size:11px;white-space:pre-wrap;border:1px solid var(--border)"></pre>
@@ -255,6 +256,7 @@ input[type=range]{accent-color:var(--accent)}
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn" id="btnRunPipeline" style="flex:1;border-color:var(--accent)">▶ Pipeline</button>
           <button class="btn active" id="btnRunGA" style="flex:1">▶ Запустить GA</button>
+          <button class="btn" id="btnResetAll2" title="Сохранить результаты и очистить обучение" style="flex:1;border-color:var(--accent);background:rgba(255,165,0,0.15)">↺ Reset All</button>
         </div>
 
         <div id="launchStatus" class="mono" style="font-size:11px;color:var(--muted);min-height:16px"></div>
@@ -4185,6 +4187,49 @@ function init(){
           setTimeout(()=>location.reload(), 600);
         };
         btnResetRun.parentNode.insertBefore(clr, btnResetRun.nextSibling);
+  // Reset All handler — archives current out_dir and clears all graphs
+  async function doResetAll(btn){
+    if(!confirm("Reset All: сохранить текущие результаты (напряжения, алгоритмы, графики) в архивную папку и очистить все данные для нового обучения?")) return;
+    const origText = btn ? btn.textContent : "";
+    if(btn){ btn.disabled=true; btn.textContent="Архивирую…"; }
+    document.getElementById('launchStatus').textContent="Архивирую результаты…";
+    try{
+      const out = (document.getElementById('inpOut')?.value || "").trim() || "output/live_run";
+      const r = await fetch('/api/reset_all',{method:'POST',headers:{"Content-Type":"application/json"},body:JSON.stringify({out})});
+      const j = await r.json();
+      if(j.ok){
+        document.getElementById('launchStatus').textContent = `✓ Архив: ${j.archived_to} (скопировано ${j.copied?.length||0}) — графики очищены`;
+        // Clear all frontend chart data
+        try{
+          // Clear training progress
+          document.getElementById('trainingProg').style.width='0%';
+          document.getElementById('trainingProgText').textContent='0% (0/0)';
+          document.getElementById('trainingStatusText').textContent='Сброшено — готов к новому обучению';
+          document.getElementById('trainingJobId').textContent='';
+          document.getElementById('trainingElapsed').textContent='—';
+          document.getElementById('trainingLog').textContent='';
+          document.getElementById('trainingLogWrap').style.display='none';
+          // Clear global chart datasets if they exist
+          const chartIds = ['lossChart','heightChart','excitationChart','migrationChart','islandChart'];
+          // Try to reset via Chart.js instances if stored globally
+          if(window._charts) Object.values(window._charts).forEach(ch=>{ try{ ch.data.labels=[]; ch.data.datasets.forEach(ds=>ds.data=[]); ch.update(); }catch(e){} });
+          // Also clear any stored history arrays
+          if(window.historyData) window.historyData=[];
+          if(window.hallData) window.hallData=[];
+          // Force reload state after short delay
+          setTimeout(()=>{ location.reload(); }, 1200);
+        }catch(e){}
+      } else {
+        document.getElementById('launchStatus').textContent="Ошибка Reset: "+(j.error||"unknown");
+      }
+    }catch(e){
+      document.getElementById('launchStatus').textContent="Ошибка Reset: "+e;
+    } finally {
+      if(btn){ btn.disabled=false; btn.textContent=origText||"↺ Reset All"; }
+    }
+  }
+  document.getElementById('btnResetAll')?.addEventListener('click', (e)=>doResetAll(e.target));
+  document.getElementById('btnResetAll2')?.addEventListener('click', (e)=>doResetAll(e.target));
       }
     }
   }catch(e){}
