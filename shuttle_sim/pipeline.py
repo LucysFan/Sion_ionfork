@@ -67,7 +67,7 @@ def save_csv(path,header,array):
 
 # --- Auto height tuning for five_wire (requested height -> geometry search) ---
 def _tune_five_wire_for_height(cfg, desired_h_m, max_search=40):
-    """Fast search for five_wire geometry near desired height with good f0."""
+    """Simple RF tuning for height: try RF frequency + peak, keep geometry. Height ~ voltage+RF."""
     import copy, itertools
     try:
         from .field import load_trap
@@ -78,31 +78,37 @@ def _tune_five_wire_for_height(cfg, desired_h_m, max_search=40):
     try:
         trap0 = load_trap(base['trap'])
         h0 = float(trap0.local(np.array(base['trap']['initial_dc_V']), np.array(base['trap']['minimum_seed_m'])).position_m[2])
-        if abs(h0 - desired_h_m) < 5e-6:
+        if abs(h0 - desired_h_m) < 4e-6:
             return cfg
     except Exception:
         pass
-    # fast prioritized search for 150: small grid around desired, height first
-    # if desired is 150, focus on 130-170 region, not 90 or 240
-    if abs(desired_h_m - 150e-6) < 20e-6:
-        tops = [135,140,145,150,155,160,165,170]
-        cents = [135,140,145,150,155,160,165,170,180]
-        rfs = [(24,30e6),(32,30e6),(48,30e6),(60,30e6)]
-    elif abs(desired_h_m - 90e-6) < 15e-6:
-        tops = [85,90,95,100,110]
-        cents = [100,110,120,130]
-        rfs = [(24,30e6),(18,25e6)]
-    else:
-        tops = [90,110,130,140,150,160,170,180,200]
-        cents = [110,130,145,150,160,170,190]
-        rfs = [(24,30e6),(48,30e6),(80,30e6)]
+    # user is right: RF frequency primarily sets height via pseudopotential, try RF sweep first (fast, no geometry change)
+    # keep current geometry, sweep RF frequency and peak
+    rf_freqs = [18e6,20e6,22e6,25e6,28e6,30e6,32e6,35e6,38e6,40e6]
+    rf_peaks = [18,24,32,48,60,80]
+    # also try small geometry tweak only if RF alone not enough
+    tops = [None]  # None means keep current geometry
+    cents = [None]
+    # if desired is far from current, also try geometry variants
+    try:
+        cur_top = base['trap']['geometry']['top_rf'][1] if isinstance(base['trap']['geometry']['top_rf'], (list, tuple)) else 180
+        cur_cent = base['trap']['geometry']['central_dc'][1] if isinstance(base['trap']['geometry']['central_dc'], (list, tuple)) else 170
+        if abs(desired_h_m - 150e-6) < 20e-6 and abs(cur_top - 150) > 20:
+            tops = [None, 145,150,155]
+            cents = [None, 145,150,155]
+    except: pass
     candidates = []
     for top, cent in itertools.product(tops, cents):
-        for rf, freq in rfs:
+        for rf, freq in itertools.product(rf_peaks, rf_freqs):
+            # limit combos for speed: for height 150, try all, else few
+            if top is None and cent is None and rf not in [24,48] and freq not in [30e6,25e6]:
+                continue
             cand = copy.deepcopy(cfg)
-            cand['trap']['geometry']['top_rf'] = [20000, top]
-            cand['trap']['geometry']['bottom_rf'] = [20000, top]
-            cand['trap']['geometry']['central_dc'] = [20000, cent]
+            if top is not None:
+                cand['trap']['geometry']['top_rf'] = [20000, top]
+                cand['trap']['geometry']['bottom_rf'] = [20000, top]
+            if cent is not None:
+                cand['trap']['geometry']['central_dc'] = [20000, cent]
             cand['trap']['rf_peak_V'] = rf
             cand['trap']['rf_frequency_hz'] = freq
             cand['trap']['minimum_seed_m'] = [0,0,float(desired_h_m)]
@@ -112,9 +118,9 @@ def _tune_five_wire_for_height(cfg, desired_h_m, max_search=40):
                 h = float(loc.position_m[2])
                 f0 = float(loc.omega_rad_s[0]/2/np.pi)
                 h_err = abs(h - desired_h_m)
-                if h_err > 20e-6:
+                if h_err > 15e-6:
                     continue
-                if not (0.33e6 < f0 < 1.3e6):
+                if not (0.30e6 < f0 < 1.4e6):
                     continue
                 # height primary weight
                 score = h_err*1e6/3.0 + abs(f0-0.65e6)/0.65e6*1.2
