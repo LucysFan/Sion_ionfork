@@ -2524,9 +2524,11 @@ function updateLossBestSummary(state){
     let col=LOSS_COLORS[k]||"#8aa0c8"
     let pct = bd.sum ? (v/bd.sum*100) : 0
     let bar = v>1e-3 ? `<div style="height:6px;border-radius:99px;background:${col};width:${Math.min(100, pct)}%;margin-top:4px"></div>` : `<div style="height:6px"></div>`
+    let txt = (Math.abs(v) < 0.0005 && Math.abs(v) > 0) ? v.toExponential(1) : v.toFixed(3)
+    if((k==="control"||k==="freq"||k==="robust") && Math.abs(v) < 0.001 && Math.abs(v) > 0) txt = v.toExponential(1)
     return `<div style="background:rgba(255,255,255,0.04);border:1px solid ${col}44;border-radius:8px;padding:8px;text-align:center">
       <div style="font-size:10px;color:var(--muted)">${labels[k]} <small style="opacity:0.7">${descs[k]}</small></div>
-      <div style="font-size:15px;font-weight:800;color:${col}">${v.toFixed(3)}</div>
+      <div style="font-size:15px;font-weight:800;color:${col}">${txt}</div>
       <div style="font-size:10px;color:var(--muted)">${pct.toFixed(0)}%</div>
       ${bar}
     </div>`

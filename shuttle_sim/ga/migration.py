@@ -61,14 +61,19 @@ class RingMigration:
                 # пропускаем плохие источники
                 # критерии: 1) src_best должен быть < 1e5 (не rejected), 2) < median*2 или < global_best*10, 3) если активных нет — < 100
                 skip=False
+                # R-остров несёт робастность, но его фитнес естественно хуже (primary+robust) ≈ 5-8 vs медиана 0.5 —
+                # даём ему послабление ×1.8, иначе он никогда не прорвётся через selective burst.
+                is_robust_src = str(getattr(src,'strategy','')).startswith('R')
+                median_mult = 5.0 if is_robust_src else 4.0
+                global_mult = 12.0 if is_robust_src else 10.0
                 if src_best >= 1e5:
                     skip=True
                 elif active_bests:
-                    # если src в 3 раза хуже медианы — скип, чтобы не ломать
-                    if src_best > median_active*3.0 and src_best > global_best*8.0:
+                    # если src хуже медианы в median_mult раз И хуже глобального в global_mult — скип
+                    if src_best > median_active*median_mult and src_best > global_best*global_mult:
                         skip=True
-                    # также если src_best > 0.5 и медиана <0.05 (плохой остров среди хороших) — скип
-                    if median_active < 0.05 and src_best > 0.5:
+                    # также если src_best > 1.0 и медиана <0.05 (плохой остров среди хороших) — скип (было 0.5 слишком строго)
+                    if median_active < 0.05 and src_best > 1.0:
                         skip=True
                 else:
                     if src_best > 100:

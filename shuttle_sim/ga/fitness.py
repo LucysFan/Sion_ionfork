@@ -251,8 +251,19 @@ def evaluate_genome(genome, runner, baseline='sta', exact_nodes=None, hardware=N
                         m2, runner.task, m2.get('distortion'), theta, genome.bounds,
                         runner.cfg.get('control_regularization_weight',1e-4),
                         loss_weights=runner.loss_weights))
-                except Exception:
-                    vals.append(1e6)
+                except Exception as ex_rob:
+                    # Было 1e6 → давало 8.83e5 (0.35*mean+0.65*max) и полностью убивало R-остров:
+                    # даже если основной fit ~0.5, два фейла 1e6 давали (0.5+2e6)/3≈666k среднее, max 1e6 → 883k.
+                    # Делаем умеренный штраф, чтобы робастность учитывалась но не душила остров и позволяла миграцию.
+                    try:
+                        code = getattr(ex_rob, 'code', str(ex_rob)) if hasattr(ex_rob, 'code') else str(ex_rob)
+                    except: code='robust_fail'
+                    # мягкий штраф: primary + 6..8 (эквивалент ~5-10 n) вместо 1e6
+                    vals.append(float(fit) + 7.0)
+            # cap robust vals to avoid одного выброса 1e6 который снова даст 8e5 — клипуем к fit+10
+            try:
+                vals = [min(float(v), float(fit)+10.0) if float(v) > float(fit)+10 else float(v) for v in vals]
+            except: pass
             fit = float(0.35*np.mean(vals)+0.65*np.max(vals))
             metrics['robust_train_vals']=vals
         genome.fitness = float(fit)
