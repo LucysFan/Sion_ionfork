@@ -67,7 +67,7 @@ def save_csv(path,header,array):
 
 # --- Auto height tuning for five_wire (requested height -> geometry search) ---
 def _tune_five_wire_for_height(cfg, desired_h_m, max_search=40):
-    """Fast search for five_wire geometry near desired height with good f0."""
+    """Simple RF tuning for height: try RF frequency + peak, keep geometry. Height ~ voltage+RF."""
     import copy, itertools
     try:
         from .field import load_trap
@@ -78,21 +78,37 @@ def _tune_five_wire_for_height(cfg, desired_h_m, max_search=40):
     try:
         trap0 = load_trap(base['trap'])
         h0 = float(trap0.local(np.array(base['trap']['initial_dc_V']), np.array(base['trap']['minimum_seed_m'])).position_m[2])
-        if abs(h0 - desired_h_m) < 5e-6:
+        if abs(h0 - desired_h_m) < 4e-6:
             return cfg
     except Exception:
         pass
-    best = None
-    best_score = float('inf')
-    tops = [90,110,130,140,150,160,170,180,200,220]
-    cents = [110,130,150,170,180,190,200]
-    rfs = [(24,30e6),(48,30e6),(80,20e6),(80,30e6)]
+    # user is right: RF frequency primarily sets height via pseudopotential, try RF sweep first (fast, no geometry change)
+    # keep current geometry, sweep RF frequency and peak
+    rf_freqs = [18e6,20e6,22e6,25e6,28e6,30e6,32e6,35e6,38e6,40e6]
+    rf_peaks = [18,24,32,48,60,80]
+    # also try small geometry tweak only if RF alone not enough
+    tops = [None]  # None means keep current geometry
+    cents = [None]
+    # if desired is far from current, also try geometry variants
+    try:
+        cur_top = base['trap']['geometry']['top_rf'][1] if isinstance(base['trap']['geometry']['top_rf'], (list, tuple)) else 180
+        cur_cent = base['trap']['geometry']['central_dc'][1] if isinstance(base['trap']['geometry']['central_dc'], (list, tuple)) else 170
+        if abs(desired_h_m - 150e-6) < 20e-6 and abs(cur_top - 150) > 20:
+            tops = [None, 145,150,155]
+            cents = [None, 145,150,155]
+    except: pass
+    candidates = []
     for top, cent in itertools.product(tops, cents):
-        for rf, freq in rfs:
+        for rf, freq in itertools.product(rf_peaks, rf_freqs):
+            # limit combos for speed: for height 150, try all, else few
+            if top is None and cent is None and rf not in [24,48] and freq not in [30e6,25e6]:
+                continue
             cand = copy.deepcopy(cfg)
-            cand['trap']['geometry']['top_rf'] = [20000, top]
-            cand['trap']['geometry']['bottom_rf'] = [20000, top]
-            cand['trap']['geometry']['central_dc'] = [20000, cent]
+            if top is not None:
+                cand['trap']['geometry']['top_rf'] = [20000, top]
+                cand['trap']['geometry']['bottom_rf'] = [20000, top]
+            if cent is not None:
+                cand['trap']['geometry']['central_dc'] = [20000, cent]
             cand['trap']['rf_peak_V'] = rf
             cand['trap']['rf_frequency_hz'] = freq
             cand['trap']['minimum_seed_m'] = [0,0,float(desired_h_m)]
@@ -102,32 +118,33 @@ def _tune_five_wire_for_height(cfg, desired_h_m, max_search=40):
                 h = float(loc.position_m[2])
                 f0 = float(loc.omega_rad_s[0]/2/np.pi)
                 h_err = abs(h - desired_h_m)
-                if h_err > 18e-6:
+                if h_err > 15e-6:
                     continue
-                if not (0.33e6 < f0 < 1.3e6):
+                if not (0.30e6 < f0 < 1.4e6):
                     continue
-                # score: height error (per um) + f0 penalty (prefer 0.5-0.8, avoid <0.4)
-                f0_penalty = abs(f0 - 0.60e6)/0.60e6  # 0 at 0.60MHz
-                score = h_err*1e6/30.0 + f0_penalty*3.0
-                # bonus if f0 in good shuttle range 0.40-0.85
-                if 0.40e6 < f0 < 0.85e6:
-                    score -= 0.7
-                # heavy penalty if f0 <0.40 (weak)
-                if f0 < 0.40e6:
-                    score += 3.0
-                if score < best_score:
-                    best_score = score
-                    best = cand
-                    best['_tune_info'] = dict(top=top, cent=cent, rf=rf, freq=freq, h=h, f0=f0, h_err=h_err, score=score)
+                # height primary weight
+                score = h_err*1e6/3.0 + abs(f0-0.65e6)/0.65e6*1.2
+                if 0.45e6 < f0 < 0.85e6:
+                    score -= 0.2
+                candidates.append((h_err, score, cand, dict(top=top, cent=cent, rf=rf, freq=freq, h=h, f0=f0, h_err=h_err, score=score)))
             except Exception:
                 continue
-            if best_score < 0.3:
+            # early exit if we found tight candidate
+            if candidates and min(c[0] for c in candidates) < 2e-6 and len(candidates) > 5:
                 break
-        if best_score < 0.3:
+        if candidates and min(c[0] for c in candidates) < 2e-6 and len(candidates) > 5:
             break
-    if best is not None:
-        return best
-    return cfg
+    if not candidates:
+        return cfg
+    candidates.sort(key=lambda x: (x[0], x[1]))
+    tight = [c for c in candidates if c[0] < 3e-6]
+    pool = tight if tight else [c for c in candidates if c[0] < 8e-6]
+    if not pool:
+        pool = candidates[:3]
+    pool.sort(key=lambda x: x[1])
+    best = pool[0][2]
+    best['_tune_info'] = pool[0][3]
+    return best
 
 class Runner:
     def __init__(self,config):
