@@ -751,43 +751,77 @@ class GAEngine:
                             freq_term += 1.0*_math.log1p(err/0.05e6)
                     except: pass
             except: pass
-            # height soft (pipeline now soft)
+            # height soft - proportional to violation distance (pipeline: 2*log1p(dist/1um))
             height_term = 0
             try:
-                if m.get('height_violation_msg'):
-                    height_term = 2*_math.log1p(1.0)  # ~1.38
-                elif 'height_violation' in m.get('quality_failures', []) if isinstance(m.get('quality_failures'), list) else False:
+                hv_msg = m.get('height_violation_msg')
+                hv_dist = m.get('height_violation_distance_m')
+                if hv_dist is None and hv_msg:
+                    try:
+                        import re as _re_h2
+                        mm = _re_h2.search(r'well height\s*([\d\.]+)\s*um\s*(above max|below min)\s*([\d\.]+)', hv_msg)
+                        if mm:
+                            hv_dist = abs(float(mm.group(1)) - float(mm.group(3))) * 1e-6
+                        else:
+                            nums = _re_h2.findall(r'[\d\.]+', hv_msg)
+                            if len(nums)>=2:
+                                hv_dist = abs(float(nums[0]) - float(nums[1])) * 1e-6
+                    except: hv_dist = 1e-6
+                if hv_msg and hv_dist is not None:
+                    height_term = 2*_math.log1p(max(0.0, float(hv_dist))/1e-6)
+                elif hv_msg:
                     height_term = 2*_math.log1p(1.0)
-                # also check explicit well heights if available in metrics (not yet stored, keep 0)
+                elif 'height_violation' in (m.get('quality_failures') or []):
+                    height_term = 2*_math.log1p(1.0)
             except: pass
-            # heating rate term (new 2026-10-30)
+            # corridor violation (if well deviates from nominal > corridor_halfwidth)
+            corridor_term = 0
+            try:
+                cv_msg = m.get('corridor_violation_msg')
+                if cv_msg:
+                    # parse "corridor X um > Y um" -> dist = X - Y
+                    import re as _re_c
+                    mm = _re_c.search(r'corridor\s*([\d\.]+)\s*um\s*>\s*([\d\.]+)', cv_msg)
+                    if mm:
+                        dist_c = abs(float(mm.group(1)) - float(mm.group(2))) * 1e-6
+                        corridor_term = 2*(_math.log1p(dist_c/1e-6))
+                    else:
+                        nums = _re_c.findall(r'[\d\.]+', cv_msg)
+                        if len(nums)>=2:
+                            dist_c = abs(float(nums[0]) - float(nums[1])) * 1e-6
+                            corridor_term = 2*(_math.log1p(dist_c/1e-6))
+                        else:
+                            corridor_term = 2*_math.log1p(1.0)
+                elif 'corridor_violation' in (m.get('quality_failures') or []):
+                    corridor_term = 2*_math.log1p(1.0)
+            except: corridor_term=0
+            # heating rate term — only when max_heating_rate_hz set (pipeline soft heating)
             heating_term = 0
             try:
                 hr = m.get('heating_rate_hz')
                 if hr is not None:
                     allowed = task.get('max_heating_rate_hz', None)
-                    if allowed is None:
-                        try:
-                            allowed = float(task.get('max_n_total', 0.5))/float(task.get('duration_s', 1))
-                            if allowed > 100: allowed = 100
-                        except: allowed = 100
                     if allowed is not None and hr > float(allowed)*1.05:
                         heating_term = 2*_math.log1p(max(0.0, hr - float(allowed))/max(float(allowed), 50.0))
             except: heating_term=0
-            # robust для R — уже в fitness, выделяем отдельно?
+            # robust для R — точная доплата, чтобы сумма == fitness
             robust_extra = 0
             try:
-                if genome.island=='R' and 'robust_train_vals' in m:
-                    vals=m['robust_train_vals']
-                    mean_v=sum(vals)/len(vals); max_v=max(vals)
-                    # часть сверх обычного loss: 0.35*mean+0.65*max vs primary => approx max-mean
-                    robust_extra = float(0.65*(max_v-mean_v))
+                if genome.island=='R' and genome.fitness is not None:
+                    # сумма без robust
+                    sum_without = n_term+pos_term+well_term+lag_term+distortion_term+control_term+freq_term+height_term+heating_term+corridor_term
+                    robust_extra = float(float(genome.fitness) - sum_without)
+                    if abs(robust_extra) < 1e-9:
+                        robust_extra = 0
+                    # если robust отрицательный (редкий случай когда обучающие лучше primary) — не показывать как штраф
+                    if robust_extra < 0:
+                        robust_extra = 0
             except: pass
-            total = n_term+pos_term+well_term+lag_term+distortion_term+control_term+freq_term+height_term+heating_term+robust_extra
+            total = n_term+pos_term+well_term+lag_term+distortion_term+control_term+freq_term+height_term+heating_term+corridor_term+robust_extra
             # невязка vs реальный fitness (из-за округлений/biased) — height_term пока 0, для совместимости с суммой
-            return dict(n=n_term, pos=pos_term, well=well_term, lag=lag_term, distortion=distortion_term, control=control_term, freq=freq_term, height=height_term, heating=heating_term, robust=robust_extra, sum=total, fitness=float(genome.fitness) if genome.fitness else total)
+            return dict(n=n_term, pos=pos_term, well=well_term, lag=lag_term, distortion=distortion_term, control=control_term, freq=freq_term, height=height_term, heating=heating_term, corridor=corridor_term, robust=robust_extra, sum=total, fitness=float(genome.fitness) if genome.fitness else total)
         except Exception as e:
-            return dict(n=0,pos=0,well=0,lag=0,distortion=0,control=0,freq=0,height=0,heating=0,robust=0,sum=float(genome.fitness or 0), error=str(e))
+            return dict(n=0,pos=0,well=0,lag=0,distortion=0,control=0,freq=0,height=0,heating=0,corridor=0,robust=0,sum=float(genome.fitness or 0), error=str(e))
 
     def _write_state(self, heavy=True):
         # build dashboard state; heavy=False skips expensive trajectory/robust/sion for per-island quick updates
@@ -988,16 +1022,16 @@ class GAEngine:
             if not heavy:
                 should_recompute = False
             else:
-                # skip gen0 for speed — robustness starts from gen 1, still honest but not blocking initial state
-                if self.global_gen == 0:
-                    should_recompute = False
+                # always compute robustness after gen0, but heavy every 5 gens; gen0 light check for hall
+                if self.global_gen == 0 and len(self.hall_of_fame) >= 1:
+                    should_recompute = True
                 else:
-                    should_recompute = (self.global_gen % 5 == 0 or self.global_gen == self.generations)
+                    should_recompute = (self.global_gen % 3 == 0 or self.global_gen == self.generations)
             if should_recompute:
                 t0_rob = time.time()
                 hall_rob = []
                 for rank, g in enumerate(self.hall_of_fame):
-                    if time.time()-t0_rob > 12: break
+                    if time.time()-t0_rob > 20: break
                     try:
                         baseline = 'sta'
                         for isl in self.islands:
@@ -1006,8 +1040,8 @@ class GAEngine:
                                 break
                         from ..hardware import Hardware
                         from .fitness import _dispatch_evaluate, _restore_after_W
-                        count = int(self.runner.cfg.get('robust_samples', 4))
-                        count = min(count, 6)
+                        count = int(self.runner.cfg.get('robust_samples', 6))
+                        count = min(max(count, 6), 8)
                         scenarios = self.runner.scenarios(count, self.runner.cfg['uncertainty']['seed'] + 100 + rank)
                         vals = []
                         accepted_vals = []
@@ -1035,13 +1069,13 @@ class GAEngine:
                         hall_rob.append(dict(rank=rank, error=str(e)[:500]))
                 island_rob = []
                 for isl in self.islands:
-                    if time.time()-t0_rob > 8: break
+                    if time.time()-t0_rob > 15: break
                     try:
                         pop_valid = [g for g in isl.population if g.fitness is not None]
                         if not pop_valid: continue
                         best = min(pop_valid, key=lambda g: g.fitness)
                         baseline = isl.baseline
-                        count = 2
+                        count = 4
                         from ..hardware import Hardware
                         from .fitness import _dispatch_evaluate
                         scenarios = self.runner.scenarios(count, self.runner.cfg['uncertainty']['seed'] + 200 + isl.id)
@@ -1087,7 +1121,7 @@ class GAEngine:
             config=self.cfg,
             loss_breakdown=loss_breakdown,
             loss_weights=dict(self.runner.loss_weights or {"n":1.0,"pos":1.0,"well":1.0,"lag":0.0}),
-            loss_formula=r"F = w_n·ln(1+n/n0) + w_pos·ln(1+(pos/tol)²) + w_well·ln(1+(well/tol)²) + w_lag·ln(1+(lag/dist)²) + 0.5·ln(1+max(0,rms-0.1)/0.1) + λ·mean(((θ-θc)/scale)²) + 2·ln(1+max(0,f0-fmin)/1e5) + height + heating(2·ln(1+(hr-100)/100)) + robust 0.35·mean+0.65·max",
+            loss_formula=r"F = w_n·ln(1+n/n0) + w_pos·ln(1+(pos/tol)²) + w_well·ln(1+(well/tol)²) + w_lag·ln(1+(lag/dist)²) + 0.5·ln(1+max(0,rms-0.1)/0.1) + λ·mean(((θ-θc)/scale)²) + 2·ln(1+max(0,f0-fmin)/1e5) + 2·ln(1+dist/1um)[height] + 2·ln(1+(hr−allowed)/max(allowed,50))[heating if allowed] + 0.35·mean+0.65·max−primary[robust] + corridor(2·ln(1+Δ/1um))",
             loss_history=getattr(self, '_loss_history', []),
             pop_size=int(self.islands[0].pop_size if self.islands else (getattr(self,'_global_pop',None) or 20)),
             total_pop=sum(isl.pop_size for isl in self.islands),

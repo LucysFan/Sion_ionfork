@@ -558,10 +558,10 @@ input[type=range]{accent-color:var(--accent)}
         <b style="color:#5ac8ff">F(θ) =</b> <span style="color:#7af0a0">w<sub>n</sub>·ln(1+n/n<sub>0</sub>)</span> + <span style="color:#ffbe55">w<sub>pos</sub>·ln(1+(pos/tol)²)</span> + <span style="color:#c58aff">w<sub>well</sub>·ln(1+(well/tol)²)</span> + <span style="color:#5affda">w<sub>lag</sub>·ln(1+(lag/dist)²)</span><br>
         &nbsp;&nbsp;&nbsp;&nbsp; + <span style="color:#ff7a7a">0.5·ln(1+max(0,rms−0.1)/0.1)</span> <small style="color:var(--muted)">— искажение ЦАП</small><br>
         &nbsp;&nbsp;&nbsp;&nbsp; + <span style="color:#f0883e">λ·mean(((θ−θ<sub>c</sub>)/scale)²)</span> <small style="color:var(--muted)">— штраф управления (θ в границах)</small><br>
-        &nbsp;&nbsp;&nbsp;&nbsp; + <span style="color:#ff6b9e">2·ln(1+max(0,f<sub>0</sub>−f<sub>min</sub>)/1e5)</span> <small style="color:var(--muted)">— частотный гейт (если f<sub>min</sub> &lt; f<sub>0</sub>)</small><br>
-        &nbsp;&nbsp;&nbsp;&nbsp; + <span style="color:#ffd05a">robust: 0.35·mean+0.65·max</span> <small style="color:var(--muted)">— только для острова R</small><br>
-        &nbsp;&nbsp;&nbsp;&nbsp; + <span style="color:#ff4040">2·ln(1+max(0, hr−100)/100)</span> <small style="color:var(--muted)">— нагрев hr=n_total/τ (если hr &gt; 100 ph/s)</small><br>
-        &nbsp;&nbsp;&nbsp;&nbsp; + <span style="color:#9e7cff">2·ln(1+Δh)</span> <small style="color:var(--muted)">— высота ямы вне 90±60мкм</small>
+        &nbsp;&nbsp;&nbsp;&nbsp; + <span style="color:#ff6b9e">2·ln(1+max(0,f<sub>0</sub>−f<sub>min</sub>)/1e5) + f<sub>max</sub> + нач/кон</span> <small style="color:var(--muted)">— гейты: min f, max f (1e5), начальная/конечная частота (0.05МГц, порог 0.02МГц)</small><br>
+        &nbsp;&nbsp;&nbsp;&nbsp; + <span style="color:#ffd05a">robust: 0.35·mean+0.65·max − primary</span> <small style="color:var(--muted)">— только R: доплата = агрегация − обычный loss</small><br>
+        &nbsp;&nbsp;&nbsp;&nbsp; + <span style="color:#ff4040">2·ln(1+max(0,hr−allowed)/max(allowed,50))</span> <small style="color:var(--muted)">— нагрев (только если max_heating_rate_hz задан, порог 1.05·allowed)</small><br>
+        &nbsp;&nbsp;&nbsp;&nbsp; + <span style="color:#9e7cff">2·ln(1+dist/1мкм)</span> <small style="color:var(--muted)">— высота: dist=выход ямы за [height_min, height_max], 1 мкм масштаб</small>
         <div style="margin-top:10px;color:var(--muted);font-size:11px;line-height:1.5">
           <b style="color:var(--text)">Обозначения:</b> n — n<sub>total</sub> фононов (цель &lt;0.5), pos — ошибка позиции |&lt;r&gt;−target| (цель &lt;tol), well — ошибка минимума ямы, lag — max|ион−яма| по траектории, rms — искажение DAC (>0.1В штрафуется), f<sub>min</sub> — минимальная секулярная частота (цель ≥f<sub>0</sub>), λ=1e-4, n<sub>0</sub>=task.max_n_total, tol=position_tolerance_m, dist=distance_m.<br>
           <span id="lossWeightsLabel" style="color:#5ac8ff;font-weight:700"></span> · <span id="lossFormulaNote" style="color:var(--muted)">веса w<sub>n</sub>/w<sub>pos</sub>/w<sub>well</sub>/w<sub>lag</sub> из loss_weights (по умолчанию 1/1/1/0) — меняются в конфиге</span>
@@ -575,8 +575,8 @@ input[type=range]{accent-color:var(--accent)}
         <span title="Искажение формы напряжения"><i style="width:16px;height:16px;background:#ff7a7a;display:inline-block;border-radius:3px;border:1px solid #5a2a2a"></i> <b>dist</b> <small>DAC</small></span>
         <span title="Штраф за большие θ"><i style="width:16px;height:16px;background:#f0883e;display:inline-block;border-radius:3px;border:1px solid #5a3a1a"></i> <b>control</b></span>
         <span title="Штраф если частота провалилась"><i style="width:16px;height:16px;background:#ff6b9e;display:inline-block;border-radius:3px;border:1px solid #5a2a3a"></i> <b>freq</b></span>
-        <span title="Нагрев hr &gt; 100 ph/s"><i style="width:16px;height:16px;background:#ff4040;display:inline-block;border-radius:3px;border:1px solid #5a2a2a"></i> <b>heating</b></span>
-        <span title="Высота ямы вне допуска"><i style="width:16px;height:16px;background:#9e7cff;display:inline-block;border-radius:3px;border:1px solid #4a2a6a"></i> <b>height</b></span>
+        <span title="Нагрев hr > 1.05·allowed (только если max_heating_rate_hz задан)"><i style="width:16px;height:16px;background:#ff4040;display:inline-block;border-radius:3px;border:1px solid #5a2a2a"></i> <b>heating</b></span>
+        <span title="Высота ямы вне [height_min, height_max] — dist за пределы"><i style="width:16px;height:16px;background:#9e7cff;display:inline-block;border-radius:3px;border:1px solid #4a2a6a"></i> <b>height</b></span>
         <span title="Доплата за неустойчивость (остров R)"><i style="width:16px;height:16px;background:#ffd05a;display:inline-block;border-radius:3px;border:1px solid #5a4a1a"></i> <b>robust</b></span>
       </div>
       <!-- Подробная таблица компонентов -->
@@ -588,8 +588,9 @@ input[type=range]{accent-color:var(--accent)}
         <div style="background:rgba(255,122,122,0.08);border:1px solid rgba(255,122,122,0.22);border-radius:8px;padding:8px"><b style="color:#ff7a7a">distortion</b><br><span style="font-size:11px;color:var(--muted)">rms искажения >0.1В. rms=0.12→0.09, 0.3→0.55</span></div>
         <div style="background:rgba(240,136,62,0.08);border:1px solid rgba(240,136,62,0.22);border-radius:8px;padding:8px"><b style="color:#f0883e">control</b><br><span style="font-size:11px;color:var(--muted)">θ близко к границам. Обычно &lt;0.05</span></div>
         <div style="background:rgba(255,107,158,0.08);border:1px solid rgba(255,107,158,0.22);border-radius:8px;padding:8px"><b style="color:#ff6b9e">freq gate</b><br><span style="font-size:11px;color:var(--muted)">если fmin&lt;f0: 2·ln(1+Δ/1e5). Провал на 200кГц→2.2</span></div>
-        <div style="background:rgba(255,64,64,0.08);border:1px solid rgba(255,64,64,0.22);border-radius:8px;padding:8px"><b style="color:#ff4040">heating</b><br><span style="font-size:11px;color:var(--muted)">2·ln(1+(hr-100)/100). hr&gt;100 ph/s → штраф, hr=500→3.2</span></div>
-        <div style="background:rgba(158,124,255,0.08);border:1px solid rgba(158,124,255,0.22);border-radius:8px;padding:8px"><b style="color:#9e7cff">height</b><br><span style="font-size:11px;color:var(--muted)">яма вне 30–150мкм → 2·ln2≈1.38</span></div>
+        <div style="background:rgba(255,64,64,0.08);border:1px solid rgba(255,64,64,0.22);border-radius:8px;padding:8px"><b style="color:#ff4040">heating</b><br><span style="font-size:11px;color:var(--muted)">2·ln(1+(hr−allowed)/max(allowed,50)), если hr>1.05·allowed и max_heating_rate_hz задан</span></div>
+        <div style="background:rgba(158,124,255,0.08);border:1px solid rgba(158,124,255,0.22);border-radius:8px;padding:8px"><b style="color:#9e7cff">height</b><br><span style="font-size:11px;color:var(--muted)">яма вне высоты → 2·ln(1+dist/1мкм)</span></div>
+        <div style="background:rgba(255,159,28,0.08);border:1px solid rgba(255,159,28,0.22);border-radius:8px;padding:8px"><b style="color:#ff9f1c">corridor</b><br><span style="font-size:11px;color:var(--muted)">коридор > halfwidth → 2·ln(1+Δ/1мкм)</span></div>
         <div style="background:rgba(255,208,90,0.08);border:1px solid rgba(255,208,90,0.22);border-radius:8px;padding:8px"><b style="color:#ffd05a">robust</b><br><span style="font-size:11px;color:var(--muted)">только R: 0.35·mean+0.65·max − primary. Показывает неустойчивость</span></div>
       </div>
     </div>
@@ -2520,8 +2521,8 @@ function drawAxes(ctx,W,H,opts){
     ctx.save(); ctx.translate(14, H/2); ctx.rotate(-Math.PI/2); ctx.fillText(opts.ylabel||"",0,0); ctx.restore()
   }
 }
-const LOSS_COLORS = {n:"#7af0a0", pos:"#ffbe55", well:"#c58aff", lag:"#5affda", distortion:"#ff7a7a", control:"#f0883e", freq:"#ff6b9e", robust:"#ffd05a", heating:"#ff4040", height:"#9e7cff", sum:"#ffffff"}
-const LOSS_LABELS = {n:"n", pos:"pos", well:"well", lag:"lag", distortion:"dist.", control:"control", freq:"freq", robust:"robust", heating:"heat", height:"hₙ"}
+const LOSS_COLORS = {n:"#7af0a0", pos:"#ffbe55", well:"#c58aff", lag:"#5affda", distortion:"#ff7a7a", control:"#f0883e", freq:"#ff6b9e", robust:"#ffd05a", heating:"#ff4040", height:"#9e7cff", corridor:"#ff9f1c", sum:"#ffffff"}
+const LOSS_LABELS = {n:"n", pos:"pos", well:"well", lag:"lag", distortion:"dist.", control:"control", freq:"freq", robust:"robust", heating:"heat", height:"hₙ", corridor:"corr"}
 
 function updateLossBestSummary(state){
   const grid=document.getElementById('lossBestGrid'), title=document.getElementById('lossBestTitle'), note=document.getElementById('lossBestNote')
@@ -2535,9 +2536,9 @@ function updateLossBestSummary(state){
   }
   const best = hall[0], bd = best.loss_breakdown||{}
   if(title) title.textContent=`#0 ${best.island} · F=${fmtFit(best.fitness)} · n=${best.n_total!=null?Number(best.n_total).toExponential(2):"—"}`
-  const keys=["n","pos","well","lag","distortion","control","freq","robust","heating","height"]
-  const labels={n:"n",pos:"pos",well:"well",lag:"lag",distortion:"dist",control:"ctrl",freq:"freq",robust:"rob", heating:"heat", height:"hₙ"}
-  const descs={n:"фононы",pos:"поз",well:"яма",lag:"отстав",distortion:"DAC",control:"θ",freq:"fmin",robust:"уст", heating:"нагрев", height:"высота"}
+  const keys=["n","pos","well","lag","distortion","control","freq","robust","heating","height","corridor"]
+  const labels={n:"n",pos:"pos",well:"well",lag:"lag",distortion:"dist",control:"ctrl",freq:"freq",robust:"rob", heating:"heat", height:"hₙ", corridor:"corr"}
+  const descs={n:"фононы",pos:"поз",well:"яма",lag:"отстав",distortion:"DAC",control:"θ",freq:"fmin",robust:"уст", heating:"нагрев", height:"высота", corridor:"корид"}
   grid.innerHTML = keys.map(k=>{
     let v = bd[k]
     if(v==null || !isFinite(v)) v=0
@@ -2558,7 +2559,7 @@ function updateLossBestSummary(state){
     note.textContent=`веса w_n=${w.n??1} w_pos=${w.pos??1} w_well=${w.well??1} w_lag=${w.lag??0} · сумма ${bd.sum!=null?bd.sum.toFixed(3):"—"} vs fitness ${fmtFit(best.fitness)} · чем ближе к 0, тем лучше`
   }
 }
-const LOSS_KEYS=["n","pos","well","lag","distortion","control","freq","robust","heating","height"]
+const LOSS_KEYS=["n","pos","well","lag","distortion","control","freq","robust","heating","height","corridor"]
 function drawLossStack(state){
   const c=document.getElementById('cLossStack'), tip=document.getElementById('lossStackTooltip')
   if(!c) return
